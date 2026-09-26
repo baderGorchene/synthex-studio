@@ -1,6 +1,6 @@
 'use client';
 
-import { BookOpen, CircleHelp, FileText, FlaskConical, GitBranch, GripVertical, Hand, Layers2, Lightbulb, MousePointer2, Plus, Quote, Scan } from 'lucide-react';
+import { BookOpen, FileText, GitBranch, GripVertical, Hand, Images, Layers2, MousePointer2, Plus, Quote, Scan } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import type { CanvasNodeType } from '@/types/canvas';
 
@@ -14,13 +14,11 @@ export type WorkspaceSection = 'canvas' | 'outline' | 'evidence' | 'table' | 'so
 export type CanvasTool = 'select' | 'connect' | 'hand';
 
 export const addableRecords = [
-  { type: 'concept', label: 'Concept', description: 'Core idea or entity', icon: Lightbulb },
-  { type: 'claim', label: 'Claim', description: 'Verifiable assertion', icon: Quote },
-  { type: 'question', label: 'Question', description: 'Open inquiry or unknown', icon: CircleHelp },
-  { type: 'hypothesis', label: 'Hypothesis', description: 'Testable premise', icon: FlaskConical },
-  { type: 'source', label: 'Source', description: 'Reference or citation', icon: BookOpen },
-  { type: 'note', label: 'Note', description: 'Markdown annotation', icon: FileText },
-  { type: 'group', label: 'Knowledge cluster', description: 'Collapsible stack & section', icon: Layers2 }
+  { type: 'note', label: 'Note & Idea', description: 'Concept, hypothesis or markdown note', icon: FileText },
+  { type: 'claim', label: 'Claim & Inquiry', description: 'Verifiable assertion or open question', icon: Quote },
+  { type: 'source', label: 'Document & Source', description: 'Web reference, PDF, TXT, JSON, paper', icon: BookOpen },
+  { type: 'image', label: 'Media & Figure', description: 'Diagram, chart, screenshot or asset', icon: Images },
+  { type: 'group', label: 'Knowledge cluster', description: 'Collapsible stack & section container', icon: Layers2 }
 ] as const;
 
 export interface CanvasToolDockProps {

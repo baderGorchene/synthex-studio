@@ -273,18 +273,32 @@ export default function SynthexWorkspace() {
     return needle ? nodes.filter(node => `${node.title} ${node.content || ''} ${node.description || ''} ${node.url || ''} ${node.type}`.toLowerCase().includes(needle)).slice(0, 30) : [];
   }, [nodes, searchQuery]);
 
-  const addRecord = useCallback((type: CanvasNodeType) => {
+  const addRecord = useCallback((type: CanvasNodeType, initialData?: Partial<CanvasNode>) => {
     const now = Date.now();
     const index = Object.keys(graphRef.current.nodesById).length;
-    const labels: Record<string, string> = { concept: 'New concept', claim: 'New claim', question: 'New question', hypothesis: 'New hypothesis', source: 'New source', note: 'New note', group: 'New knowledge cluster', ai_insight: 'New insight' };
+    const labels: Record<string, string> = { concept: 'New concept', claim: 'New claim', question: 'New question', hypothesis: 'New hypothesis', source: 'New source', note: 'New note', group: 'New knowledge cluster', ai_insight: 'New insight', image: 'Media & figure' };
     const node: CanvasNode = {
-      id: newId(), type, x: 260 + (index % 3) * 340, y: 170 + Math.floor(index / 3) * 230,
-      width: type === 'group' ? 560 : type === 'question' ? 300 : 280, height: type === 'group' ? 360 : undefined,
-      title: labels[type] || 'New knowledge', color: type === 'question' ? 'terracotta' : 'neutral', createdAt: now,
-      metadata: { origin: 'user', ...(type === 'claim' ? { claimStatus: 'unverified' as const } : {}) }
+      id: newId(),
+      type,
+      x: initialData?.x ?? (260 + (index % 3) * 340),
+      y: initialData?.y ?? (170 + Math.floor(index / 3) * 230),
+      width: initialData?.width ?? (type === 'group' ? 560 : type === 'image' ? 320 : type === 'question' ? 300 : 280),
+      height: type === 'group' ? 360 : undefined,
+      title: initialData?.title || labels[type] || 'New knowledge',
+      color: initialData?.color || (type === 'question' ? 'terracotta' : 'neutral'),
+      createdAt: now,
+      metadata: { origin: 'user', ...(type === 'claim' ? { claimStatus: 'unverified' as const } : {}), ...initialData?.metadata },
+      ...initialData
     };
-    try { updateGraph(current => addNode(current, node)); setSelectedIds([node.id]); setSection('canvas'); }
-    catch (error) { announce(error instanceof Error ? error.message : 'Could not add that record.'); }
+    try {
+      updateGraph(current => addNode(current, node));
+      setSelectedIds([node.id]);
+      setSection('canvas');
+      setDrawerTab('inspector');
+      setRightDrawerOpen(true);
+    } catch (error) {
+      announce(error instanceof Error ? error.message : 'Could not add that record.');
+    }
   }, [announce, updateGraph]);
 
   const moveNodes = useCallback((positions: Record<string, Coordinates>) => {
@@ -841,7 +855,7 @@ export default function SynthexWorkspace() {
           {section === 'canvas' ? <>
             <div className="canvas-and-inspector">
               <div className="graph-wrap">
-                {loading ? <div className="canvas-loading"><LoaderCircle size={21} className="spin" />Opening research sheet…</div> : nodes.length === 0 ? <div className="canvas-empty"><span className="empty-orbit"><Network size={24} /></span><h2>Your research sheet is ready</h2><p>Add a first idea or run grounded research to build a map of what you know.</p><div><button className="primary-button" onClick={() => setModal('research')}><Sparkles size={15} /> Start with research</button><button className="quiet-button" onClick={() => addRecord('concept')}><Plus size={15} /> Add a concept</button></div></div> : <GraphCanvas
+                {loading ? <div className="canvas-loading"><LoaderCircle size={21} className="spin" />Opening research sheet…</div> : nodes.length === 0 ? <div className="canvas-empty"><span className="empty-orbit"><Network size={24} /></span><h2>Your research sheet is ready</h2><p>Add a first idea or run grounded research to build a map of what you know.</p><div><button className="primary-button" onClick={() => setModal('research')}><Sparkles size={15} /> Start with research</button><button className="quiet-button" onClick={() => addRecord('note')}><Plus size={15} /> Add a note & idea</button></div></div> : <GraphCanvas
                   graph={graph} selectedNodeIds={selectedIds} viewport={viewport} setViewport={setViewport} activeTool={tool} spacePressed={spacePressed}
                   linkingFromId={linkingFromId} autoFitKey={canvasFitKey} editingNoteId={editingNoteId}
                   onSelectNode={(id, additive) => {
@@ -853,6 +867,7 @@ export default function SynthexWorkspace() {
                   onStartLinking={setLinkingFromId} onToggleGroup={toggleGroup} onEditNote={setEditingNoteId}
                   onUpdateNote={(id, content) => updateGraph(current => updateNode(current, id, { content }), false)}
                   onUpdateRelationship={editRelationship} onDeleteRelationship={deleteRelationship} onResizeGroup={resizeGroup} onOpenGroup={id => { setEditingNoteId(null); setGroupCanvasId(id); }}
+                  onAddRecordWithData={addRecord}
                 />}
               </div>
 
@@ -1031,7 +1046,7 @@ export default function SynthexWorkspace() {
           <section className="group-canvas-modal" role="dialog" aria-modal="true" aria-label={`${group.title} sub-canvas`}>
             <header className="group-canvas-header"><div><div className="group-breadcrumb"><span>Workspace</span><span>/</span><strong>{group.title}</strong></div><p>{plural(members.length, 'record')} in this knowledge cluster</p></div><button className="icon-button" aria-label="Close sub-canvas" onClick={() => setGroupCanvasId(null)}><X size={17} /></button></header>
             {members.length ? <GraphCanvas graph={containedGraph} selectedNodeIds={selectedIds.filter(id => memberIds.has(id))} viewport={groupViewport} setViewport={setGroupViewport} activeTool={tool} spacePressed={spacePressed} linkingFromId={linkingFromId} autoFitKey={canvasFitKey + 1} editingNoteId={editingNoteId}
-              onSelectNode={(id, additive) => setSelectedIds(current => additive ? current.includes(id) ? current.filter(value => value !== id) : [...current, id] : [id])} onClearSelection={() => setSelectedIds([])} onClickAway={() => setEditingNoteId(null)} onCancelLinking={() => setLinkingFromId(null)} onMoveNodes={moveNodes} onConnect={connectNodes} onStartLinking={setLinkingFromId} onToggleGroup={toggleGroup} onEditNote={setEditingNoteId} onUpdateNote={(id, content) => updateGraph(current => updateNode(current, id, { content }), false)} onUpdateRelationship={editRelationship} onDeleteRelationship={deleteRelationship} onResizeGroup={resizeGroup} onOpenGroup={id => { setEditingNoteId(null); setGroupCanvasId(id); }} /> : <div className="subcanvas-empty"><Layers2 size={22} /><p>This cluster has no member records yet.</p><button className="quiet-button" onClick={() => { addRecord('concept'); setGroupCanvasId(null); }}>Add a concept</button></div>}
+              onSelectNode={(id, additive) => setSelectedIds(current => additive ? current.includes(id) ? current.filter(value => value !== id) : [...current, id] : [id])} onClearSelection={() => setSelectedIds([])} onClickAway={() => setEditingNoteId(null)} onCancelLinking={() => setLinkingFromId(null)} onMoveNodes={moveNodes} onConnect={connectNodes} onStartLinking={setLinkingFromId} onToggleGroup={toggleGroup} onEditNote={setEditingNoteId} onUpdateNote={(id, content) => updateGraph(current => updateNode(current, id, { content }), false)} onUpdateRelationship={editRelationship} onDeleteRelationship={deleteRelationship} onResizeGroup={resizeGroup} onOpenGroup={id => { setEditingNoteId(null); setGroupCanvasId(id); }} onAddRecordWithData={addRecord} /> : <div className="subcanvas-empty"><Layers2 size={22} /><p>This cluster has no member records yet.</p><button className="quiet-button" onClick={() => { addRecord('note'); setGroupCanvasId(null); }}>Add a note & idea</button></div>}
           </section>
         </div>;
       })()}

@@ -45,6 +45,13 @@ export function hexToRgba(hex?: string, alpha: number = 1): string {
   return hex;
 }
 
+export function formatFileSize(bytes?: number): string {
+  if (!bytes || bytes <= 0) return '';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 export interface TaskItem {
   id: string;
   text: string;
@@ -68,9 +75,14 @@ export interface CanvasNode {
   domain?: string;
   description?: string;
   sectionId?: string;
+  fileData?: string;
+  fileName?: string;
+  fileSize?: number;
+  fileType?: string;
+  pageCount?: number;
   metadata?: {
     origin?: 'user' | 'imported' | 'ai' | 'inferred' | 'example';
-    claimStatus?: 'supported' | 'weakly_supported' | 'disputed' | 'contradicted' | 'unverified' | 'outdated';
+    claimStatus?: 'supported' | 'weakly_supported' | 'disputed' | 'contradicted' | 'unverified' | 'open_question' | 'outdated';
     confidence?: number;
     sourceIds?: string[];
     evidence?: Array<{

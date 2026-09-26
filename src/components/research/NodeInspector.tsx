@@ -1,18 +1,25 @@
-'use client';
-
 import { useState } from 'react';
-import { Check, ExternalLink, LoaderCircle, Sparkles, Trash2, X } from 'lucide-react';
-import { CanvasNode, CanvasNodeType, ELEMENT_PALETTE } from '@/types/canvas';
+import { Check, ExternalLink, Eye, FileText, Images, LoaderCircle, Maximize2, Paperclip, Sparkles, Trash2, Upload, X } from 'lucide-react';
+import { CanvasNode, CanvasNodeType, ELEMENT_PALETTE, formatFileSize } from '@/types/canvas';
 import { MarkdownEditor } from './MarkdownEditor';
 import { CustomSelect } from './CustomSelect';
 import { WebsiteLogo, WebsiteImage, getWebsiteDomain } from '@/components/canvas/SourceMetadata';
+import { AttachedFileBadge, FileViewerModal, ImageViewerModal } from './FileAndMediaModal';
 
 const types: Array<{ id: CanvasNodeType; label: string }> = [
-  { id: 'concept', label: 'Concept' }, { id: 'claim', label: 'Claim' }, { id: 'question', label: 'Question' },
-  { id: 'hypothesis', label: 'Hypothesis' }, { id: 'source', label: 'Source' }, { id: 'note', label: 'Note' },
-  { id: 'group', label: 'Knowledge cluster' }, { id: 'section', label: 'Knowledge cluster (legacy)' },
-  { id: 'link', label: 'Source (legacy)' }, { id: 'image', label: 'Image source' }, { id: 'task', label: 'Research task' },
-  { id: 'research_result', label: 'Research result' }, { id: 'ai_insight', label: 'AI insight' }
+  { id: 'note', label: 'Note & Idea' },
+  { id: 'claim', label: 'Claim & Inquiry' },
+  { id: 'source', label: 'Document & Source' },
+  { id: 'image', label: 'Media & Figure' },
+  { id: 'group', label: 'Knowledge cluster' },
+  { id: 'concept', label: 'Concept (legacy)' },
+  { id: 'hypothesis', label: 'Hypothesis (legacy)' },
+  { id: 'question', label: 'Question (legacy)' },
+  { id: 'link', label: 'Source (legacy)' },
+  { id: 'section', label: 'Knowledge cluster (legacy)' },
+  { id: 'task', label: 'Research task' },
+  { id: 'research_result', label: 'Research result' },
+  { id: 'ai_insight', label: 'AI insight' }
 ];
 
 export function NodeInspector({
@@ -84,8 +91,12 @@ export function NodeInspector({
         </div>
       </div>
 
-      <label className="field-label" htmlFor="node-content">Notes</label>
+      <label className="field-label" htmlFor="node-content">Notes & Content</label>
       {node.type === 'note' ? <MarkdownEditor className="inspector-markdown-editor" ariaLabel="Note content in Markdown" value={node.content || ''} onChange={content => onUpdate({ content })} /> : <textarea id="node-content" className="field-input field-textarea" maxLength={50000} placeholder="Add a description, evidence, or a working thought…" value={node.content || ''} onChange={event => onUpdate({ content: event.target.value })} />}
+
+      {node.type === 'image' && (
+        <ImageInspectorSection node={node} onUpdate={onUpdate} />
+      )}
 
       {(node.type === 'source' || node.type === 'link') && (
         <SourceInspectorSection node={node} safeUrl={safeUrl} onUpdate={onUpdate} />
@@ -94,8 +105,13 @@ export function NodeInspector({
       {isClaim && <>
         <label className="field-label" htmlFor="claim-status">Evidence status</label>
         <CustomSelect className="field-input" ariaLabel="Evidence status" value={node.metadata?.claimStatus || 'unverified'} options={[
-          { value: 'unverified', label: 'Unverified' }, { value: 'weakly_supported', label: 'Weakly supported' }, { value: 'supported', label: 'Supported' },
-          { value: 'disputed', label: 'Disputed' }, { value: 'contradicted', label: 'Contradicted' }, { value: 'outdated', label: 'Outdated' }
+          { value: 'unverified', label: 'Unverified' },
+          { value: 'open_question', label: '❓ Open inquiry / Question' },
+          { value: 'weakly_supported', label: 'Weakly supported' },
+          { value: 'supported', label: 'Supported' },
+          { value: 'disputed', label: 'Disputed' },
+          { value: 'contradicted', label: 'Contradicted' },
+          { value: 'outdated', label: 'Outdated' }
         ]} onChange={value => onUpdate({ metadata: { ...node.metadata, claimStatus: value as NonNullable<CanvasNode['metadata']>['claimStatus'] } })} />
       </>}
 
@@ -110,6 +126,113 @@ export function NodeInspector({
   );
 }
 
+function ImageInspectorSection({
+  node,
+  onUpdate
+}: {
+  node: CanvasNode;
+  onUpdate: (fields: Partial<CanvasNode>) => void;
+}) {
+  const [showViewer, setShowViewer] = useState(false);
+  const rawImage = node.fileData || node.imageUrl;
+  const currentImage = (rawImage && !rawImage.includes('Changes icon') && !rawImage.includes('stays white')) ? rawImage : undefined;
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const dataUrl = event.target?.result as string;
+      onUpdate({
+        imageUrl: dataUrl,
+        fileData: dataUrl,
+        fileName: file.name,
+        fileSize: file.size,
+        fileType: file.type,
+        ...(node.title === 'Media & figure' || node.title === 'New media & figure' ? { title: file.name.replace(/\.[^/.]+$/, '') } : {})
+      });
+    };
+    reader.readAsDataURL(file);
+  };
+
+  return (
+    <div className="inspector-media-section">
+      <label className="field-label" style={{ display: 'flex', alignItems: 'center', gap: 6, margin: 0 }}>
+        <Images size={14} style={{ color: '#284b63' }} />
+        <span>Figure & Media Asset</span>
+      </label>
+
+      {currentImage ? (
+        <div className="inspector-media-preview-box">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={currentImage} alt={node.caption || node.title} className="inspector-media-img" />
+          <button
+            type="button"
+            className="inspector-media-expand-btn"
+            onClick={() => setShowViewer(true)}
+            title="Expand and view image"
+            aria-label="Expand and view image"
+          >
+            <Maximize2 size={13} />
+          </button>
+          {(node.fileName || node.fileSize) && (
+            <div className="inspector-media-file-info">
+              <span className="inspector-media-filename" title={node.fileName}>{node.fileName || 'Image asset'}</span>
+              {node.fileSize ? <span className="inspector-media-filesize">{formatFileSize(node.fileSize)}</span> : null}
+            </div>
+          )}
+          <div className="inspector-media-actions">
+            <button
+              type="button"
+              className="inspector-action-btn danger"
+              onClick={() => onUpdate({ imageUrl: undefined, fileData: undefined, fileName: undefined, fileSize: undefined })}
+              title="Remove figure asset"
+            >
+              <Trash2 size={12} />
+              <span>Remove</span>
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="inspector-media-dropzone">
+          <label className="inspector-upload-button">
+            <Upload size={14} />
+            <span>Upload image file</span>
+            <input type="file" accept="image/*" className="sr-only" onChange={handleFileUpload} />
+          </label>
+          <span className="inspector-or-divider">or paste URL</span>
+          <input
+            type="url"
+            className="field-input"
+            placeholder="https://... image URL"
+            value={node.imageUrl || ''}
+            onChange={e => onUpdate({ imageUrl: e.target.value })}
+          />
+        </div>
+      )}
+
+      <label className="field-label" htmlFor="figure-caption" style={{ marginTop: 10 }}>Caption / Legend</label>
+      <input
+        id="figure-caption"
+        className="field-input"
+        maxLength={300}
+        placeholder="Figure 1: Architecture diagram..."
+        value={node.caption || ''}
+        onChange={e => onUpdate({ caption: e.target.value })}
+      />
+
+      {showViewer && currentImage && (
+        <ImageViewerModal
+          src={currentImage}
+          title={node.title}
+          caption={node.caption}
+          onClose={() => setShowViewer(false)}
+        />
+      )}
+    </div>
+  );
+}
+
 function SourceInspectorSection({
   node,
   safeUrl,
@@ -121,11 +244,13 @@ function SourceInspectorSection({
 }) {
   const [fetching, setFetching] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [showFileModal, setShowFileModal] = useState(false);
 
   const effectiveDomain = getWebsiteDomain(node.url, node.domain);
   const websiteLogo = (node.metadata?.logo as string) || (node.metadata?.favicon as string);
   const siteName = (node.metadata?.siteName as string);
   const previewImage = node.imageUrl || (node.metadata?.image as string) || (node.metadata?.ogImage as string);
+  const hasAttachedDoc = Boolean(node.fileData || node.fileName);
 
   const handleFetchMetadata = async () => {
     if (!node.url || !node.url.trim()) return;
@@ -170,9 +295,45 @@ function SourceInspectorSection({
     }
   };
 
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const ext = file.name.split('.').pop()?.toLowerCase() || 'file';
+    const isText = ['json', 'txt', 'csv', 'tsv', 'md', 'js', 'ts', 'jsx', 'tsx', 'py', 'html', 'css', 'sql', 'sh', 'yaml', 'yml'].includes(ext) || file.type.startsWith('text/') || file.type.includes('json');
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const dataUrl = event.target?.result as string;
+      if (isText) {
+        const textReader = new FileReader();
+        textReader.onload = (textEv) => {
+          const textContent = textEv.target?.result as string;
+          onUpdate({
+            fileData: dataUrl,
+            fileName: file.name,
+            fileSize: file.size,
+            fileType: ext,
+            ...(node.content ? {} : { content: textContent.length > 50000 ? textContent.slice(0, 50000) : textContent }),
+            ...(node.title === 'New source' || !node.title ? { title: file.name.replace(/\.[^/.]+$/, '') } : {})
+          });
+        };
+        textReader.readAsText(file);
+      } else {
+        onUpdate({
+          fileData: dataUrl,
+          fileName: file.name,
+          fileSize: file.size,
+          fileType: ext,
+          ...(node.title === 'New source' || !node.title ? { title: file.name.replace(/\.[^/.]+$/, '') } : {})
+        });
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
   return (
     <>
-      <label className="field-label" htmlFor="node-url">Source URL</label>
+      <label className="field-label" htmlFor="node-url">Source URL or Paper Link</label>
       <div className="url-edit-row">
         <input
           id="node-url"
@@ -217,6 +378,56 @@ function SourceInspectorSection({
       </button>
 
       {errorMsg && <p className="meta-status-hint">{errorMsg}</p>}
+
+      {/* Document / File attachment */}
+      <div className="inspector-doc-attachment-zone">
+        <label className="field-label" style={{ marginTop: 8 }}>Attached File (PDF, TXT, JSON, CSV...)</label>
+        {hasAttachedDoc ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 4 }}>
+            <AttachedFileBadge
+              fileName={node.fileName}
+              fileSize={node.fileSize}
+              fileType={node.fileType}
+              fileData={node.fileData}
+              content={node.content}
+              onOpenPreview={() => setShowFileModal(true)}
+            />
+            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+              <button
+                type="button"
+                className="inspector-action-btn danger"
+                onClick={() => onUpdate({ fileData: undefined, fileName: undefined, fileSize: undefined, fileType: undefined })}
+                title="Remove attached file"
+              >
+                <Trash2 size={12} />
+                <span>Remove attachment</span>
+              </button>
+            </div>
+          </div>
+        ) : (
+          <label className="inspector-upload-doc-btn">
+            <Paperclip size={13} />
+            <span>Attach File (PDF, TXT, JSON, CSV, MD...)</span>
+            <input
+              type="file"
+              accept=".pdf,.txt,.json,.csv,.tsv,.md,.js,.ts,.py,.html,.css,.yaml,.yml,application/pdf,application/json,text/*"
+              className="sr-only"
+              onChange={handleFileUpload}
+            />
+          </label>
+        )}
+      </div>
+
+      {showFileModal && (
+        <FileViewerModal
+          fileData={node.fileData}
+          fileName={node.fileName}
+          fileSize={node.fileSize}
+          fileType={node.fileType}
+          content={node.content}
+          onClose={() => setShowFileModal(false)}
+        />
+      )}
 
       {/* Website Preview Card */}
       {(effectiveDomain || safeUrl || websiteLogo || previewImage) && (

@@ -23,7 +23,20 @@ export function useCanvasInteraction({ onShowToast, onOpenSpotlight }: UseCanvas
     if (typeof window === 'undefined') return SEED_NODES;
     try {
       const saved = localStorage.getItem('synthex_studio_nodes');
-      return saved ? JSON.parse(saved) : SEED_NODES;
+      if (!saved) return SEED_NODES;
+      const parsed: CanvasNode[] = JSON.parse(saved);
+      return parsed.map(node => {
+        if (node.caption && (node.caption.includes('Changes icon') || node.caption.includes('stays white'))) {
+          node.caption = undefined;
+        }
+        if (node.imageUrl && (node.imageUrl.includes('Changes icon') || node.imageUrl.includes('stays white'))) {
+          node.imageUrl = undefined;
+        }
+        if (node.content && node.content.includes('Changes icon & border color')) {
+          node.content = undefined;
+        }
+        return node;
+      });
     } catch {
       return SEED_NODES;
     }

@@ -1,14 +1,15 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { BookOpen, Check, ChevronDown, CircleHelp, ExternalLink, FileText, Layers2, Lightbulb, Link2, Pencil, Quote, Sparkles } from 'lucide-react';
-import type { CanvasNode, Connection, Coordinates, SectionResizeHandle } from '@/types/canvas';
-import { hexToRgba } from '@/types/canvas';
+import { BookOpen, Check, ChevronDown, CircleHelp, Download, ExternalLink, FileText, Images, Layers2, Lightbulb, Link2, Maximize2, Paperclip, Pencil, Quote, Sparkles, X } from 'lucide-react';
+import type { CanvasNode, Connection, Coordinates, SectionResizeHandle, CanvasNodeType } from '@/types/canvas';
+import { hexToRgba, formatFileSize } from '@/types/canvas';
 import type { KnowledgeGraph } from '@/lib/graph';
 import { MarkdownEditor } from './MarkdownEditor';
 import { MarkdownView } from './MarkdownView';
 import { RelationshipControls } from './RelationshipControls';
 import { WebsiteLogo, WebsiteImage, getWebsiteDomain } from '@/components/canvas/SourceMetadata';
+import { AttachedFileBadge, FileViewerModal, ImageViewerModal, getFileCategory } from './FileAndMediaModal';
 
 type Viewport = { zoom: number; pan: Coordinates };
 type Gesture =
@@ -18,9 +19,9 @@ type Gesture =
   | { kind: 'resize'; start: Coordinates; node: CanvasNode; handle: SectionResizeHandle };
 
 const nodeLabel: Record<string, string> = {
-  concept: 'Concept', note: 'Note', source: 'Source', link: 'Source', claim: 'Claim',
-  question: 'Question', hypothesis: 'Hypothesis', group: 'Knowledge cluster', section: 'Knowledge cluster',
-  research_result: 'Research result', task: 'Research task', ai_insight: 'AI insight', image: 'Visual source'
+  note: 'Note & Idea', claim: 'Claim & Inquiry', source: 'Document & Source', image: 'Media & Figure', group: 'Knowledge cluster',
+  concept: 'Concept', hypothesis: 'Hypothesis', question: 'Question', link: 'Source', section: 'Knowledge cluster',
+  research_result: 'Research result', task: 'Research task', ai_insight: 'AI insight'
 };
 
 function safeExternalHref(value?: string) {
@@ -30,14 +31,22 @@ function safeExternalHref(value?: string) {
   } catch { return undefined; }
 }
 
-function NodeGlyph({ type }: { type: string }) {
+function NodeGlyph({ type, fileName, fileType }: { type: string; fileName?: string; fileType?: string }) {
   const props = { size: 14, strokeWidth: 1.8 };
   switch (type) {
     case 'concept': return <Lightbulb {...props} />;
     case 'claim': return <Quote {...props} />;
     case 'question': return <CircleHelp {...props} />;
-    case 'source': case 'link': return <BookOpen {...props} />;
+    case 'source': case 'link': {
+      if (fileName || fileType) {
+        const meta = getFileCategory(fileName, fileType);
+        const Icon = meta.icon;
+        return <Icon {...props} />;
+      }
+      return <BookOpen {...props} />;
+    }
     case 'note': return <FileText {...props} />;
+    case 'image': return <Images {...props} />;
     case 'group': case 'section': return <Layers2 {...props} />;
     case 'ai_insight': case 'research_result': return <Sparkles {...props} />;
     default: return <Link2 {...props} />;
@@ -101,6 +110,11 @@ export function estimateNodeHeight(node: CanvasNode): number {
   if (node.type === 'group' || node.type === 'section') {
     return node.metadata?.collapsed ? 98 : (node.height || 360);
   }
+  if (node.type === 'image') {
+    let h = 230;
+    if (node.caption || node.content) h += 36;
+    return h;
+  }
   let h = 51;
   const titleLines = Math.max(1, Math.ceil((node.title?.length || 10) / 26));
   h += titleLines * 22;
@@ -109,6 +123,9 @@ export function estimateNodeHeight(node: CanvasNode): number {
   const previewImage = node.imageUrl || (node.metadata?.image as string) || (node.metadata?.ogImage as string);
   if (isSource && previewImage) {
     h += 127;
+  }
+  if (isSource && node.fileData) {
+    h += 46;
   }
 
   const content = node.content || node.description || node.caption || '';
@@ -245,7 +262,7 @@ export function relationPath(
 }
 
 function GroupCard({
-  node, members, relationCount, isCollapsed, selected, isGrabbed, dragTilt = 0, onToggle, onOpen, onStartResize
+  node, members, relationCount, isCollapsed, selected, isGrabbed, onToggle, onOpen, onStartResize
 }: {
   node: CanvasNode;
   members: CanvasNode[];
@@ -253,7 +270,6 @@ function GroupCard({
   isCollapsed: boolean;
   selected: boolean;
   isGrabbed?: boolean;
-  dragTilt?: number;
   onToggle: () => void;
   onOpen: () => void;
   onStartResize: (event: React.PointerEvent, handle: SectionResizeHandle) => void;
@@ -263,7 +279,7 @@ function GroupCard({
     <article
       className={`graph-group ${isCollapsed ? 'is-folded' : ''} ${selected ? 'is-selected' : ''} ${isGrabbed ? 'is-grabbed' : ''}`}
       style={{
-        transform: isGrabbed ? `scale(1.012) rotate(${dragTilt * 0.35}deg)` : undefined,
+        transform: isGrabbed ? 'scale(1.012)' : undefined,
         transition: isGrabbed ? 'box-shadow 0.14s ease, border-color 0.14s ease' : 'transform 0.15s cubic-bezier(0.16,1,0.3,1), box-shadow 0.15s ease',
         ...(customColor ? {
           backgroundColor: hexToRgba(customColor, isCollapsed ? 0.07 : 0.09),
@@ -357,36 +373,41 @@ function GroupCard({
 }
 
 function KnowledgeCard({
-  node, selected, isEditing, isGrabbed, dragTilt = 0, onToggleEdit, onUpdateContent, onPointerDown, onClick
+  node, selected, isEditing, isGrabbed, onToggleEdit, onUpdateContent, onPointerDown, onClick, onOpenLightbox, onOpenFileModal
 }: {
   node: CanvasNode;
   selected: boolean;
   isEditing: boolean;
   isGrabbed?: boolean;
-  dragTilt?: number;
   onToggleEdit: () => void;
   onUpdateContent: (content: string) => void;
   onPointerDown: (event: React.PointerEvent, node: CanvasNode) => void;
   onClick: (event: React.MouseEvent, node: CanvasNode) => void;
+  onOpenLightbox?: (src: string, title?: string, caption?: string) => void;
+  onOpenFileModal?: (file: { fileData?: string; fileName?: string; fileSize?: number; fileType?: string; content?: string }) => void;
 }) {
   const customColor = node.color;
   const isSource = node.type === 'source' || node.type === 'link';
+  const isImage = node.type === 'image';
+  const hasFile = Boolean(node.fileData || node.fileName);
   const status = node.metadata?.claimStatus?.replaceAll('_', ' ');
   const safeUrl = safeExternalHref(node.url);
   const effectiveDomain = getWebsiteDomain(node.url, node.domain);
   const websiteLogo = (node.metadata?.logo as string) || (node.metadata?.favicon as string);
   const siteName = (node.metadata?.siteName as string);
-  const previewImage = node.imageUrl || (node.metadata?.image as string) || (node.metadata?.ogImage as string);
+  const rawImage = isImage ? (node.fileData || node.imageUrl) : (node.imageUrl || (node.metadata?.image as string) || (node.metadata?.ogImage as string));
+  const previewImage = (rawImage && !rawImage.includes('Changes icon') && !rawImage.includes('stays white')) ? rawImage : undefined;
+  const caption = (node.caption && !node.caption.includes('Changes icon') && !node.caption.includes('stays white')) ? node.caption : undefined;
   const author = (node.metadata?.author as string);
-  const body = node.content || node.description || node.caption || '';
+  const body = node.content || node.description || (!isImage ? caption : '') || '';
 
   return (
     <article
       data-graph-node={node.id}
       className={`knowledge-card type-${node.type} ${customColor ? 'has-custom-color' : ''} ${selected ? 'is-selected' : ''} ${isGrabbed ? 'is-grabbed' : ''}`}
       style={{
-        transform: `translate3d(${node.x}px, ${node.y}px, 0) scale(${isGrabbed ? 1.035 : 1}) rotate(${isGrabbed ? dragTilt : 0}deg) translateY(${isGrabbed ? -4 : 0}px)`,
-        width: node.width || 280,
+        transform: `translate3d(${node.x}px, ${node.y}px, 0) scale(${isGrabbed ? 1.035 : 1}) translateY(${isGrabbed ? -4 : 0}px)`,
+        width: node.width || (isImage ? 320 : 280),
         backgroundColor: '#ffffff',
         ...(customColor ? {
           ['--node-custom-color' as any]: customColor,
@@ -405,16 +426,16 @@ function KnowledgeCard({
       <div className="knowledge-card-topline">
         <span
           className="node-glyph"
-          style={customColor ? {
-            backgroundColor: customColor,
-            borderColor: customColor,
-            color: '#ffffff'
-          } : undefined}
+          style={customColor ? (
+            node.type === 'image'
+              ? { backgroundColor: 'transparent', borderColor: customColor, color: customColor }
+              : { backgroundColor: customColor, borderColor: customColor, color: '#ffffff' }
+          ) : undefined}
         >
-          {isSource && (safeUrl || effectiveDomain) ? (
+          {isSource && !hasFile && (safeUrl || effectiveDomain) ? (
             <WebsiteLogo url={safeUrl} domain={effectiveDomain} logo={websiteLogo} size={14} />
           ) : (
-            <NodeGlyph type={node.type} />
+            <NodeGlyph type={node.type} fileName={node.fileName} fileType={node.fileType} />
           )}
         </span>
         <span
@@ -431,15 +452,86 @@ function KnowledgeCard({
       </div>
       <h2>{node.title}</h2>
 
+      {/* Media & Figure preview */}
+      {isImage && (
+        <div className="figure-card-wrap">
+          {previewImage ? (
+            <div className="figure-image-container">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={previewImage}
+                alt={caption || node.title}
+                className="figure-card-img"
+                loading="lazy"
+              />
+              <button
+                type="button"
+                className="figure-zoom-btn"
+                title="Expand and view image"
+                aria-label="Expand and view image"
+                onPointerDown={event => event.stopPropagation()}
+                onClick={event => {
+                  event.stopPropagation();
+                  onOpenLightbox?.(previewImage, node.title, caption);
+                }}
+              >
+                <Maximize2 size={13} />
+              </button>
+            </div>
+          ) : (
+            <div className="figure-placeholder-box">
+              <Images size={26} className="figure-placeholder-icon" />
+              <span>Select record to add image</span>
+            </div>
+          )}
+          {/* Bottom part: image name and size */}
+          {(node.fileName || node.fileSize) && (
+            <div className="figure-file-meta">
+              <span className="figure-filename" title={node.fileName}>{node.fileName || 'Image asset'}</span>
+              {node.fileSize ? <span className="figure-filesize">{formatFileSize(node.fileSize)}</span> : null}
+            </div>
+          )}
+          {caption && <figcaption className="figure-card-caption">{caption}</figcaption>}
+        </div>
+      )}
+
       {/* Website preview image if available */}
-      {isSource && previewImage && (
+      {isSource && !hasFile && previewImage && (
         <WebsiteImage imageUrl={previewImage} alt={node.title} maxHeight={115} className="my-1.5" />
       )}
 
-      {node.type === 'note' ? isEditing ? <MarkdownEditor className="card-markdown-editor" value={node.content || ''} onChange={onUpdateContent} ariaLabel="Edit note in Markdown" /> : body ? <MarkdownView content={body} className="node-summary note-markdown-preview" onToggleTask={index => onUpdateContent(toggleMarkdownTask(body, index))} /> : <p className="node-summary note-placeholder">Add a note and format it with Markdown.</p> : body && <p className="node-summary">{body}</p>}
+      {/* File Attachment Badge for PDF, TXT, JSON, CSV, MD, Code */}
+      {hasFile && !isImage && (
+        <AttachedFileBadge
+          fileName={node.fileName}
+          fileSize={node.fileSize}
+          fileType={node.fileType}
+          fileData={node.fileData}
+          content={node.content}
+          onOpenPreview={() => onOpenFileModal?.({
+            fileData: node.fileData,
+            fileName: node.fileName,
+            fileSize: node.fileSize,
+            fileType: node.fileType,
+            content: node.content
+          })}
+        />
+      )}
+
+      {node.type === 'note' ? (
+        isEditing ? (
+          <MarkdownEditor className="card-markdown-editor" value={node.content || ''} onChange={onUpdateContent} ariaLabel="Edit note in Markdown" />
+        ) : body ? (
+          <MarkdownView content={body} className="node-summary note-markdown-preview" onToggleTask={index => onUpdateContent(toggleMarkdownTask(body, index))} />
+        ) : (
+          <p className="node-summary note-placeholder">Add a note and format it with Markdown.</p>
+        )
+      ) : body && !isImage ? (
+        <p className="node-summary">{body}</p>
+      ) : null}
 
       {/* Website metadata: logo, domain, author and external link */}
-      {isSource && (safeUrl || effectiveDomain) && (
+      {isSource && (safeUrl || effectiveDomain) && !hasFile && (
         <div className="source-meta-row">
           <a
             className="source-domain"
@@ -465,7 +557,8 @@ function KnowledgeCard({
 export function GraphCanvas({
   graph, selectedNodeIds, viewport, setViewport, activeTool, spacePressed, linkingFromId,
   autoFitKey, editingNoteId, onSelectNode, onClearSelection, onClickAway, onCancelLinking, onMoveNodes, onConnect,
-  onStartLinking, onToggleGroup, onEditNote, onUpdateNote, onUpdateRelationship, onDeleteRelationship, onResizeGroup, onOpenGroup
+  onStartLinking, onToggleGroup, onEditNote, onUpdateNote, onUpdateRelationship, onDeleteRelationship, onResizeGroup, onOpenGroup,
+  onAddRecordWithData
 }: {
   graph: KnowledgeGraph;
   selectedNodeIds: string[];
@@ -490,6 +583,7 @@ export function GraphCanvas({
   onDeleteRelationship: (id: string) => void;
   onResizeGroup: (id: string, fields: Partial<CanvasNode>) => void;
   onOpenGroup: (id: string) => void;
+  onAddRecordWithData?: (type: CanvasNodeType, initialData?: Partial<CanvasNode>) => void;
 }) {
   const canvasRef = useRef<HTMLDivElement>(null);
   const gesture = useRef<Gesture | null>(null);
@@ -499,14 +593,132 @@ export function GraphCanvas({
   const [cursorWorld, setCursorWorld] = useState<Coordinates | null>(null);
   const [nodeHeights, setNodeHeights] = useState<Record<string, number>>({});
   const [draggedNodeIds, setDraggedNodeIds] = useState<string[]>([]);
-  const [dragTilt, setDragTilt] = useState<number>(0);
-  const lastClientX = useRef<number | null>(null);
+  const [activeImage, setActiveImage] = useState<{ src: string; title?: string; caption?: string } | null>(null);
+  const [activeFile, setActiveFile] = useState<{ fileData?: string; fileName?: string; fileSize?: number; fileType?: string; content?: string } | null>(null);
   const nodes = Object.values(graph.nodesById);
   const groups = nodes.filter(node => node.type === 'group' || node.type === 'section');
   const visibleIds = new Set(nodes.filter(node => {
     if (node.type === 'group' || node.type === 'section') return true;
     return !groups.some(group => group.metadata?.collapsed === true && membersOf(group, nodes).some(member => member.id === node.id));
   }).map(node => node.id));
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || !onAddRecordWithData) return;
+
+    const handleDragOver = (e: DragEvent) => {
+      if (e.dataTransfer?.types.includes('Files')) {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'copy';
+      }
+    };
+
+    const handleDrop = (e: DragEvent) => {
+      if (!e.dataTransfer?.files?.length) return;
+      e.preventDefault();
+      const file = e.dataTransfer.files[0];
+      const rect = canvas.getBoundingClientRect();
+      const worldX = (e.clientX - rect.left - viewport.pan.x) / viewport.zoom;
+      const worldY = (e.clientY - rect.top - viewport.pan.y) / viewport.zoom;
+
+      if (file.type.startsWith('image/')) {
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+          const dataUrl = ev.target?.result as string;
+          onAddRecordWithData('image', {
+            x: Math.round(worldX - 160),
+            y: Math.round(worldY - 100),
+            title: file.name.replace(/\.[^/.]+$/, ''),
+            imageUrl: dataUrl,
+            fileData: dataUrl,
+            fileName: file.name,
+            fileSize: file.size,
+            fileType: file.type
+          });
+        };
+        reader.readAsDataURL(file);
+      } else {
+        const ext = file.name.split('.').pop()?.toLowerCase() || 'file';
+        const isText = ['json', 'txt', 'csv', 'tsv', 'md', 'js', 'ts', 'jsx', 'tsx', 'py', 'html', 'css', 'sql', 'sh', 'yaml', 'yml'].includes(ext) || file.type.startsWith('text/') || file.type.includes('json');
+
+        const readerDataUrl = new FileReader();
+        readerDataUrl.onload = (ev) => {
+          const dataUrl = ev.target?.result as string;
+          if (isText) {
+            const textReader = new FileReader();
+            textReader.onload = (textEv) => {
+              const textContent = textEv.target?.result as string;
+              onAddRecordWithData('source', {
+                x: Math.round(worldX - 140),
+                y: Math.round(worldY - 80),
+                title: file.name.replace(/\.[^/.]+$/, ''),
+                content: textContent.length > 50000 ? textContent.slice(0, 50000) : textContent,
+                fileData: dataUrl,
+                fileName: file.name,
+                fileSize: file.size,
+                fileType: ext
+              });
+            };
+            textReader.readAsText(file);
+          } else {
+            onAddRecordWithData('source', {
+              x: Math.round(worldX - 140),
+              y: Math.round(worldY - 80),
+              title: file.name.replace(/\.[^/.]+$/, ''),
+              fileData: dataUrl,
+              fileName: file.name,
+              fileSize: file.size,
+              fileType: ext
+            });
+          }
+        };
+        readerDataUrl.readAsDataURL(file);
+      }
+    };
+
+    const handlePaste = (e: ClipboardEvent) => {
+      const activeEl = document.activeElement;
+      if (activeEl?.tagName === 'INPUT' || activeEl?.tagName === 'TEXTAREA' || activeEl?.getAttribute('contenteditable')) {
+        return;
+      }
+      const items = e.clipboardData?.items;
+      if (!items) return;
+
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        if (item.type.indexOf('image') !== -1) {
+          const blob = item.getAsFile();
+          if (blob) {
+            e.preventDefault();
+            const reader = new FileReader();
+            reader.onload = (ev) => {
+              const dataUrl = ev.target?.result as string;
+              const cx = (window.innerWidth / 2 - viewport.pan.x) / viewport.zoom;
+              const cy = (window.innerHeight / 2 - viewport.pan.y) / viewport.zoom;
+              onAddRecordWithData('image', {
+                x: Math.round(cx - 160),
+                y: Math.round(cy - 100),
+                title: 'Pasted figure',
+                imageUrl: dataUrl,
+                fileData: dataUrl
+              });
+            };
+            reader.readAsDataURL(blob);
+            return;
+          }
+        }
+      }
+    };
+
+    canvas.addEventListener('dragover', handleDragOver);
+    canvas.addEventListener('drop', handleDrop);
+    window.addEventListener('paste', handlePaste);
+    return () => {
+      canvas.removeEventListener('dragover', handleDragOver);
+      canvas.removeEventListener('drop', handleDrop);
+      window.removeEventListener('paste', handlePaste);
+    };
+  }, [onAddRecordWithData, viewport]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -615,12 +827,6 @@ export function GraphCanvas({
       } else {
         const dx = (event.clientX - current.start.x) / viewport.zoom;
         const dy = (event.clientY - current.start.y) / viewport.zoom;
-        if (lastClientX.current !== null) {
-          const vx = event.clientX - lastClientX.current;
-          const targetTilt = Math.min(4, Math.max(-4, vx * 0.42));
-          setDragTilt(targetTilt);
-        }
-        lastClientX.current = event.clientX;
         onMoveNodes(Object.fromEntries(Object.entries(current.origins).map(([id, point]) => [id, { x: point.x + dx, y: point.y + dy }])));
       }
     };
@@ -628,15 +834,11 @@ export function GraphCanvas({
       activePointers.current.delete(event.pointerId);
       if (gesture.current?.kind === 'drag') {
         setDraggedNodeIds([]);
-        setDragTilt(0);
-        lastClientX.current = null;
       }
       gesture.current = null;
     };
     const cancel = () => {
       setDraggedNodeIds([]);
-      setDragTilt(0);
-      lastClientX.current = null;
       gesture.current = null;
     };
     window.addEventListener('pointermove', move);
@@ -707,7 +909,6 @@ export function GraphCanvas({
       ? [...new Set([...movingIds, ...membersOf(node, nodes).map(member => member.id)])]
       : movingIds;
     setDraggedNodeIds(moveNodes);
-    lastClientX.current = event.clientX;
     const origins = Object.fromEntries(moveNodes.map(id => {
       const found = graph.nodesById[id];
       return [id, { x: found.x, y: found.y }];
@@ -855,7 +1056,6 @@ export function GraphCanvas({
                 isCollapsed={group.metadata?.collapsed === true}
                 selected={selectedNodeIds.includes(group.id)}
                 isGrabbed={draggedNodeIds.includes(group.id)}
-                dragTilt={draggedNodeIds.includes(group.id) ? dragTilt : 0}
                 onToggle={() => onToggleGroup(group.id)}
                 onOpen={() => onOpenGroup(group.id)}
                 onStartResize={(event, handle) => startGroupResize(event, group, handle)}
@@ -869,10 +1069,11 @@ export function GraphCanvas({
             node={node}
             selected={selectedNodeIds.includes(node.id)}
             isGrabbed={draggedNodeIds.includes(node.id)}
-            dragTilt={draggedNodeIds.includes(node.id) ? dragTilt : 0}
             isEditing={editingNoteId === node.id}
             onToggleEdit={() => onEditNote(editingNoteId === node.id ? null : node.id)}
             onUpdateContent={content => onUpdateNote(node.id, content)}
+            onOpenLightbox={(src, title, caption) => setActiveImage({ src, title, caption })}
+            onOpenFileModal={file => setActiveFile(file)}
             onPointerDown={startNodeDrag}
             onClick={(event, current) => {
               event.stopPropagation();
@@ -884,6 +1085,26 @@ export function GraphCanvas({
       </div>
       {linkingFromId && <div className="canvas-instruction">Choose a node to create a relationship <button onClick={onCancelLinking}>Cancel</button></div>}
       {activeTool === 'connect' && !linkingFromId && <div className="canvas-instruction">Select two nodes to describe their relationship</div>}
+
+      {activeImage && (
+        <ImageViewerModal
+          src={activeImage.src}
+          title={activeImage.title}
+          caption={activeImage.caption}
+          onClose={() => setActiveImage(null)}
+        />
+      )}
+
+      {activeFile && (
+        <FileViewerModal
+          fileData={activeFile.fileData}
+          fileName={activeFile.fileName}
+          fileSize={activeFile.fileSize}
+          fileType={activeFile.fileType}
+          content={activeFile.content}
+          onClose={() => setActiveFile(null)}
+        />
+      )}
     </div>
   );
 }
