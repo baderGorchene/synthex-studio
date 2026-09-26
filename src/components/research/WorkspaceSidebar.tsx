@@ -1,8 +1,9 @@
 'use client';
 
-import { BookOpenText, Boxes, ChevronDown, FileClock, Files, FolderKanban, GripVertical, Hand, MousePointer2, Network, Plus, Search, Shapes, Sparkles, CircleHelp, GitBranch, Scan } from 'lucide-react';
+import { BookOpenText, BookOpen, Boxes, ChevronDown, CircleHelp, FileClock, Files, FileText, FlaskConical, FolderKanban, GripVertical, Hand, Layers2, Lightbulb, MousePointer2, Network, Plus, Search, Shapes, Sparkles, Quote, GitBranch, Scan } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { CustomSelect } from './CustomSelect';
+import type { CanvasNodeType } from '@/types/canvas';
 export interface ResearchProject {
   id: string;
   title: string;
@@ -19,8 +20,18 @@ const primary = [
   { id: 'table', label: 'Claims & questions', icon: Files }
 ] as const;
 
+const addableRecords = [
+  { type: 'concept', label: 'Concept', icon: Lightbulb },
+  { type: 'claim', label: 'Claim', icon: Quote },
+  { type: 'question', label: 'Question', icon: CircleHelp },
+  { type: 'hypothesis', label: 'Hypothesis', icon: FlaskConical },
+  { type: 'source', label: 'Source', icon: BookOpen },
+  { type: 'note', label: 'Note', icon: FileText },
+  { type: 'group', label: 'Knowledge cluster', icon: Layers2 }
+] as const;
+
 export function WorkspaceSidebar({
-  projects, projectId, section, aiConfigured, pendingCount = 0, floating = false, activeTool = 'select', onSelectTool, onFit, onSelectProject, onOpenProjects, onNavigate, onSearch
+  projects, projectId, section, aiConfigured, pendingCount = 0, floating = false, activeTool = 'select', onSelectTool, onFit, onAddRecord, onSelectProject, onOpenProjects, onNavigate, onSearch
 }: {
   projects: ResearchProject[];
   projectId: string;
@@ -31,12 +42,14 @@ export function WorkspaceSidebar({
   activeTool?: CanvasTool;
   onSelectTool?: (tool: CanvasTool) => void;
   onFit?: () => void;
+  onAddRecord?: (type: CanvasNodeType) => void;
   onSelectProject: (id: string) => void;
   onOpenProjects: () => void;
   onNavigate: (section: WorkspaceSection) => void;
   onSearch: () => void;
 }) {
   const project = projects.find(item => item.id === projectId);
+  const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
   const dragOrigin = useRef<{ x: number; y: number; left: number; top: number } | null>(null);
   useEffect(() => {
@@ -65,6 +78,12 @@ export function WorkspaceSidebar({
       <button className={`sidebar-tool-button ${activeTool === 'connect' ? 'active' : ''}`} aria-label="Connect records" aria-pressed={activeTool === 'connect'} onClick={() => onSelectTool?.('connect')}><GitBranch size={16} /><span className="tool-tooltip">Connect records · C</span></button>
       <button className={`sidebar-tool-button ${activeTool === 'hand' ? 'active' : ''}`} aria-label="Pan canvas" aria-pressed={activeTool === 'hand'} onClick={() => onSelectTool?.('hand')}><Hand size={16} /><span className="tool-tooltip">Pan canvas</span></button>
       <button className="sidebar-tool-button" aria-label="Fit sheet" onClick={onFit}><Scan size={16} /><span className="tool-tooltip">Fit sheet</span></button>
+      <div className="dock-add-record">
+        <button className={`sidebar-tool-button ${addMenuOpen ? 'active' : ''}`} aria-label="Add record" aria-expanded={addMenuOpen} aria-haspopup="menu" onClick={() => setAddMenuOpen(value => !value)}><Plus size={17} /><span className="tool-tooltip">Add record</span></button>
+        {addMenuOpen && <div className="dock-add-record-menu" role="menu" aria-label="Add record type">
+          {addableRecords.map(({ type, label, icon: Icon }) => <button key={type} className={`record-create-item type-${type}`} role="menuitem" onClick={() => { onAddRecord?.(type); setAddMenuOpen(false); }}><span><Icon size={15} /></span>{label}</button>)}
+        </div>}
+      </div>
     </div>
   </aside>;
   return (

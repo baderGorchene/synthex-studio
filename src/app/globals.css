@@ -776,3 +776,14 @@ button:not(.tool-button):not(.icon-button):not(.group-fold):not(.assistant-trigg
   .floating-inspector { top: 196px; max-height: calc(100dvh - 208px); }
   .floating-chat-sidebar { height: calc(100dvh - 208px); min-height: 320px; }
 }
+
+.dock-add-record { position: relative; }
+.dock-add-record:has(.dock-add-record-menu) .tool-tooltip { display: none !important; }
+.dock-add-record-menu { position: absolute; z-index: 80; left: calc(100% + 9px); bottom: 0; display: grid; gap: 3px; width: 190px; padding: 6px; border: 1px solid #dfe5ee; border-radius: 9px; background: rgba(255,255,255,.98); box-shadow: 0 9px 27px rgba(28,43,66,.16); }
+.dock-add-record-menu .record-create-item { display: flex; align-items: center; gap: 9px; min-height: 34px; padding: 4px 7px; border: 0; border-radius: 6px; color: #47536a; background: transparent; text-align: left; cursor: pointer; }
+.dock-add-record-menu .record-create-item:hover { background: #f4f6fa; }
+.record-create-item > span { display: grid; place-items: center; width: 23px; height: 23px; flex: 0 0 auto; border-radius: 6px; color: #385d91; background: #edf2f9; }
+.record-create-item.type-claim > span, .record-create-item.type-question > span { color: #a06d58; background: #faf2ed; }
+.record-create-item.type-source > span { color: #557a82; background: #edf4f4; }
+.record-create-item.type-hypothesis > span { color: #6d65a0; background: #f1effa; }
+.record-create-item.type-group > span { color: #655d91; background: #f0eff8; }

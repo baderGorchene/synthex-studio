@@ -407,6 +407,7 @@ export default function SynthexWorkspace() {
         floating={section === 'canvas'}
         activeTool={tool} onSelectTool={value => { setTool(value); setLinkingFromId(null); }}
         onFit={() => setCanvasFitKey(value => value + 1)}
+        onAddRecord={addRecord}
         onSelectProject={setProjectId} onOpenProjects={() => setModal('project')} onNavigate={value => { setSection(value); setSelectedIds([]); setEditingNoteId(null); setLinkingFromId(null); setTool('select'); }}
         onSearch={() => setModal('search')}
       />
