@@ -441,7 +441,7 @@ export default function SynthexWorkspace() {
               <p>{plural(nodes.length, 'record')} <span>·</span> {plural(edges.length, 'relationship')} <span>·</span> {plural(nodes.filter(node => node.type === 'source' || node.type === 'link').length, 'source')}</p></div>
           </div>
           <div className="heading-actions">
-            <button className="quiet-button assistant-trigger" onClick={() => { setModal('chat'); setChatLines([]); }}><MessageCircle size={15} /> Ask this graph</button>
+            <button className="quiet-button assistant-trigger" aria-expanded={modal === 'chat'} onClick={() => setModal(current => current === 'chat' ? null : 'chat')}><MessageCircle size={15} /> Ask this graph</button>
             <div className="menu-anchor">
               <button className="primary-button add-trigger" onClick={() => setAddMenu(value => !value)}><Plus size={16} /> Add record <ChevronDown size={13} /></button>
               {addMenu && <div className="menu-popover add-menu">
@@ -465,7 +465,7 @@ export default function SynthexWorkspace() {
                   onUpdateRelationship={editRelationship} onDeleteRelationship={deleteRelationship} onResizeGroup={resizeGroup} onOpenGroup={id => { setEditingNoteId(null); setGroupCanvasId(id); }}
                 />}
               </div>
-              {selectedNode && <NodeInspector floating={section === 'canvas'} node={selectedNode} relationshipCount={edges.filter(edge => edge.from === selectedNode.id || edge.to === selectedNode.id).length} onUpdate={updateSelectedNode} onDelete={deleteSelected} onClose={() => setSelectedIds([])} />}
+              {selectedNode && modal !== 'chat' && <NodeInspector floating={section === 'canvas'} node={selectedNode} relationshipCount={edges.filter(edge => edge.from === selectedNode.id || edge.to === selectedNode.id).length} onUpdate={updateSelectedNode} onDelete={deleteSelected} onClose={() => setSelectedIds([])} />}
               {selectedIds.length > 1 && <aside className="inspector-panel multi-inspector"><button className="icon-button" aria-label="Close selection" onClick={() => setSelectedIds([])}><X size={17} /></button><Layers2 size={22} /><h2>{plural(selectedIds.length, 'record')} selected</h2><p>Move them together by dragging one selected record.</p><button className="danger-button" onClick={() => { updateGraph(current => selectedIds.reduce(removeNode, current)); setSelectedIds([]); }}>Delete selection</button></aside>}
             </div>
             <div className="canvas-footer"><span><i className="legend-dot idea" /> Ideas <i className="legend-dot claim" /> Claims <i className="legend-dot source" /> Sources <i className="legend-line" /> Relationships</span><span>{plural(nodes.length, 'record')} · {plural(edges.length, 'relationship')} · {viewport.zoom.toFixed(2)}×</span></div>
@@ -504,10 +504,9 @@ export default function SynthexWorkspace() {
         </section>
       </div>}
 
-      {modal === 'chat' && <div className="modal-scrim" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setModal(null); }}>
-        <section className="work-modal chat-modal" role="dialog" aria-modal="true" aria-labelledby="chat-title">
-          <div className="modal-head"><span className="modal-icon"><MessageCircle size={18} /></span><button className="icon-button" aria-label="Close graph assistant" onClick={() => setModal(null)}><X size={17} /></button></div>
-          <span className="panel-overline">Graph assistant</span><h2 id="chat-title">Ask this knowledge sheet</h2><p className="modal-intro">Answers use the saved records and relationships in this workspace. Missing evidence is called out.</p>
+      {modal === 'chat' && <aside className="inspector-panel floating-inspector floating-chat-sidebar" role="dialog" aria-label="Graph assistant">
+          <div className="inspector-head"><div className="inspector-title"><span className="panel-overline">Graph assistant</span><h2>Ask this knowledge sheet</h2></div><button className="icon-button" aria-label="Close graph assistant" onClick={() => setModal(null)}><X size={17} /></button></div>
+          <p className="modal-intro">Answers use the saved records and relationships in this workspace. Missing evidence is called out.</p>
           {!aiConfigured && <div className="configuration-note"><CircleHelp size={15} /> Add <code>GEMINI_API_KEY</code> to the server environment to enable answers.</div>}
           <div className="chat-transcript" aria-live="polite">
             {chatLines.length === 0 && <div className="chat-welcome"><span className="chat-sparkle"><Sparkles size={16} /></span><strong>Start from what’s already here</strong><p>Ask how ideas connect, what evidence is missing, or what question to explore next.</p><div className="suggestion-chips">{['What remains unverified?', 'Summarize the main ideas'].map(text => <button key={text} onClick={() => setChatInput(text)}>{text}</button>)}</div></div>}
@@ -516,8 +515,7 @@ export default function SynthexWorkspace() {
           </div>
           <form className="chat-compose" onSubmit={sendQuestion}><input aria-label="Ask a question about this graph" placeholder="Ask about this graph…" value={chatInput} onChange={event => setChatInput(event.target.value)} maxLength={2000} disabled={!aiConfigured || chatBusy} /><button className="primary-button" disabled={!chatInput.trim() || !aiConfigured || chatBusy} aria-label="Send question"><Send size={15} /></button></form>
           <div className="chat-footnote">AI responses are suggestions; verify claims against original sources.</div>
-        </section>
-      </div>}
+      </aside>}
 
       {modal === 'project' && <div className="modal-scrim" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setModal(null); }}>
         <section className="work-modal project-modal" role="dialog" aria-modal="true" aria-labelledby="project-title">
