@@ -9,6 +9,7 @@ import {
 import { GraphCanvas } from '@/components/research/GraphCanvas';
 import { KnowledgeViews } from '@/components/research/KnowledgeViews';
 import { NodeInspector } from '@/components/research/NodeInspector';
+import { CustomSelect } from '@/components/research/CustomSelect';
 import { WorkspaceSidebar, type ResearchProject, type WorkspaceSection } from '@/components/research/WorkspaceSidebar';
 import { addNode, addRelationship, exportContextMarkdown, exportGraphJson, exportMermaid, normalizeGraph, removeNode, updateNode, updateRelationship, type KnowledgeGraph } from '@/lib/graph';
 import type { CanvasNode, CanvasNodeType, Connection, Coordinates, ResearchChange, ResearchSession } from '@/types/canvas';
@@ -536,7 +537,7 @@ export default function SynthexWorkspace() {
           <div className="project-form-divider"><span>Or create a new one</span></div>
           <form onSubmit={createProject}>
             <label className="field-label" htmlFor="project-name">Workspace name</label><input className="field-input" id="project-name" autoFocus value={projectTitleDraft} onChange={event => setProjectTitleDraft(event.target.value)} maxLength={80} minLength={2} placeholder="e.g. Small language models" required />
-            <label className="field-label" htmlFor="project-template">Start with</label><select id="project-template" className="field-input" value={projectTemplate} onChange={event => setProjectTemplate(event.target.value as 'blank' | 'rag')}><option value="rag">A sample knowledge sheet</option><option value="blank">An empty sheet</option></select>
+            <span className="field-label">Start with</span><CustomSelect className="field-input project-template-select" ariaLabel="Start with" value={projectTemplate} options={[{ value: 'rag', label: 'A sample knowledge sheet' }, { value: 'blank', label: 'An empty sheet' }]} onChange={value => setProjectTemplate(value as 'blank' | 'rag')} />
             <div className="modal-footer"><span>Stored in this local workspace</span><button className="primary-button" disabled={creatingProject || projectTitleDraft.trim().length < 2}>{creatingProject ? <><LoaderCircle size={15} className="spin" /> Creating…</> : <><Plus size={15} /> Create workspace</>}</button></div>
           </form>
         </section>

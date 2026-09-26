@@ -1,9 +1,9 @@
 'use client';
 
-import { ExternalLink, GripVertical, Trash2, X } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { ExternalLink, Trash2, X } from 'lucide-react';
 import type { CanvasNode, CanvasNodeType } from '@/types/canvas';
 import { MarkdownEditor } from './MarkdownEditor';
+import { CustomSelect } from './CustomSelect';
 
 const types: Array<{ id: CanvasNodeType; label: string }> = [
   { id: 'concept', label: 'Concept' }, { id: 'claim', label: 'Claim' }, { id: 'question', label: 'Question' },
@@ -23,24 +23,6 @@ export function NodeInspector({
   onClose: () => void;
   floating?: boolean;
 }) {
-  const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
-  const dragOrigin = useRef<{ x: number; y: number; left: number; top: number } | null>(null);
-  useEffect(() => {
-    const move = (event: PointerEvent) => {
-      const origin = dragOrigin.current;
-      if (!origin) return;
-      const width = 300;
-      const height = window.innerHeight - 24;
-      setPosition({
-        x: Math.max(8, Math.min(window.innerWidth - width - 8, origin.left + event.clientX - origin.x)),
-        y: Math.max(8, Math.min(window.innerHeight - Math.min(height, 240) - 8, origin.top + event.clientY - origin.y))
-      });
-    };
-    const up = () => { dragOrigin.current = null; };
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', up);
-    return () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
-  }, []);
   const isClaim = node.type === 'claim';
   let safeUrl: string | undefined;
   try {
@@ -48,27 +30,19 @@ export function NodeInspector({
     if (parsed.protocol === 'http:' || parsed.protocol === 'https:') safeUrl = parsed.href;
   } catch { /* Keep malformed source text editable without making it clickable. */ }
   return (
-    <aside className={`inspector-panel ${floating ? 'floating-inspector' : ''}`} aria-label="Node details" style={floating && position ? { left: position.x, top: position.y, right: 'auto', bottom: 'auto' } : undefined}>
+    <aside className={`inspector-panel ${floating ? 'floating-inspector' : ''}`} aria-label="Node details">
       <div className="inspector-head">
         <div className="inspector-title"><span className="panel-overline">Knowledge record</span><h2>Details</h2></div>
-        {floating && <button className="panel-drag-handle" aria-label="Move details panel" title="Drag to move panel" onPointerDown={event => {
-          const rect = event.currentTarget.closest('.inspector-panel')?.getBoundingClientRect();
-          if (!rect) return;
-          dragOrigin.current = { x: event.clientX, y: event.clientY, left: rect.left, top: rect.top };
-          setPosition({ x: rect.left, y: rect.top });
-        }}><GripVertical size={15} /></button>}
         <button className="icon-button" aria-label="Close details" onClick={onClose}><X size={17} /></button>
       </div>
       <label className="field-label" htmlFor="node-title">Title</label>
       <input id="node-title" className="field-input title-input" maxLength={500} value={node.title} onChange={event => onUpdate({ title: event.target.value })} onBlur={() => { if (!node.title.trim()) onUpdate({ title: node.type === 'group' || node.type === 'section' ? 'Untitled cluster' : 'Untitled record' }); }} />
 
       <label className="field-label" htmlFor="node-kind">Record type</label>
-      <select id="node-kind" className="field-input" value={node.type} onChange={event => {
-        const type = event.target.value as CanvasNodeType;
+      <CustomSelect className="field-input" ariaLabel="Record type" value={node.type} options={types.map(item => ({ value: item.id, label: item.label }))} onChange={value => {
+        const type = value as CanvasNodeType;
         onUpdate({ type, ...(type === 'claim' && !node.metadata?.claimStatus ? { metadata: { ...node.metadata, claimStatus: 'unverified' } } : {}) });
-      }}>
-        {types.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}
-      </select>
+      }} />
 
       <label className="field-label" htmlFor="node-content">Notes</label>
       {node.type === 'note' ? <MarkdownEditor className="inspector-markdown-editor" ariaLabel="Note content in Markdown" value={node.content || ''} onChange={content => onUpdate({ content })} /> : <textarea id="node-content" className="field-input field-textarea" maxLength={50000} placeholder="Add a description, evidence, or a working thought…" value={node.content || ''} onChange={event => onUpdate({ content: event.target.value })} />}
@@ -83,11 +57,10 @@ export function NodeInspector({
 
       {isClaim && <>
         <label className="field-label" htmlFor="claim-status">Evidence status</label>
-        <select id="claim-status" className="field-input" value={node.metadata?.claimStatus || 'unverified'} onChange={event => onUpdate({ metadata: { ...node.metadata, claimStatus: event.target.value as NonNullable<CanvasNode['metadata']>['claimStatus'] } })}>
-          <option value="unverified">Unverified</option><option value="weakly_supported">Weakly supported</option>
-          <option value="supported">Supported</option><option value="disputed">Disputed</option>
-          <option value="contradicted">Contradicted</option><option value="outdated">Outdated</option>
-        </select>
+        <CustomSelect className="field-input" ariaLabel="Evidence status" value={node.metadata?.claimStatus || 'unverified'} options={[
+          { value: 'unverified', label: 'Unverified' }, { value: 'weakly_supported', label: 'Weakly supported' }, { value: 'supported', label: 'Supported' },
+          { value: 'disputed', label: 'Disputed' }, { value: 'contradicted', label: 'Contradicted' }, { value: 'outdated', label: 'Outdated' }
+        ]} onChange={value => onUpdate({ metadata: { ...node.metadata, claimStatus: value as NonNullable<CanvasNode['metadata']>['claimStatus'] } })} />
       </>}
 
       <div className="inspector-facts">

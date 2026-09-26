@@ -2,6 +2,7 @@
 
 import { BookOpenText, Boxes, ChevronDown, FileClock, Files, FolderKanban, GripVertical, Hand, MousePointer2, Network, Plus, Search, Shapes, Sparkles, CircleHelp, GitBranch } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
+import { CustomSelect } from './CustomSelect';
 export interface ResearchProject {
   id: string;
   title: string;
@@ -42,8 +43,8 @@ export function WorkspaceSidebar({
       const origin = dragOrigin.current;
       if (!origin) return;
       setPosition({
-        x: Math.max(8, Math.min(window.innerWidth - 240, origin.left + event.clientX - origin.x)),
-        y: Math.max(8, Math.min(window.innerHeight - 160, origin.top + event.clientY - origin.y))
+        x: Math.max(8, Math.min(window.innerWidth - 72, origin.left + event.clientX - origin.x)),
+        y: Math.max(8, Math.min(window.innerHeight - 145, origin.top + event.clientY - origin.y))
       });
     };
     const up = () => { dragOrigin.current = null; };
@@ -51,14 +52,21 @@ export function WorkspaceSidebar({
     window.addEventListener('pointerup', up);
     return () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
   }, []);
+  if (floating) return <aside className="workspace-sidebar floating-workspace-sidebar canvas-tool-dock" style={position ? { left: position.x, top: position.y, right: 'auto', bottom: 'auto', transform: 'none' } : undefined} aria-label="Canvas tools">
+    <button className="sidebar-drag-handle" aria-label="Move tool sidebar" title="Drag to move" onPointerDown={event => {
+      const rect = event.currentTarget.closest('.workspace-sidebar')?.getBoundingClientRect();
+      if (!rect) return;
+      dragOrigin.current = { x: event.clientX, y: event.clientY, left: rect.left, top: rect.top };
+      setPosition({ x: rect.left, y: rect.top });
+    }}><GripVertical size={16} /></button>
+    <div className="sidebar-tool-row" role="group" aria-label="Canvas tools">
+      <button className={`sidebar-tool-button ${activeTool === 'select' ? 'active' : ''}`} aria-label="Select and move records" aria-pressed={activeTool === 'select'} onClick={() => onSelectTool?.('select')}><MousePointer2 size={16} /><span className="tool-tooltip">Select and move</span></button>
+      <button className={`sidebar-tool-button ${activeTool === 'connect' ? 'active' : ''}`} aria-label="Connect records" aria-pressed={activeTool === 'connect'} onClick={() => onSelectTool?.('connect')}><GitBranch size={16} /><span className="tool-tooltip">Connect records · C</span></button>
+      <button className={`sidebar-tool-button ${activeTool === 'hand' ? 'active' : ''}`} aria-label="Pan canvas" aria-pressed={activeTool === 'hand'} onClick={() => onSelectTool?.('hand')}><Hand size={16} /><span className="tool-tooltip">Pan canvas</span></button>
+    </div>
+  </aside>;
   return (
     <aside className={`workspace-sidebar ${floating ? 'floating-workspace-sidebar' : ''}`} style={floating && position ? { left: position.x, top: position.y, right: 'auto', bottom: 'auto', height: `min(680px, calc(100dvh - ${position.y + 14}px))` } : undefined}>
-      {floating && <button className="sidebar-drag-handle" aria-label="Move workspace sidebar" title="Drag to move sidebar" onPointerDown={event => {
-        const rect = event.currentTarget.closest('.workspace-sidebar')?.getBoundingClientRect();
-        if (!rect) return;
-        dragOrigin.current = { x: event.clientX, y: event.clientY, left: rect.left, top: rect.top };
-        setPosition({ x: rect.left, y: rect.top });
-      }}><GripVertical size={14} /><span>Workspace</span><span className="drag-handle-spacer" /></button>}
       <a className="brand-lockup" href="#workspace" aria-label="Synthex workspace">
         <span className="brand-mark"><i /><i /><i /><i /></span>
         <span className="brand-name">Synthex</span>
@@ -66,9 +74,7 @@ export function WorkspaceSidebar({
 
       <div className="project-switcher">
         <span className="workspace-caption">Personal workspace</span>
-        <select aria-label="Choose project" value={projectId} onChange={event => onSelectProject(event.target.value)}>
-          {projects.map(item => <option key={item.id} value={item.id}>{item.title}</option>)}
-        </select>
+        <CustomSelect ariaLabel="Choose project" value={projectId} options={projects.map(item => ({ value: item.id, label: item.title }))} onChange={onSelectProject} />
         <ChevronDown className="project-chevron" size={14} />
         <button className="icon-button project-menu-button" aria-label="Manage projects" onClick={onOpenProjects}><Plus size={15} /></button>
         <span className="project-title-small">{project?.title || 'Loading project'}</span>

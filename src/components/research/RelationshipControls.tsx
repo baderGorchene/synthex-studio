@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Check, Settings2, Trash2, X } from 'lucide-react';
 import type { Connection } from '@/types/canvas';
+import { CustomSelect } from './CustomSelect';
 
 const colors = [
   ['neutral', '#86948a'], ['indigo', '#6571a6'], ['emerald', '#53806b'],
@@ -32,7 +33,7 @@ export function RelationshipControls({ connection, x, y, onUpdate, onDelete }: {
   }, [optionsOpen]);
   const save = () => { onUpdate({ label: label.trim() }); setEditing(false); };
 
-  return <foreignObject x={x - 92} y={y - 18} width="184" height={optionsOpen ? 204 : 38} className="relationship-controls-foreign">
+  return <foreignObject x={x - 92} y={y - 18} width="184" height={optionsOpen ? 330 : 38} className="relationship-controls-foreign">
     <div ref={root} className={`relationship-controls ${optionsOpen ? 'options-open' : ''}`} onPointerDown={event => event.stopPropagation()} onClick={event => event.stopPropagation()} onKeyDown={event => { if (event.key === 'Escape') setOptionsOpen(false); }}>
       <div className="relationship-pill">
         <button className="relationship-control-icon relationship-settings" aria-label="Relationship settings" title="Style relationship" onClick={() => setOptionsOpen(value => !value)}><Settings2 size={13} /></button>
@@ -43,9 +44,9 @@ export function RelationshipControls({ connection, x, y, onUpdate, onDelete }: {
       </div>
       {optionsOpen && <div className="relationship-options">
         <div className="relationship-options-head"><span>Relationship style</span><button aria-label="Close relationship settings" onClick={() => setOptionsOpen(false)}><X size={12} /></button></div>
-        <label>Line <select value={connection.lineStyle || 'curved'} onChange={event => onUpdate({ lineStyle: event.target.value as Connection['lineStyle'] })}><option value="curved">Curved</option><option value="straight">Straight</option><option value="stepped">Stepped</option></select></label>
-        <label>Arrow <select value={connection.arrowhead || 'end'} onChange={event => onUpdate({ arrowhead: event.target.value as Connection['arrowhead'] })}><option value="end">Forward</option><option value="both">Both ends</option><option value="start">Reverse</option><option value="none">None</option></select></label>
-        <label>Pattern <select value={connection.strokePattern || 'solid'} onChange={event => onUpdate({ strokePattern: event.target.value as Connection['strokePattern'] })}><option value="solid">Solid</option><option value="dashed">Dashed</option><option value="dotted">Dotted</option></select></label>
+        <label>Line <CustomSelect className="relationship-select" ariaLabel="Line style" value={connection.lineStyle || 'curved'} options={[{ value: 'curved', label: 'Curved' }, { value: 'straight', label: 'Straight' }, { value: 'stepped', label: 'Stepped' }]} onChange={value => onUpdate({ lineStyle: value as Connection['lineStyle'] })} /></label>
+        <label>Arrow <CustomSelect className="relationship-select" ariaLabel="Arrow direction" value={connection.arrowhead || 'end'} options={[{ value: 'end', label: 'Forward' }, { value: 'both', label: 'Both ends' }, { value: 'start', label: 'Reverse' }, { value: 'none', label: 'None' }]} onChange={value => onUpdate({ arrowhead: value as Connection['arrowhead'] })} /></label>
+        <label>Pattern <CustomSelect className="relationship-select" ariaLabel="Line pattern" value={connection.strokePattern || 'solid'} options={[{ value: 'solid', label: 'Solid' }, { value: 'dashed', label: 'Dashed' }, { value: 'dotted', label: 'Dotted' }]} onChange={value => onUpdate({ strokePattern: value as Connection['strokePattern'] })} /></label>
         <div className="relationship-color-row" aria-label="Relationship color">{colors.map(([id, color]) => <button key={id} aria-label={`${id} relationship color`} aria-pressed={(connection.color || 'neutral') === id} style={{ backgroundColor: color }} onClick={() => onUpdate({ color: id })}>{connection.color === id && <Check size={11} />}</button>)}</div>
         <label className="relationship-animation"><input type="checkbox" checked={Boolean(connection.animated)} onChange={event => onUpdate({ animated: event.target.checked })} /> Flow animation</label>
       </div>}
