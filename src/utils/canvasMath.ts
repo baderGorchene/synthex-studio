@@ -1,4 +1,4 @@
-import { CanvasNode, Connection, ConnectionPath, Coordinates } from '@/types/canvas';
+import type { CanvasNode, Connection, ConnectionPath, Coordinates } from '../types/canvas';
 
 export function screenToCanvas(
   screenX: number,
@@ -24,25 +24,40 @@ export function getNodeHeight(node: CanvasNode): number {
   if (node.height && node.height > 0) {
     return node.height;
   }
-  if (node.type === 'section') {
-    return 420;
+  if (node.type === 'section' || node.type === 'group') {
+    return node.metadata?.collapsed ? 98 : (node.height || 360);
   }
   if (node.type === 'image') {
     return 290;
   }
   if (node.type === 'task') {
     const itemCount = node.items?.length || 0;
-    // Header (~36px) + padding (~28px) + optional progress (~24px) + items (~30px each) + add button (~30px)
     return Math.max(90 + (itemCount > 0 ? 24 : 0) + itemCount * 30, 90);
   }
-  if (node.type === 'link') {
-    return 140;
+  let h = 51;
+  const titleLines = Math.max(1, Math.ceil((node.title?.length || 10) / 26));
+  h += titleLines * 22;
+
+  const isSource = node.type === 'source' || node.type === 'link';
+  const previewImage = node.imageUrl || (node.metadata?.image as string) || (node.metadata?.ogImage as string);
+  if (isSource && previewImage) {
+    h += 127;
   }
-  if (node.type === 'note') {
-    const len = (node.content || '').length;
-    return len > 150 ? 220 : len > 50 ? 175 : 155;
+
+  const content = node.content || node.description || node.caption || '';
+  if (content) {
+    const lines = Math.min(4, Math.max(1, Math.ceil(content.length / 35)));
+    h += lines * 18 + 6;
   }
-  return 140;
+
+  if (isSource && (node.url || (node as unknown as { domain?: string }).domain)) {
+    h += 32;
+  }
+  if (node.metadata?.evidence?.length) {
+    h += 24;
+  }
+
+  return Math.max(124, Math.round(h));
 }
 
 export function calculateConnectionPaths(
@@ -57,9 +72,9 @@ export function calculateConnectionPaths(
     const toNode = nodeMap.get(conn.to);
     if (!fromNode || !toNode) continue;
 
-    const fromW = fromNode.width || 300;
+    const fromW = fromNode.width || 280;
     const fromH = getNodeHeight(fromNode);
-    const toW = toNode.width || 300;
+    const toW = toNode.width || 280;
     const toH = getNodeHeight(toNode);
 
     const fromCenter = { x: fromNode.x + fromW / 2, y: fromNode.y + fromH / 2 };
@@ -68,62 +83,86 @@ export function calculateConnectionPaths(
     const dx = toCenter.x - fromCenter.x;
     const dy = toCenter.y - fromCenter.y;
 
-    let start = { x: fromCenter.x, y: fromCenter.y };
-    let end = { x: toCenter.x, y: toCenter.y };
+    const aspectWeight = (fromH + toH) / (fromW + toW);
+    const isHorizontal = Math.abs(dx) * aspectWeight > Math.abs(dy);
 
-    if (Math.abs(dx) > Math.abs(dy)) {
-      start = dx > 0 ? { x: fromNode.x + fromW, y: fromCenter.y } : { x: fromNode.x, y: fromCenter.y };
-      end = dx > 0 ? { x: toNode.x, y: toCenter.y } : { x: toNode.x + toW, y: toCenter.y };
+    const start = { x: fromCenter.x, y: fromCenter.y };
+    const end = { x: toCenter.x, y: toCenter.y };
+
+    if (!isHorizontal) {
+      if (dy >= 0) {
+        start.y = fromNode.y + fromH;
+        end.y = toNode.y;
+      } else {
+        start.y = fromNode.y;
+        end.y = toNode.y + toH;
+      }
+
+      const overlapMin = Math.max(fromNode.x, toNode.x);
+      const overlapMax = Math.min(fromNode.x + fromW, toNode.x + toW);
+      if (overlapMax - overlapMin >= 24) {
+        const dockX = (overlapMin + overlapMax) / 2;
+        start.x = dockX;
+        end.x = dockX;
+      } else {
+        start.x = Math.min(Math.max(toCenter.x, fromNode.x + 28), fromNode.x + fromW - 28);
+        end.x = Math.min(Math.max(fromCenter.x, toNode.x + 28), toNode.x + toW - 28);
+      }
     } else {
-      start = dy > 0 ? { x: fromCenter.x, y: fromNode.y + fromH } : { x: fromCenter.x, y: fromNode.y };
-      end = dy > 0 ? { x: toCenter.x, y: toNode.y } : { x: toCenter.x, y: toNode.y + toH };
+      if (dx >= 0) {
+        start.x = fromNode.x + fromW;
+        end.x = toNode.x;
+      } else {
+        start.x = fromNode.x;
+        end.x = toNode.x + toW;
+      }
+
+      const overlapMin = Math.max(fromNode.y, toNode.y);
+      const overlapMax = Math.min(fromNode.y + fromH, toNode.y + toH);
+      if (overlapMax - overlapMin >= 20) {
+        const dockY = (overlapMin + overlapMax) / 2;
+        start.y = dockY;
+        end.y = dockY;
+      } else {
+        start.y = Math.min(Math.max(toCenter.y, fromNode.y + 20), fromNode.y + fromH - 20);
+        end.y = Math.min(Math.max(fromCenter.y, toNode.y + 20), toNode.y + toH - 20);
+      }
     }
 
     let pathString = '';
-    let mid = { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 };
+    const midX = (start.x + end.x) / 2;
+    const midY = (start.y + end.y) / 2;
 
     if (conn.lineStyle === 'straight') {
       pathString = `M ${start.x} ${start.y} L ${end.x} ${end.y}`;
-      mid = { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 };
     } else if (conn.lineStyle === 'stepped') {
-      if (Math.abs(dx) > Math.abs(dy)) {
-        const midX = (start.x + end.x) / 2;
+      if (isHorizontal) {
         pathString = `M ${start.x} ${start.y} L ${midX} ${start.y} L ${midX} ${end.y} L ${end.x} ${end.y}`;
-        mid = { x: midX, y: (start.y + end.y) / 2 };
       } else {
-        const midY = (start.y + end.y) / 2;
         pathString = `M ${start.x} ${start.y} L ${start.x} ${midY} L ${end.x} ${midY} L ${end.x} ${end.y}`;
-        mid = { x: (start.x + end.x) / 2, y: midY };
       }
     } else {
-      // Default: Curved cubic bezier
-      const dist = Math.hypot(end.x - start.x, end.y - start.y);
-      const curvature = Math.min(Math.max(dist * 0.4, 30), 120);
-
-      const cp1 = { x: start.x, y: start.y };
-      const cp2 = { x: end.x, y: end.y };
-
-      if (Math.abs(dx) > Math.abs(dy)) {
-        const sign = dx > 0 ? 1 : -1;
-        cp1.x += curvature * sign;
-        cp2.x -= curvature * sign;
+      // Default: Curved cubic bezier with proper direction tangent
+      if (isHorizontal) {
+        const curvature = Math.min(Math.max(Math.abs(end.x - start.x) * 0.44, 36), 140);
+        const cp1x = dx >= 0 ? start.x + curvature : start.x - curvature;
+        const cp2x = dx >= 0 ? end.x - curvature : end.x + curvature;
+        pathString = `M ${start.x} ${start.y} C ${cp1x} ${start.y}, ${cp2x} ${end.y}, ${end.x} ${end.y}`;
       } else {
-        const sign = dy > 0 ? 1 : -1;
-        cp1.y += curvature * sign;
-        cp2.y -= curvature * sign;
+        const curvature = Math.min(Math.max(Math.abs(end.y - start.y) * 0.44, 34), 140);
+        const cp1y = dy >= 0 ? start.y + curvature : start.y - curvature;
+        const cp2y = dy >= 0 ? end.y - curvature : end.y + curvature;
+        pathString = `M ${start.x} ${start.y} C ${start.x} ${cp1y}, ${end.x} ${cp2y}, ${end.x} ${end.y}`;
       }
-
-      pathString = `M ${start.x} ${start.y} C ${cp1.x} ${cp1.y}, ${cp2.x} ${cp2.y}, ${end.x} ${end.y}`;
-      mid = {
-        x: 0.125 * start.x + 0.375 * cp1.x + 0.375 * cp2.x + 0.125 * end.x,
-        y: 0.125 * start.y + 0.375 * cp1.y + 0.375 * cp2.y + 0.125 * end.y
-      };
     }
 
     paths.push({
       ...conn,
       path: pathString,
-      mid
+      mid: {
+        x: isHorizontal ? midX : midX + (dx >= 0 ? 8 : -8),
+        y: isHorizontal ? midY - 10 : midY
+      }
     });
   }
 

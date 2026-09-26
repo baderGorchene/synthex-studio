@@ -1,6 +1,6 @@
 import React from 'react';
 import { GripVertical, Maximize2, Layers, X, Sparkles } from 'lucide-react';
-import { CanvasNode, SectionResizeHandle } from '@/types/canvas';
+import { CanvasNode, SectionResizeHandle, hexToRgba } from '@/types/canvas';
 
 interface SectionNodeProps {
   node: CanvasNode;
@@ -45,7 +45,11 @@ export const SectionNode: React.FC<SectionNodeProps> = ({
         transition: isDragging || isResizing
           ? 'none'
           : 'width 200ms cubic-bezier(0.16, 1, 0.3, 1), height 200ms cubic-bezier(0.16, 1, 0.3, 1), border-color 200ms ease, box-shadow 200ms ease, transform 100ms ease-out',
-        zIndex: isDragging || isResizing ? 25 : isSelected ? 15 : 1
+        zIndex: isDragging || isResizing ? 25 : isSelected ? 15 : 1,
+        ...(node.color ? {
+          borderColor: node.color,
+          backgroundColor: hexToRgba(node.color, 0.08)
+        } : {})
       }}
       className={`absolute pointer-events-auto rounded-3xl border-2 transition-all select-none group/section ${
         isTargetedForDrop
@@ -74,7 +78,7 @@ export const SectionNode: React.FC<SectionNodeProps> = ({
       {/* Dynamic Animated Pulse Grid when an element is hovered over it */}
       {isTargetedForDrop && (
         <div className="absolute inset-0 rounded-3xl pointer-events-none overflow-hidden">
-          <div className="absolute inset-0 bg-[radial-gradient(#6366f1_1px,transparent_1px)] [background-size:16px_16px] opacity-30 animate-pulse" />
+          <div className="absolute inset-0 bg-[radial-gradient(#3c6e71_1px,transparent_1px)] [background-size:16px_16px] opacity-30 animate-pulse" />
         </div>
       )}
 

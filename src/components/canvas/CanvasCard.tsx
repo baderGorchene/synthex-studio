@@ -148,7 +148,9 @@ export const CanvasCard: React.FC<CanvasCardProps> = ({
         transform: `translate3d(${node.x}px, ${node.y}px, 0)`,
         width: `${node.width || 300}px`,
         transition: isDragging ? 'none' : 'box-shadow 150ms ease, border-color 150ms ease, transform 100ms ease-out',
-        zIndex: isDragging ? 50 : isConnectingSource ? 45 : isSelected ? 30 : 10
+        zIndex: isDragging ? 50 : isConnectingSource ? 45 : isSelected ? 30 : 10,
+        backgroundColor: '#ffffff',
+        ...(node.color?.startsWith('#') ? { borderColor: node.color, borderWidth: '1.5px' } : {})
       }}
       className={`absolute pointer-events-auto rounded-xl border select-none group/node ${
         themeTokens.cardBase
@@ -262,7 +264,7 @@ export const CanvasCard: React.FC<CanvasCardProps> = ({
           />
         )}
 
-        {node.type === 'link' && (
+        {(node.type === 'link' || node.type === 'source') && (
           <LinkNode node={node} themeTokens={themeTokens} isLight={isLight} onUpdate={onUpdate} />
         )}
       </div>

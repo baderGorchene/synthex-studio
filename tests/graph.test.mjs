@@ -59,3 +59,29 @@ test('context export is deterministic and includes provenance and sources', () =
   assert.match(output, /How should retrieval be evaluated\?/);
   assert.equal(output, exportContextMarkdown(graph, 'RAG research'));
 });
+
+test('calculateConnectionPaths connects flush to bottom of cards with 0 gap', async () => {
+  const { calculateConnectionPaths, getNodeHeight } = await import('../src/utils/canvasMath.ts');
+  const cardA = { id: 'a', type: 'concept', x: 100, y: 100, width: 280, title: 'Card A' };
+  const cardB = { id: 'b', type: 'concept', x: 100, y: 300, width: 280, title: 'Card B' };
+  const heightA = getNodeHeight(cardA);
+
+  // Card A is at y: 100, heightA. Bottom of Card A is exactly 100 + heightA.
+  const paths = calculateConnectionPaths([cardA, cardB], [{ id: 'e1', from: 'a', to: 'b' }]);
+  assert.equal(paths.length, 1);
+  const path = paths[0].path;
+  // Must start at y = 100 + heightA
+  const expectedStartY = 100 + heightA;
+  assert.ok(path.startsWith(`M 240 ${expectedStartY}`), `Path should start flush at bottom of Card A (${expectedStartY}), got: ${path}`);
+  // Must end at y = 300 (top of Card B)
+  assert.ok(path.endsWith('240 300'), `Path should end flush at top of Card B (300), got: ${path}`);
+
+  // Test reverse: Card B above Card A
+  const reversePaths = calculateConnectionPaths([cardA, cardB], [{ id: 'e2', from: 'b', to: 'a' }]);
+  assert.equal(reversePaths.length, 1);
+  const reversePath = reversePaths[0].path;
+  // Card B is at y: 300, Card A is at y: 100. Exit top of Card B (y=300), enter bottom of Card A (y=100+heightA)
+  assert.ok(reversePath.startsWith('M 240 300'), `Reverse path should start at top of Card B (300), got: ${reversePath}`);
+  assert.ok(reversePath.endsWith(`240 ${expectedStartY}`), `Reverse path should end flush at bottom of Card A (${expectedStartY}), got: ${reversePath}`);
+});
+

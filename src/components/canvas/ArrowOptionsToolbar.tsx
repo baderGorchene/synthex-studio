@@ -44,13 +44,13 @@ const PRESET_LABELS = [
 ];
 
 const COLOR_OPTIONS: { id: ConnectionColor; label: string; hex: string; bgClass: string }[] = [
-  { id: 'indigo', label: 'Indigo', hex: '#6366f1', bgClass: 'bg-indigo-500' },
-  { id: 'emerald', label: 'Emerald', hex: '#10b981', bgClass: 'bg-emerald-500' },
-  { id: 'rose', label: 'Rose', hex: '#f43f5e', bgClass: 'bg-rose-500' },
-  { id: 'amber', label: 'Amber', hex: '#f59e0b', bgClass: 'bg-amber-500' },
-  { id: 'sky', label: 'Sky', hex: '#0ea5e9', bgClass: 'bg-sky-500' },
-  { id: 'purple', label: 'Purple', hex: '#a855f7', bgClass: 'bg-purple-500' },
-  { id: 'neutral', label: 'Slate', hex: '#64748b', bgClass: 'bg-slate-500' }
+  { id: 'indigo', label: 'Navy', hex: '#284b63', bgClass: 'bg-[#284b63]' },
+  { id: 'emerald', label: 'Teal', hex: '#3c6e71', bgClass: 'bg-[#3c6e71]' },
+  { id: 'rose', label: 'Charcoal', hex: '#353535', bgClass: 'bg-[#353535]' },
+  { id: 'amber', label: 'Ink', hex: '#353535', bgClass: 'bg-[#353535]' },
+  { id: 'sky', label: 'Sage Teal', hex: '#3c6e71', bgClass: 'bg-[#3c6e71]' },
+  { id: 'purple', label: 'Deep Slate', hex: '#284b63', bgClass: 'bg-[#284b63]' },
+  { id: 'neutral', label: 'Marine', hex: '#284b63', bgClass: 'bg-[#284b63]' }
 ];
 
 export const ArrowOptionsToolbar: React.FC<ArrowOptionsToolbarProps> = ({
@@ -296,17 +296,41 @@ export const ArrowOptionsToolbar: React.FC<ArrowOptionsToolbarProps> = ({
           >
             {(
               [
-                { id: 'solid', label: 'Solid', sample: '———' },
-                { id: 'dashed', label: 'Dashed', sample: '- - -' },
-                { id: 'dotted', label: 'Dotted', sample: '····' }
-              ] as { id: ConnectionStrokePattern; label: string; sample: string }[]
+                {
+                  id: 'solid',
+                  label: 'Solid',
+                  illustration: (
+                    <svg width="22" height="6" viewBox="0 0 22 6" fill="none">
+                      <line x1="1" y1="3" x2="21" y2="3" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
+                    </svg>
+                  )
+                },
+                {
+                  id: 'dashed',
+                  label: 'Dashed',
+                  illustration: (
+                    <svg width="22" height="6" viewBox="0 0 22 6" fill="none">
+                      <line x1="1" y1="3" x2="21" y2="3" stroke="currentColor" strokeWidth="2.2" strokeDasharray="4 2.5" strokeLinecap="round" />
+                    </svg>
+                  )
+                },
+                {
+                  id: 'dotted',
+                  label: 'Dotted',
+                  illustration: (
+                    <svg width="22" height="6" viewBox="0 0 22 6" fill="none">
+                      <line x1="1" y1="3" x2="21" y2="3" stroke="currentColor" strokeWidth="2.2" strokeDasharray="1.5 2.5" strokeLinecap="round" />
+                    </svg>
+                  )
+                }
+              ] as { id: ConnectionStrokePattern; label: string; illustration: React.ReactNode }[]
             ).map((item) => {
               const isSelected = activeStrokePattern === item.id;
               return (
                 <button
                   key={item.id}
                   onClick={() => onUpdate({ strokePattern: item.id })}
-                  className={`px-2 py-0.5 text-[10px] font-mono rounded-lg transition cursor-pointer ${
+                  className={`px-2 py-1 text-[10px] rounded-lg transition cursor-pointer flex items-center justify-center ${
                     isSelected
                       ? 'bg-indigo-600 text-white shadow-xs font-semibold'
                       : isLight
@@ -315,7 +339,7 @@ export const ArrowOptionsToolbar: React.FC<ArrowOptionsToolbarProps> = ({
                   }`}
                   title={`${item.label} Stroke`}
                 >
-                  {item.sample}
+                  {item.illustration}
                 </button>
               );
             })}

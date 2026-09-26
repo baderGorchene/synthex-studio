@@ -17,7 +17,33 @@ export type CanvasTool = 'select' | 'hand' | 'connect' | 'note' | 'task' | 'imag
 
 export type SectionResizeHandle = 'se' | 's' | 'e' | 'sw' | 'ne' | 'nw' | 'w' | 'n';
 
-export type AccentColor = 'neutral' | 'terracotta' | 'sage' | 'cobalt' | 'lavender' | 'rose';
+export const ELEMENT_PALETTE = [
+  "#f94144",
+  "#f3722c",
+  "#f8961e",
+  "#f9844a",
+  "#f9c74f",
+  "#90be6d",
+  "#43aa8b",
+  "#4d908e",
+  "#577590",
+  "#277da1",
+] as const;
+
+export type ElementPaletteColor = typeof ELEMENT_PALETTE[number];
+export type AccentColor = 'neutral' | 'terracotta' | 'sage' | 'cobalt' | 'lavender' | 'rose' | ElementPaletteColor | string;
+
+export function hexToRgba(hex?: string, alpha: number = 1): string {
+  if (!hex || !hex.startsWith('#')) return `rgba(60, 110, 113, ${alpha})`;
+  const cleanHex = hex.replace('#', '');
+  if (cleanHex.length === 6) {
+    const r = parseInt(cleanHex.slice(0, 2), 16);
+    const g = parseInt(cleanHex.slice(2, 4), 16);
+    const b = parseInt(cleanHex.slice(4, 6), 16);
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  }
+  return hex;
+}
 
 export interface TaskItem {
   id: string;

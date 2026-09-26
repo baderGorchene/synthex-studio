@@ -10,7 +10,7 @@ import {
   Volume2,
   Wand2
 } from 'lucide-react';
-import { AccentColor, AiActionType, CanvasNode, ThemeTokens } from '@/types/canvas';
+import { AccentColor, AiActionType, CanvasNode, ThemeTokens, ELEMENT_PALETTE } from '@/types/canvas';
 import { ACCENT_SWATCHES } from '@/constants/themes';
 
 interface SelectionFloatingIslandProps {
@@ -77,31 +77,36 @@ export const SelectionFloatingIsland: React.FC<SelectionFloatingIslandProps> = (
           title="Change accent tone"
         >
           <span
-            className={`block w-3.5 h-3.5 rounded-full ${
-              ACCENT_SWATCHES[node.color || 'neutral']?.badge || 'bg-slate-500'
-            }`}
+            className="block w-3.5 h-3.5 rounded-full border border-black/10"
+            style={{
+              backgroundColor: node.color?.startsWith('#')
+                ? node.color
+                : undefined
+            }}
           />
         </button>
 
         {showColorPicker && (
           <div
-            className={`absolute bottom-9 left-1/2 -translate-x-1/2 p-1.5 rounded-xl border flex items-center space-x-1.5 shadow-2xl backdrop-blur-md z-50 ${
+            className={`absolute bottom-9 left-1/2 -translate-x-1/2 p-2 rounded-xl border grid grid-cols-5 gap-1.5 shadow-2xl backdrop-blur-md z-50 ${
               isLight ? 'bg-white border-slate-200' : 'bg-zinc-900 border-zinc-700'
             }`}
+            style={{ width: '160px' }}
           >
-            {(Object.keys(ACCENT_SWATCHES) as AccentColor[]).map((key) => {
-              const item = ACCENT_SWATCHES[key];
+            {ELEMENT_PALETTE.map((hex) => {
+              const isSelected = node.color?.toLowerCase() === hex.toLowerCase();
               return (
                 <button
-                  key={key}
+                  key={hex}
                   onClick={() => {
-                    onColorChange(node.id, key);
+                    onColorChange(node.id, hex);
                     setShowColorPicker(false);
                   }}
-                  className={`w-4 h-4 rounded-full transition-transform hover:scale-125 cursor-pointer ${item.badge} ${
-                    (node.color || 'neutral') === key ? 'ring-2 ring-offset-1 ring-indigo-500' : ''
+                  className={`w-5 h-5 rounded-full transition-transform hover:scale-125 cursor-pointer ${
+                    isSelected ? 'ring-2 ring-offset-1 ring-slate-800' : ''
                   }`}
-                  title={item.name}
+                  style={{ backgroundColor: hex }}
+                  title={hex}
                 />
               );
             })}

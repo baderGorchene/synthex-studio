@@ -16,13 +16,13 @@ interface ConnectorLayerProps {
 }
 
 const ARROW_COLORS = [
-  { id: 'indigo', hex: '#6366f1' },
-  { id: 'emerald', hex: '#10b981' },
-  { id: 'rose', hex: '#f43f5e' },
-  { id: 'amber', hex: '#f59e0b' },
-  { id: 'sky', hex: '#0ea5e9' },
-  { id: 'purple', hex: '#a855f7' },
-  { id: 'neutral', hex: '#64748b' }
+  { id: 'indigo', hex: '#284b63' },
+  { id: 'emerald', hex: '#3c6e71' },
+  { id: 'rose', hex: '#353535' },
+  { id: 'amber', hex: '#353535' },
+  { id: 'sky', hex: '#3c6e71' },
+  { id: 'purple', hex: '#284b63' },
+  { id: 'neutral', hex: '#284b63' }
 ];
 
 export const ConnectorLayer: React.FC<ConnectorLayerProps> = ({
@@ -108,7 +108,7 @@ export const ConnectorLayer: React.FC<ConnectorLayerProps> = ({
           markerHeight="6"
           orient="auto-start-reverse"
         >
-          <path d="M 0 1.5 L 8 5 L 0 8.5 z" fill="#6366f1" />
+          <path d="M 0 1.5 L 8 5 L 0 8.5 z" fill="#3c6e71" />
         </marker>
       </defs>
 
@@ -284,13 +284,9 @@ export const ConnectorLayer: React.FC<ConnectorLayerProps> = ({
                       </button>
                     </div>
                   ) : conn.label ? (
-                    /* Resting Labeled Badge: [ ⚙ Gear (hover) | Label Text | 🗑 Trash (hover) ] */
+                    /* Resting Labeled Badge: Tag at rest, [ ⚙ Gear | Label Text | 🗑 Trash ] on hover */
                     <div
-                      className={`inline-flex items-center rounded-full border shadow-sm transition-all duration-200 backdrop-blur-md ${
-                        isLight
-                          ? 'bg-white/95 border-slate-300/80 text-slate-700 shadow-slate-200/50 hover:border-slate-400'
-                          : 'bg-zinc-900/95 border-zinc-700/80 text-zinc-200 shadow-black/40 hover:border-zinc-600'
-                      }`}
+                      className="inline-flex items-center rounded-full border border-[#d9d9d9] bg-white text-[#353535] shadow-xs px-1 hover:border-[#3c6e71] hover:shadow-md transition-all duration-150 backdrop-blur-md"
                     >
                       {/* 1. Gear Icon: Only shown when hovering the arrow/pill */}
                       <button
@@ -298,35 +294,25 @@ export const ConnectorLayer: React.FC<ConnectorLayerProps> = ({
                           e.stopPropagation();
                           onSelectConnection?.(conn.id);
                         }}
-                        className={`overflow-hidden transition-all duration-200 max-w-0 opacity-0 group-hover:max-w-[32px] group-hover:opacity-100 group-hover:pl-2.5 group-hover:pr-1.5 py-1 cursor-pointer flex items-center justify-center rounded-l-full ${
-                          isLight
-                            ? 'text-slate-400 hover:text-indigo-600 hover:bg-indigo-50'
-                            : 'text-zinc-500 hover:text-indigo-400 hover:bg-indigo-500/15'
-                        }`}
+                        className="hidden group-hover:flex items-center justify-center p-1.5 pl-2 text-[#353535] hover:text-[#284b63] hover:bg-[#3c6e71]/10 rounded-l-full cursor-pointer transition-colors flex-shrink-0"
                         title="Arrow Options Menu (Line style, colors, arrows)"
                       >
-                        <Settings className="w-3 h-3 hover:rotate-45 transition-transform duration-200 flex-shrink-0" />
+                        <Settings className="w-3 h-3 hover:rotate-45 transition-transform duration-200" />
                       </button>
 
                       {/* Hairline Divider (Left): Only shown when hovering */}
                       <span
-                        className={`overflow-hidden transition-all duration-200 w-0 group-hover:w-px h-3 flex-shrink-0 ${
-                          isLight ? 'bg-slate-200' : 'bg-zinc-700'
-                        }`}
+                        className="hidden group-hover:block w-px h-3 bg-[#d9d9d9] flex-shrink-0"
                       />
 
-                      {/* 2. Label Text: Click only gives text input to change label */}
+                      {/* 2. Label Text Tag */}
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
                           setEditingLabelId(conn.id);
                           setEditingText(conn.label || '');
                         }}
-                        className={`flex items-center space-x-1.5 px-2.5 py-0.5 text-[10px] font-medium cursor-pointer transition-colors ${
-                          isLight
-                            ? 'hover:text-indigo-600'
-                            : 'hover:text-indigo-400'
-                        }`}
+                        className="flex items-center space-x-1.5 px-2.5 py-0.5 text-[10px] font-medium text-[#353535] hover:text-[#284b63] cursor-pointer transition-colors"
                         title="Click to edit label text"
                       >
                         <span
@@ -340,9 +326,7 @@ export const ConnectorLayer: React.FC<ConnectorLayerProps> = ({
 
                       {/* Hairline Divider (Right): Only shown when hovering */}
                       <span
-                        className={`overflow-hidden transition-all duration-200 w-0 group-hover:w-px h-3 flex-shrink-0 ${
-                          isLight ? 'bg-slate-200' : 'bg-zinc-700'
-                        }`}
+                        className="hidden group-hover:block w-px h-3 bg-[#d9d9d9] flex-shrink-0"
                       />
 
                       {/* 3. Delete Trash Button: Only shown when hovering */}
@@ -351,10 +335,10 @@ export const ConnectorLayer: React.FC<ConnectorLayerProps> = ({
                           e.stopPropagation();
                           onDeleteConnection(conn.id);
                         }}
-                        className={`overflow-hidden transition-all duration-200 max-w-0 opacity-0 group-hover:max-w-[32px] group-hover:opacity-100 group-hover:pr-2.5 group-hover:pl-1.5 py-1 text-slate-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-r-full cursor-pointer flex items-center justify-center flex-shrink-0`}
+                        className="hidden group-hover:flex items-center justify-center p-1.5 pr-2 text-[#353535] hover:text-white hover:bg-[#353535] rounded-r-full cursor-pointer transition-colors flex-shrink-0"
                         title="Delete connection"
                       >
-                        <Trash2 className="w-3 h-3 flex-shrink-0" />
+                        <Trash2 className="w-3 h-3" />
                       </button>
                     </div>
                   ) : (
@@ -465,7 +449,7 @@ export const ConnectorLayer: React.FC<ConnectorLayerProps> = ({
           <path
             d={rubberBandPath}
             fill="none"
-            stroke="#6366f1"
+            stroke="#3c6e71"
             strokeWidth="2.5"
             strokeDasharray="6 4"
             markerEnd="url(#studio-arrow-rubber)"

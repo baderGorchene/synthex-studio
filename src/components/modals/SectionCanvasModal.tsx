@@ -488,7 +488,7 @@ export const SectionCanvasModal: React.FC<SectionCanvasModalProps> = ({
                 <path
                   d={liveRubberBandPath}
                   fill="none"
-                  stroke="#6366f1"
+                  stroke="#3c6e71"
                   strokeWidth="2.5"
                   strokeDasharray="6 4"
                   className="animate-pulse"

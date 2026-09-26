@@ -1,8 +1,10 @@
 'use client';
+/* eslint-disable @next/next/no-img-element */
 
 import { ArrowDownRight, ArrowUpRight, CircleHelp, ExternalLink, FileClock, Layers2, Quote } from 'lucide-react';
 import type { CanvasNode, Connection, ResearchSession } from '@/types/canvas';
 import type { WorkspaceSection } from './WorkspaceSidebar';
+import { WebsiteLogo } from '@/components/canvas/SourceMetadata';
 
 const names: Record<string, string> = {
   concept: 'Concept', claim: 'Claim', question: 'Question', hypothesis: 'Hypothesis', source: 'Source',
@@ -72,10 +74,35 @@ export function KnowledgeViews({
     {viewNodes.length === 0 ? <div className="empty-view"><Layers2 size={22} /><strong>Nothing here yet</strong><span>Add a record from the graph or run research to build this view.</span></div> :
       <div className="records-list">{viewNodes.sort((a, b) => a.y - b.y || a.title.localeCompare(b.title)).map(node => {
         const connectedCount = edges.filter(edge => edge.from === node.id || edge.to === node.id).length;
+        const previewImage = (node.type === 'source' || node.type === 'link') ? (node.imageUrl || (node.metadata?.image as string)) : undefined;
         return <button className="record-row" key={node.id} onClick={() => onSelectNode(node.id)}>
-          <span className={`record-icon type-${node.type}`}>{node.type === 'question' ? <CircleHelp size={16} /> : node.type === 'claim' ? <Quote size={16} /> : <Layers2 size={16} />}</span>
+          <span className={`record-icon type-${node.type}`}>
+            {(node.type === 'source' || node.type === 'link') ? (
+              <WebsiteLogo url={node.url} domain={node.domain} logo={node.metadata?.logo as string} size={16} />
+            ) : node.type === 'question' ? (
+              <CircleHelp size={16} />
+            ) : node.type === 'claim' ? (
+              <Quote size={16} />
+            ) : (
+              <Layers2 size={16} />
+            )}
+          </span>
           <span className="record-main"><span className="record-type">{names[node.type] || 'Knowledge'}{node.metadata?.origin === 'ai' ? ' · AI proposal' : ''}</span><strong>{node.title}</strong><small>{node.content || node.description || (node.url ? sourceHost(node.url) : 'No notes added')}</small></span>
-          <span className="record-trailing">{node.metadata?.claimStatus && <em className={`status-pill status-${node.metadata.claimStatus}`}>{node.metadata.claimStatus.replaceAll('_', ' ')}</em>}{(node.type === 'source' || node.type === 'link') && node.url && <ExternalLink size={14} />}{connectedCount > 0 && <small>{connectedCount} links</small>}</span>
+          <span className="record-trailing">
+            {node.metadata?.claimStatus && <em className={`status-pill status-${node.metadata.claimStatus}`}>{node.metadata.claimStatus.replaceAll('_', ' ')}</em>}
+            {previewImage && (
+              <img
+                src={previewImage}
+                alt=""
+                className="source-thumb-mini"
+                loading="lazy"
+                referrerPolicy="no-referrer"
+                onError={(e) => { (e.currentTarget as HTMLElement).style.display = 'none'; }}
+              />
+            )}
+            {(node.type === 'source' || node.type === 'link') && node.url && <ExternalLink size={14} />}
+            {connectedCount > 0 && <small>{connectedCount} links</small>}
+          </span>
         </button>;
       })}</div>}
   </div>;
