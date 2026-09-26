@@ -441,7 +441,10 @@ export default function SynthexWorkspace() {
               <p>{plural(nodes.length, 'record')} <span>·</span> {plural(edges.length, 'relationship')} <span>·</span> {plural(nodes.filter(node => node.type === 'source' || node.type === 'link').length, 'source')}</p></div>
           </div>
           <div className="heading-actions">
-            <button className="quiet-button assistant-trigger" aria-expanded={modal === 'chat'} onClick={() => setModal(current => current === 'chat' ? null : 'chat')}><MessageCircle size={15} /> Ask this graph</button>
+            <button className="quiet-button assistant-trigger" aria-expanded={modal === 'chat'} onClick={() => {
+              if (modal === 'chat') setModal(null);
+              else { setSelectedIds([]); setModal('chat'); }
+            }}><MessageCircle size={15} /> Ask this graph</button>
           </div>
         </section>
 
@@ -452,7 +455,10 @@ export default function SynthexWorkspace() {
                 {loading ? <div className="canvas-loading"><LoaderCircle size={21} className="spin" />Opening research sheet…</div> : nodes.length === 0 ? <div className="canvas-empty"><span className="empty-orbit"><Network size={24} /></span><h2>Your research sheet is ready</h2><p>Add a first idea or run grounded research to build a map of what you know.</p><div><button className="primary-button" onClick={() => setModal('research')}><Sparkles size={15} /> Start with research</button><button className="quiet-button" onClick={() => addRecord('concept')}><Plus size={15} /> Add a concept</button></div></div> : <GraphCanvas
                   graph={graph} selectedNodeIds={selectedIds} viewport={viewport} setViewport={setViewport} activeTool={tool} spacePressed={spacePressed}
                   linkingFromId={linkingFromId} autoFitKey={canvasFitKey} editingNoteId={editingNoteId}
-                  onSelectNode={(id, additive) => setSelectedIds(current => additive ? current.includes(id) ? current.filter(value => value !== id) : [...current, id] : [id])}
+                  onSelectNode={(id, additive) => {
+                    setModal(current => current === 'chat' ? null : current);
+                    setSelectedIds(current => additive ? current.includes(id) ? current.filter(value => value !== id) : [...current, id] : [id]);
+                  }}
                   onClearSelection={() => setSelectedIds([])} onClickAway={() => setEditingNoteId(null)} onCancelLinking={() => setLinkingFromId(null)} onMoveNodes={moveNodes} onConnect={connectNodes}
                   onStartLinking={setLinkingFromId} onToggleGroup={toggleGroup} onEditNote={setEditingNoteId}
                   onUpdateNote={(id, content) => updateGraph(current => updateNode(current, id, { content }), false)}
