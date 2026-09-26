@@ -62,7 +62,6 @@ export default function SynthexWorkspace() {
   const [groupViewport, setGroupViewport] = useState<Viewport>({ zoom: 0.72, pan: { x: 60, y: 54 } });
   const [modal, setModal] = useState<Modal>(null);
   const [exportMenu, setExportMenu] = useState(false);
-  const [addMenu, setAddMenu] = useState(false);
   const [notice, setNotice] = useState('');
   const [researchQuery, setResearchQuery] = useState('');
   const [researchMode, setResearchMode] = useState<'quick' | 'deep'>('quick');
@@ -214,7 +213,7 @@ export default function SynthexWorkspace() {
     const onGlobalPointerDown = (event: PointerEvent) => {
       const target = event.target;
       if (!(target instanceof HTMLElement)) return;
-      if (!target.closest('.menu-anchor')) { setExportMenu(false); setAddMenu(false); }
+      if (!target.closest('.menu-anchor')) setExportMenu(false);
       if (editingNoteId) {
         const activeNote = target.closest('.knowledge-card')?.getAttribute('data-graph-node');
         if (activeNote !== editingNoteId) setEditingNoteId(null);
@@ -244,7 +243,7 @@ export default function SynthexWorkspace() {
       title: labels[type] || 'New knowledge', color: type === 'question' ? 'terracotta' : 'neutral', createdAt: now,
       metadata: { origin: 'user', ...(type === 'claim' ? { claimStatus: 'unverified' as const } : {}) }
     };
-    try { updateGraph(current => addNode(current, node)); setSelectedIds([node.id]); setSection('canvas'); setAddMenu(false); }
+    try { updateGraph(current => addNode(current, node)); setSelectedIds([node.id]); setSection('canvas'); }
     catch (error) { announce(error instanceof Error ? error.message : 'Could not add that record.'); }
   }, [announce, updateGraph]);
 
@@ -443,12 +442,6 @@ export default function SynthexWorkspace() {
           </div>
           <div className="heading-actions">
             <button className="quiet-button assistant-trigger" aria-expanded={modal === 'chat'} onClick={() => setModal(current => current === 'chat' ? null : 'chat')}><MessageCircle size={15} /> Ask this graph</button>
-            <div className="menu-anchor">
-              <button className="primary-button add-trigger" onClick={() => setAddMenu(value => !value)}><Plus size={16} /> Add record <ChevronDown size={13} /></button>
-              {addMenu && <div className="menu-popover add-menu">
-                {([['concept', 'Concept'], ['claim', 'Claim'], ['question', 'Question'], ['hypothesis', 'Hypothesis'], ['source', 'Source'], ['note', 'Note'], ['group', 'Knowledge cluster']] as Array<[CanvasNodeType, string]>).map(([type, label]) => <button key={type} onClick={() => addRecord(type)}><Plus size={14} /><span>{label}</span></button>)}
-              </div>}
-            </div>
           </div>
         </section>
 

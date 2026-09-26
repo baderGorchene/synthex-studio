@@ -50,8 +50,15 @@ export function WorkspaceSidebar({
 }) {
   const project = projects.find(item => item.id === projectId);
   const [addMenuOpen, setAddMenuOpen] = useState(false);
+  const addMenuRef = useRef<HTMLDivElement>(null);
   const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
   const dragOrigin = useRef<{ x: number; y: number; left: number; top: number } | null>(null);
+  useEffect(() => {
+    if (!addMenuOpen) return;
+    const closeOutside = (event: PointerEvent) => { if (addMenuRef.current && !addMenuRef.current.contains(event.target as Node)) setAddMenuOpen(false); };
+    window.addEventListener('pointerdown', closeOutside, true);
+    return () => window.removeEventListener('pointerdown', closeOutside, true);
+  }, [addMenuOpen]);
   useEffect(() => {
     const move = (event: PointerEvent) => {
       const origin = dragOrigin.current;
@@ -78,7 +85,7 @@ export function WorkspaceSidebar({
       <button className={`sidebar-tool-button ${activeTool === 'connect' ? 'active' : ''}`} aria-label="Connect records" aria-pressed={activeTool === 'connect'} onClick={() => onSelectTool?.('connect')}><GitBranch size={16} /><span className="tool-tooltip">Connect records · C</span></button>
       <button className={`sidebar-tool-button ${activeTool === 'hand' ? 'active' : ''}`} aria-label="Pan canvas" aria-pressed={activeTool === 'hand'} onClick={() => onSelectTool?.('hand')}><Hand size={16} /><span className="tool-tooltip">Pan canvas</span></button>
       <button className="sidebar-tool-button" aria-label="Fit sheet" onClick={onFit}><Scan size={16} /><span className="tool-tooltip">Fit sheet</span></button>
-      <div className="dock-add-record">
+      <div className="dock-add-record" ref={addMenuRef}>
         <button className={`sidebar-tool-button ${addMenuOpen ? 'active' : ''}`} aria-label="Add record" aria-expanded={addMenuOpen} aria-haspopup="menu" onClick={() => setAddMenuOpen(value => !value)}><Plus size={17} /><span className="tool-tooltip">Add record</span></button>
         {addMenuOpen && <div className="dock-add-record-menu" role="menu" aria-label="Add record type">
           {addableRecords.map(({ type, label, icon: Icon }) => <button key={type} className={`record-create-item type-${type}`} role="menuitem" onClick={() => { onAddRecord?.(type); setAddMenuOpen(false); }}><span><Icon size={15} /></span>{label}</button>)}
