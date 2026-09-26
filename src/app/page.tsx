@@ -132,16 +132,20 @@ export default function SynthexWorkspace() {
   }, []);
 
   const updateGraph = useCallback((change: (current: KnowledgeGraph) => KnowledgeGraph, recordUndo = true) => {
+    let didRecord = false;
     setGraph(current => {
       const next = change(current);
       if (next !== current && recordUndo) {
         undoStack.current = [...undoStack.current.slice(-39), current];
         redoStack.current = [];
-        setUndoReady(true);
-        setRedoReady(false);
+        didRecord = true;
       }
       return next;
     });
+    if (didRecord) {
+      setUndoReady(true);
+      setRedoReady(false);
+    }
   }, []);
 
   const undo = useCallback(() => {

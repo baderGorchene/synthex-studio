@@ -262,7 +262,7 @@ export function relationPath(
 }
 
 function GroupCard({
-  node, members, relationCount, isCollapsed, selected, isGrabbed, onToggle, onOpen, onStartResize
+  node, members, relationCount, isCollapsed, selected, isGrabbed, dragTilt = 0, onToggle, onOpen, onStartResize
 }: {
   node: CanvasNode;
   members: CanvasNode[];
@@ -270,6 +270,7 @@ function GroupCard({
   isCollapsed: boolean;
   selected: boolean;
   isGrabbed?: boolean;
+  dragTilt?: number;
   onToggle: () => void;
   onOpen: () => void;
   onStartResize: (event: React.PointerEvent, handle: SectionResizeHandle) => void;
@@ -279,7 +280,7 @@ function GroupCard({
     <article
       className={`graph-group ${isCollapsed ? 'is-folded' : ''} ${selected ? 'is-selected' : ''} ${isGrabbed ? 'is-grabbed' : ''}`}
       style={{
-        transform: isGrabbed ? 'scale(1.012)' : undefined,
+        transform: isGrabbed ? `scale(1.012) rotate(${dragTilt * 0.35}deg)` : undefined,
         transition: isGrabbed ? 'box-shadow 0.14s ease, border-color 0.14s ease' : 'transform 0.15s cubic-bezier(0.16,1,0.3,1), box-shadow 0.15s ease',
         ...(customColor ? {
           backgroundColor: hexToRgba(customColor, isCollapsed ? 0.07 : 0.09),
@@ -373,12 +374,13 @@ function GroupCard({
 }
 
 function KnowledgeCard({
-  node, selected, isEditing, isGrabbed, onToggleEdit, onUpdateContent, onPointerDown, onClick, onOpenLightbox, onOpenFileModal
+  node, selected, isEditing, isGrabbed, dragTilt = 0, onToggleEdit, onUpdateContent, onPointerDown, onClick, onOpenLightbox, onOpenFileModal
 }: {
   node: CanvasNode;
   selected: boolean;
   isEditing: boolean;
   isGrabbed?: boolean;
+  dragTilt?: number;
   onToggleEdit: () => void;
   onUpdateContent: (content: string) => void;
   onPointerDown: (event: React.PointerEvent, node: CanvasNode) => void;
@@ -406,7 +408,7 @@ function KnowledgeCard({
       data-graph-node={node.id}
       className={`knowledge-card type-${node.type} ${customColor ? 'has-custom-color' : ''} ${selected ? 'is-selected' : ''} ${isGrabbed ? 'is-grabbed' : ''}`}
       style={{
-        transform: `translate3d(${node.x}px, ${node.y}px, 0) scale(${isGrabbed ? 1.035 : 1}) translateY(${isGrabbed ? -4 : 0}px)`,
+        transform: `translate3d(${node.x}px, ${node.y}px, 0) scale(${isGrabbed ? 1.035 : 1}) rotate(${isGrabbed ? dragTilt : 0}deg) translateY(${isGrabbed ? -4 : 0}px)`,
         width: node.width || (isImage ? 320 : 280),
         backgroundColor: '#ffffff',
         ...(customColor ? {
@@ -593,8 +595,12 @@ export function GraphCanvas({
   const [cursorWorld, setCursorWorld] = useState<Coordinates | null>(null);
   const [nodeHeights, setNodeHeights] = useState<Record<string, number>>({});
   const [draggedNodeIds, setDraggedNodeIds] = useState<string[]>([]);
+  const [dragTilt, setDragTilt] = useState<number>(0);
   const [activeImage, setActiveImage] = useState<{ src: string; title?: string; caption?: string } | null>(null);
   const [activeFile, setActiveFile] = useState<{ fileData?: string; fileName?: string; fileSize?: number; fileType?: string; content?: string } | null>(null);
+  const lastClientX = useRef<number | null>(null);
+  const rafMoveRef = useRef<number | null>(null);
+  const pendingMoveEvent = useRef<{ clientX: number; clientY: number } | null>(null);
   const nodes = Object.values(graph.nodesById);
   const groups = nodes.filter(node => node.type === 'group' || node.type === 'section');
   const visibleIds = new Set(nodes.filter(node => {
@@ -825,26 +831,66 @@ export function GraphCanvas({
         const nextHeight = Math.max(220, height + (handle.includes('s') ? dy : handle.includes('n') ? -dy : 0));
         onResizeGroup(current.node.id, { x: nextX, y: nextY, width: nextWidth, height: nextHeight });
       } else {
-        const dx = (event.clientX - current.start.x) / viewport.zoom;
-        const dy = (event.clientY - current.start.y) / viewport.zoom;
-        onMoveNodes(Object.fromEntries(Object.entries(current.origins).map(([id, point]) => [id, { x: point.x + dx, y: point.y + dy }])));
+        pendingMoveEvent.current = { clientX: event.clientX, clientY: event.clientY };
+        if (rafMoveRef.current === null) {
+          rafMoveRef.current = requestAnimationFrame(() => {
+            rafMoveRef.current = null;
+            const ev = pendingMoveEvent.current;
+            const cur = gesture.current;
+            if (!ev || !cur || cur.kind !== 'drag') return;
+
+            const dx = (ev.clientX - cur.start.x) / viewport.zoom;
+            const dy = (ev.clientY - cur.start.y) / viewport.zoom;
+
+            if (lastClientX.current !== null) {
+              const vx = ev.clientX - lastClientX.current;
+              const targetTilt = Math.min(4, Math.max(-4, vx * 0.42));
+              setDragTilt(targetTilt);
+            }
+            lastClientX.current = ev.clientX;
+
+            onMoveNodes(
+              Object.fromEntries(
+                Object.entries(cur.origins).map(([id, point]) => [id, { x: point.x + dx, y: point.y + dy }])
+              )
+            );
+          });
+        }
       }
     };
     const up = (event: PointerEvent) => {
       activePointers.current.delete(event.pointerId);
+      if (rafMoveRef.current !== null) {
+        cancelAnimationFrame(rafMoveRef.current);
+        rafMoveRef.current = null;
+      }
+      pendingMoveEvent.current = null;
+      lastClientX.current = null;
       if (gesture.current?.kind === 'drag') {
         setDraggedNodeIds([]);
+        setDragTilt(0);
       }
       gesture.current = null;
     };
     const cancel = () => {
+      if (rafMoveRef.current !== null) {
+        cancelAnimationFrame(rafMoveRef.current);
+        rafMoveRef.current = null;
+      }
+      pendingMoveEvent.current = null;
+      lastClientX.current = null;
       setDraggedNodeIds([]);
+      setDragTilt(0);
       gesture.current = null;
     };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
     window.addEventListener('pointercancel', cancel);
     return () => {
+      if (rafMoveRef.current !== null) {
+        cancelAnimationFrame(rafMoveRef.current);
+        rafMoveRef.current = null;
+      }
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', up);
       window.removeEventListener('pointercancel', cancel);
@@ -909,6 +955,8 @@ export function GraphCanvas({
       ? [...new Set([...movingIds, ...membersOf(node, nodes).map(member => member.id)])]
       : movingIds;
     setDraggedNodeIds(moveNodes);
+    setDragTilt(0);
+    lastClientX.current = event.clientX;
     const origins = Object.fromEntries(moveNodes.map(id => {
       const found = graph.nodesById[id];
       return [id, { x: found.x, y: found.y }];
@@ -1056,6 +1104,7 @@ export function GraphCanvas({
                 isCollapsed={group.metadata?.collapsed === true}
                 selected={selectedNodeIds.includes(group.id)}
                 isGrabbed={draggedNodeIds.includes(group.id)}
+                dragTilt={draggedNodeIds.includes(group.id) ? dragTilt : 0}
                 onToggle={() => onToggleGroup(group.id)}
                 onOpen={() => onOpenGroup(group.id)}
                 onStartResize={(event, handle) => startGroupResize(event, group, handle)}
@@ -1069,6 +1118,7 @@ export function GraphCanvas({
             node={node}
             selected={selectedNodeIds.includes(node.id)}
             isGrabbed={draggedNodeIds.includes(node.id)}
+            dragTilt={draggedNodeIds.includes(node.id) ? dragTilt : 0}
             isEditing={editingNoteId === node.id}
             onToggleEdit={() => onEditNote(editingNoteId === node.id ? null : node.id)}
             onUpdateContent={content => onUpdateNote(node.id, content)}
