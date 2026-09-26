@@ -1,20 +1,9 @@
-import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+﻿import type { Metadata } from "next";
 import "./globals.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
-
 export const metadata: Metadata = {
-  title: "Synthex Studio — Autonomous Research Canvas",
-  description: "Milanote-style tactile spatial computing and autonomous multi-hop research canvas powered by Gemini.",
+  title: "Synthex Research Workspace",
+  description: "Build a connected knowledge graph, trace evidence, and extend research with grounded AI.",
 };
 
 export default function RootLayout({
@@ -23,11 +12,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html
-      lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
-    >
-      <body className="h-full w-full overflow-hidden select-none m-0 p-0 font-sans">
+    <html lang="en" className="h-full antialiased">
+      <body className="h-full w-full overflow-hidden m-0 p-0 font-sans">
         {children}
       </body>
     </html>

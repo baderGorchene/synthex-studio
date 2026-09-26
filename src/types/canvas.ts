@@ -1,4 +1,17 @@
-export type CanvasNodeType = 'note' | 'task' | 'image' | 'link' | 'section';
+export type CanvasNodeType =
+  | 'concept'
+  | 'note'
+  | 'source'
+  | 'claim'
+  | 'question'
+  | 'hypothesis'
+  | 'image'
+  | 'link'
+  | 'group'
+  | 'research_result'
+  | 'task'
+  | 'ai_insight'
+  | 'section';
 
 export type CanvasTool = 'select' | 'hand' | 'connect' | 'note' | 'task' | 'image' | 'link' | 'section';
 
@@ -29,6 +42,20 @@ export interface CanvasNode {
   domain?: string;
   description?: string;
   sectionId?: string;
+  metadata?: {
+    origin?: 'user' | 'imported' | 'ai' | 'inferred' | 'example';
+    claimStatus?: 'supported' | 'weakly_supported' | 'disputed' | 'contradicted' | 'unverified' | 'outdated';
+    confidence?: number;
+    sourceIds?: string[];
+    evidence?: Array<{
+      sourceId: string;
+      excerpt?: string;
+      location?: string;
+      relation: 'supports' | 'contradicts';
+    }>;
+    rationale?: string;
+    [key: string]: unknown;
+  };
   createdAt: number;
 }
 
@@ -47,6 +74,12 @@ export interface Connection {
   strokePattern?: ConnectionStrokePattern;
   color?: ConnectionColor;
   animated?: boolean;
+  metadata?: {
+    confidence?: number;
+    evidence?: string;
+    sourceId?: string;
+    [key: string]: unknown;
+  };
 }
 
 export interface ConnectionPath extends Connection {
@@ -122,4 +155,26 @@ export interface ResearchBlueprint {
     toTempId: string;
     label: string;
   }>;
+}
+
+export type ResearchMode = 'quick' | 'deep';
+export type ResearchChangeStatus = 'pending' | 'accepted' | 'rejected';
+
+export interface ResearchChange {
+  id: string;
+  kind: 'node' | 'relationship';
+  payload: CanvasNode | Connection;
+  status: ResearchChangeStatus;
+  rationale?: string;
+}
+
+export interface ResearchSession {
+  id: string;
+  query: string;
+  mode: ResearchMode;
+  status: 'review' | 'complete';
+  summary: string;
+  trail: string[];
+  changes: ResearchChange[];
+  createdAt: number;
 }

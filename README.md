@@ -1,36 +1,43 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Synthex Research Workspace
 
-## Getting Started
+Synthex is a local-first research workspace built around a persistent knowledge graph. Organize concepts, claims, questions, sources, and relationships on a canvas; review AI research proposals before adding them; and export the graph as JSON, Mermaid, or a context Markdown brief.
 
-First, run the development server:
+## Run locally
 
 ```bash
+npm install
+Copy-Item .env.example .env.local
+# Add GEMINI_API_KEY to .env.local to enable graph chat and web-grounded research.
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000). The SQLite database is `canvas.db` in the project directory. Existing records are retained when the graph schema is upgraded.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Without a Gemini key, manual graph editing, project workspaces, search, and exports still work. The API key is read only on the server and is never sent to the browser.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Work with the graph
 
-## Learn More
+- Add concepts, claims, questions, hypotheses, sources, notes, or knowledge clusters.
+- Select the relationship tool, then choose two records to connect them.
+- Fold a cluster to focus the sheet; use the inspector to edit records.
+- Search with `Ctrl/⌘ K`, use undo/redo, and let changes autosave to SQLite.
+- Run quick or deep research. Proposed records remain pending until reviewed; generated claims begin unverified.
+- Use the outline, evidence paths, claims, sources, open questions, and research history views to inspect the same graph from different angles.
 
-To learn more about Next.js, take a look at the following resources:
+## API routes
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+- `GET /api/projects`, `POST /api/projects`
+- `GET /api/graph?projectId=…`, `PUT /api/graph`
+- `GET /api/research?projectId=…`, `POST /api/research`
+- `PATCH /api/research/:sessionId`
+- `POST /api/ai/chat`, `GET /api/ai/status`
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Projects are currently local workspaces, not authenticated accounts. Authentication, invitations, hosted multi-user storage, provider selection, URL/Markdown source ingestion, and vector search are not configured in this MVP.
 
-## Deploy on Vercel
+## Verify
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```bash
+npm test
+npx tsc --noEmit
+npm run build
+```

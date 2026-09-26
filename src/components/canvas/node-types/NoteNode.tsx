@@ -15,6 +15,9 @@ import {
 } from 'lucide-react';
 import { CanvasNode, ThemeTokens } from '@/types/canvas';
 
+// The formatter factory only invokes its actions in onMouseDown handlers; the refs are never read during render.
+/* eslint-disable react-hooks/refs */
+
 interface NoteNodeProps {
   node: CanvasNode;
   themeTokens: ThemeTokens;
@@ -85,15 +88,6 @@ export const NoteNode: React.FC<NoteNodeProps> = ({
   };
 
   // ─── Formatting helpers ──────────────────────────────────────────────────────
-
-  // Guard against double-fire from overlapping pointer/mouse/click events
-  const formatGuardRef = useRef(false);
-  const guardedAction = (fn: () => void) => {
-    if (formatGuardRef.current) return;
-    formatGuardRef.current = true;
-    fn();
-    setTimeout(() => { formatGuardRef.current = false; }, 50);
-  };
 
   const applyInlineFormat = (prefix: string, suffix: string, placeholder: string) => {
     const textarea = textareaRef.current;
@@ -217,7 +211,7 @@ export const NoteNode: React.FC<NoteNodeProps> = ({
     onMouseDown: (e: React.MouseEvent) => {
       e.preventDefault();
       e.stopPropagation();
-      guardedAction(action);
+      action();
     },
   });
 
