@@ -1,7 +1,9 @@
 'use client';
 
-import { ExternalLink, Trash2, X } from 'lucide-react';
+import { ExternalLink, GripVertical, Trash2, X } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
 import type { CanvasNode, CanvasNodeType } from '@/types/canvas';
+import { MarkdownEditor } from './MarkdownEditor';
 
 const types: Array<{ id: CanvasNodeType; label: string }> = [
   { id: 'concept', label: 'Concept' }, { id: 'claim', label: 'Claim' }, { id: 'question', label: 'Question' },
@@ -12,14 +14,33 @@ const types: Array<{ id: CanvasNodeType; label: string }> = [
 ];
 
 export function NodeInspector({
-  node, relationshipCount, onUpdate, onDelete, onClose
+  node, relationshipCount, onUpdate, onDelete, onClose, floating = false
 }: {
   node: CanvasNode;
   relationshipCount: number;
   onUpdate: (fields: Partial<CanvasNode>) => void;
   onDelete: () => void;
   onClose: () => void;
+  floating?: boolean;
 }) {
+  const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
+  const dragOrigin = useRef<{ x: number; y: number; left: number; top: number } | null>(null);
+  useEffect(() => {
+    const move = (event: PointerEvent) => {
+      const origin = dragOrigin.current;
+      if (!origin) return;
+      const width = 300;
+      const height = window.innerHeight - 24;
+      setPosition({
+        x: Math.max(8, Math.min(window.innerWidth - width - 8, origin.left + event.clientX - origin.x)),
+        y: Math.max(8, Math.min(window.innerHeight - Math.min(height, 240) - 8, origin.top + event.clientY - origin.y))
+      });
+    };
+    const up = () => { dragOrigin.current = null; };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+    return () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
+  }, []);
   const isClaim = node.type === 'claim';
   let safeUrl: string | undefined;
   try {
@@ -27,9 +48,15 @@ export function NodeInspector({
     if (parsed.protocol === 'http:' || parsed.protocol === 'https:') safeUrl = parsed.href;
   } catch { /* Keep malformed source text editable without making it clickable. */ }
   return (
-    <aside className="inspector-panel" aria-label="Node details">
+    <aside className={`inspector-panel ${floating ? 'floating-inspector' : ''}`} aria-label="Node details" style={floating && position ? { left: position.x, top: position.y, right: 'auto', bottom: 'auto' } : undefined}>
       <div className="inspector-head">
-        <div><span className="panel-overline">Knowledge record</span><h2>Details</h2></div>
+        <div className="inspector-title"><span className="panel-overline">Knowledge record</span><h2>Details</h2></div>
+        {floating && <button className="panel-drag-handle" aria-label="Move details panel" title="Drag to move panel" onPointerDown={event => {
+          const rect = event.currentTarget.closest('.inspector-panel')?.getBoundingClientRect();
+          if (!rect) return;
+          dragOrigin.current = { x: event.clientX, y: event.clientY, left: rect.left, top: rect.top };
+          setPosition({ x: rect.left, y: rect.top });
+        }}><GripVertical size={15} /></button>}
         <button className="icon-button" aria-label="Close details" onClick={onClose}><X size={17} /></button>
       </div>
       <label className="field-label" htmlFor="node-title">Title</label>
@@ -44,7 +71,7 @@ export function NodeInspector({
       </select>
 
       <label className="field-label" htmlFor="node-content">Notes</label>
-      <textarea id="node-content" className="field-input field-textarea" maxLength={50000} placeholder="Add a description, evidence, or a working thought…" value={node.content || ''} onChange={event => onUpdate({ content: event.target.value })} />
+      {node.type === 'note' ? <MarkdownEditor className="inspector-markdown-editor" ariaLabel="Note content in Markdown" value={node.content || ''} onChange={content => onUpdate({ content })} /> : <textarea id="node-content" className="field-input field-textarea" maxLength={50000} placeholder="Add a description, evidence, or a working thought…" value={node.content || ''} onChange={event => onUpdate({ content: event.target.value })} />}
 
       {(node.type === 'source' || node.type === 'link') && <>
         <label className="field-label" htmlFor="node-url">Source URL</label>

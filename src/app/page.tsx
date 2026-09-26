@@ -10,7 +10,7 @@ import { GraphCanvas } from '@/components/research/GraphCanvas';
 import { KnowledgeViews } from '@/components/research/KnowledgeViews';
 import { NodeInspector } from '@/components/research/NodeInspector';
 import { WorkspaceSidebar, type ResearchProject, type WorkspaceSection } from '@/components/research/WorkspaceSidebar';
-import { addNode, addRelationship, exportContextMarkdown, exportGraphJson, exportMermaid, normalizeGraph, removeNode, updateNode, type KnowledgeGraph } from '@/lib/graph';
+import { addNode, addRelationship, exportContextMarkdown, exportGraphJson, exportMermaid, normalizeGraph, removeNode, updateNode, updateRelationship, type KnowledgeGraph } from '@/lib/graph';
 import type { CanvasNode, CanvasNodeType, Connection, Coordinates, ResearchChange, ResearchSession } from '@/types/canvas';
 
 type Viewport = { zoom: number; pan: Coordinates };
@@ -56,6 +56,9 @@ export default function SynthexWorkspace() {
   const [canvasFitKey, setCanvasFitKey] = useState(0);
   const [tool, setTool] = useState<Tool>('select');
   const [linkingFromId, setLinkingFromId] = useState<string | null>(null);
+  const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
+  const [groupCanvasId, setGroupCanvasId] = useState<string | null>(null);
+  const [groupViewport, setGroupViewport] = useState<Viewport>({ zoom: 0.72, pan: { x: 60, y: 54 } });
   const [modal, setModal] = useState<Modal>(null);
   const [exportMenu, setExportMenu] = useState(false);
   const [addMenu, setAddMenu] = useState(false);
@@ -194,7 +197,8 @@ export default function SynthexWorkspace() {
         if (event.shiftKey) redo(); else undo();
         return;
       }
-      if (!typing && event.key === 'Escape') { setModal(null); setActiveSession(null); setLinkingFromId(null); }
+      if (event.key === 'Escape') { setModal(null); setActiveSession(null); setLinkingFromId(null); setEditingNoteId(null); setGroupCanvasId(null); setTool('select'); }
+      if (!typing && !target?.closest('button, a, [role="button"]') && event.key.toLowerCase() === 'c') { event.preventDefault(); setTool(value => value === 'connect' ? 'select' : 'connect'); setLinkingFromId(null); }
       if (!typing && !target?.closest('button, a, [role="button"]') && event.code === 'Space') { event.preventDefault(); setSpacePressed(true); }
     };
     const onKeyUp = (event: KeyboardEvent) => { if (event.code === 'Space') setSpacePressed(false); };
@@ -204,6 +208,20 @@ export default function SynthexWorkspace() {
     window.addEventListener('blur', onBlur);
     return () => { window.removeEventListener('keydown', onKey); window.removeEventListener('keyup', onKeyUp); window.removeEventListener('blur', onBlur); };
   }, [undo, redo]);
+
+  useEffect(() => {
+    const onGlobalPointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) return;
+      if (!target.closest('.menu-anchor')) { setExportMenu(false); setAddMenu(false); }
+      if (editingNoteId) {
+        const activeNote = target.closest('.knowledge-card')?.getAttribute('data-graph-node');
+        if (activeNote !== editingNoteId) setEditingNoteId(null);
+      }
+    };
+    window.addEventListener('pointerdown', onGlobalPointerDown, true);
+    return () => window.removeEventListener('pointerdown', onGlobalPointerDown, true);
+  }, [editingNoteId]);
 
   const nodes = useMemo(() => Object.values(graph.nodesById), [graph]);
   const edges = useMemo(() => Object.values(graph.edgesById), [graph]);
@@ -237,9 +255,27 @@ export default function SynthexWorkspace() {
     }, false);
   }, [updateGraph]);
 
+  const resizeGroup = useCallback((id: string, fields: Partial<CanvasNode>) => {
+    updateGraph(current => updateNode(current, id, fields), false);
+  }, [updateGraph]);
+
+  const editRelationship = useCallback((id: string, fields: Partial<Connection>) => {
+    updateGraph(current => updateRelationship(current, id, fields), false);
+  }, [updateGraph]);
+
+  const deleteRelationship = useCallback((id: string) => {
+    updateGraph(current => {
+      if (!current.edgesById[id]) return current;
+      const edgesById = { ...current.edgesById };
+      delete edgesById[id];
+      return { ...current, edgesById };
+    });
+    announce('Relationship deleted.');
+  }, [announce, updateGraph]);
+
   const connectNodes = useCallback((from: string, to: string) => {
     try {
-      const edge: Connection = { id: newId(), from, to, label: 'related_to', color: 'neutral', strokePattern: 'solid', animated: false };
+      const edge: Connection = { id: newId(), from, to, label: 'related_to', color: 'neutral', arrowhead: 'end', lineStyle: 'curved', strokePattern: 'dashed', animated: true };
       updateGraph(current => addRelationship(current, edge));
       setLinkingFromId(null); setTool('select');
       announce('Relationship added. Select a record to add a more specific label.');
@@ -364,14 +400,16 @@ export default function SynthexWorkspace() {
   function closeSession() { setActiveSession(null); setReviewDecisions({}); }
 
   return (
-    <div className="workspace-shell">
+    <div className={`workspace-shell ${section === 'canvas' ? 'full-canvas-shell' : ''}`}>
       <WorkspaceSidebar
         projects={projects} projectId={projectId} section={section} aiConfigured={aiConfigured} pendingCount={pendingCount}
-        onSelectProject={setProjectId} onOpenProjects={() => setModal('project')} onNavigate={value => { setSection(value); setSelectedIds([]); }}
+        floating={section === 'canvas'}
+        activeTool={tool} onSelectTool={value => { setTool(value); setLinkingFromId(null); }}
+        onSelectProject={setProjectId} onOpenProjects={() => setModal('project')} onNavigate={value => { setSection(value); setSelectedIds([]); setEditingNoteId(null); setLinkingFromId(null); setTool('select'); }}
         onSearch={() => setModal('search')}
       />
 
-      <main className="workspace-main" id="workspace">
+      <main className={`workspace-main ${section === 'canvas' ? 'canvas-main' : ''}`} id="workspace">
         <header className="workspace-topbar">
           <div className="topbar-breadcrumb"><span>Workspace</span><span className="breadcrumb-slash">/</span><strong>{project?.title || 'Research space'}</strong></div>
           <div className="topbar-actions">
@@ -428,12 +466,15 @@ export default function SynthexWorkspace() {
               <div className="graph-wrap">
                 {loading ? <div className="canvas-loading"><LoaderCircle size={21} className="spin" />Opening research sheet…</div> : nodes.length === 0 ? <div className="canvas-empty"><span className="empty-orbit"><Network size={24} /></span><h2>Your research sheet is ready</h2><p>Add a first idea or run grounded research to build a map of what you know.</p><div><button className="primary-button" onClick={() => setModal('research')}><Sparkles size={15} /> Start with research</button><button className="quiet-button" onClick={() => addRecord('concept')}><Plus size={15} /> Add a concept</button></div></div> : <GraphCanvas
                   graph={graph} selectedNodeIds={selectedIds} viewport={viewport} setViewport={setViewport} activeTool={tool} spacePressed={spacePressed}
-                  linkingFromId={linkingFromId} autoFitKey={canvasFitKey} onSelectNode={(id, additive) => setSelectedIds(current => additive ? current.includes(id) ? current.filter(value => value !== id) : [...current, id] : [id])}
-                  onClearSelection={() => setSelectedIds([])} onCancelLinking={() => setLinkingFromId(null)} onMoveNodes={moveNodes} onConnect={connectNodes}
-                  onStartLinking={setLinkingFromId} onToggleGroup={toggleGroup}
+                  linkingFromId={linkingFromId} autoFitKey={canvasFitKey} editingNoteId={editingNoteId}
+                  onSelectNode={(id, additive) => setSelectedIds(current => additive ? current.includes(id) ? current.filter(value => value !== id) : [...current, id] : [id])}
+                  onClearSelection={() => setSelectedIds([])} onClickAway={() => setEditingNoteId(null)} onCancelLinking={() => setLinkingFromId(null)} onMoveNodes={moveNodes} onConnect={connectNodes}
+                  onStartLinking={setLinkingFromId} onToggleGroup={toggleGroup} onEditNote={setEditingNoteId}
+                  onUpdateNote={(id, content) => updateGraph(current => updateNode(current, id, { content }), false)}
+                  onUpdateRelationship={editRelationship} onDeleteRelationship={deleteRelationship} onResizeGroup={resizeGroup} onOpenGroup={id => { setEditingNoteId(null); setGroupCanvasId(id); }}
                 />}
               </div>
-              {selectedNode && <NodeInspector node={selectedNode} relationshipCount={edges.filter(edge => edge.from === selectedNode.id || edge.to === selectedNode.id).length} onUpdate={updateSelectedNode} onDelete={deleteSelected} onClose={() => setSelectedIds([])} />}
+              {selectedNode && <NodeInspector floating={section === 'canvas'} node={selectedNode} relationshipCount={edges.filter(edge => edge.from === selectedNode.id || edge.to === selectedNode.id).length} onUpdate={updateSelectedNode} onDelete={deleteSelected} onClose={() => setSelectedIds([])} />}
               {selectedIds.length > 1 && <aside className="inspector-panel multi-inspector"><button className="icon-button" aria-label="Close selection" onClick={() => setSelectedIds([])}><X size={17} /></button><Layers2 size={22} /><h2>{plural(selectedIds.length, 'record')} selected</h2><p>Move them together by dragging one selected record.</p><button className="danger-button" onClick={() => { updateGraph(current => selectedIds.reduce(removeNode, current)); setSelectedIds([]); }}>Delete selection</button></aside>}
             </div>
             <div className="canvas-footer"><span><i className="legend-dot idea" /> Ideas <i className="legend-dot claim" /> Claims <i className="legend-dot source" /> Sources <i className="legend-line" /> Relationships</span><span>{plural(nodes.length, 'record')} · {plural(edges.length, 'relationship')} · {viewport.zoom.toFixed(2)}×</span></div>
@@ -442,6 +483,20 @@ export default function SynthexWorkspace() {
           </div>}
         </section>
       </main>
+
+      {groupCanvasId && graph.nodesById[groupCanvasId] && (() => {
+        const group = graph.nodesById[groupCanvasId];
+        const members = nodes.filter(node => node.id !== group.id && node.type !== 'group' && node.type !== 'section' && (node.sectionId === group.id || (node.x >= group.x && node.y >= group.y && node.x < group.x + (group.width || 540) && node.y < group.y + (group.height || 360))));
+        const memberIds = new Set(members.map(node => node.id));
+        const containedGraph = normalizeGraph(members, edges.filter(edge => memberIds.has(edge.from) && memberIds.has(edge.to)));
+        return <div className="group-canvas-scrim" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setGroupCanvasId(null); }}>
+          <section className="group-canvas-modal" role="dialog" aria-modal="true" aria-label={`${group.title} sub-canvas`}>
+            <header className="group-canvas-header"><div><div className="group-breadcrumb"><span>Workspace</span><span>/</span><strong>{group.title}</strong></div><p>{plural(members.length, 'record')} in this knowledge cluster</p></div><button className="icon-button" aria-label="Close sub-canvas" onClick={() => setGroupCanvasId(null)}><X size={17} /></button></header>
+            {members.length ? <GraphCanvas graph={containedGraph} selectedNodeIds={selectedIds.filter(id => memberIds.has(id))} viewport={groupViewport} setViewport={setGroupViewport} activeTool={tool} spacePressed={spacePressed} linkingFromId={linkingFromId} autoFitKey={canvasFitKey + 1} editingNoteId={editingNoteId}
+              onSelectNode={(id, additive) => setSelectedIds(current => additive ? current.includes(id) ? current.filter(value => value !== id) : [...current, id] : [id])} onClearSelection={() => setSelectedIds([])} onClickAway={() => setEditingNoteId(null)} onCancelLinking={() => setLinkingFromId(null)} onMoveNodes={moveNodes} onConnect={connectNodes} onStartLinking={setLinkingFromId} onToggleGroup={toggleGroup} onEditNote={setEditingNoteId} onUpdateNote={(id, content) => updateGraph(current => updateNode(current, id, { content }), false)} onUpdateRelationship={editRelationship} onDeleteRelationship={deleteRelationship} onResizeGroup={resizeGroup} onOpenGroup={id => { setEditingNoteId(null); setGroupCanvasId(id); }} /> : <div className="subcanvas-empty"><Layers2 size={22} /><p>This cluster has no member records yet.</p><button className="quiet-button" onClick={() => { addRecord('concept'); setGroupCanvasId(null); }}>Add a concept</button></div>}
+          </section>
+        </div>;
+      })()}
 
       {modal === 'research' && <div className="modal-scrim" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setModal(null); }}>
         <section className="work-modal research-modal" role="dialog" aria-modal="true" aria-labelledby="research-title">

@@ -1,6 +1,7 @@
 'use client';
 
-import { BookOpenText, Boxes, ChevronDown, FileClock, Files, FolderKanban, Network, Plus, Search, Shapes, Sparkles, CircleHelp } from 'lucide-react';
+import { BookOpenText, Boxes, ChevronDown, FileClock, Files, FolderKanban, GripVertical, Hand, MousePointer2, Network, Plus, Search, Shapes, Sparkles, CircleHelp, GitBranch } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
 export interface ResearchProject {
   id: string;
   title: string;
@@ -8,6 +9,7 @@ export interface ResearchProject {
 }
 
 export type WorkspaceSection = 'canvas' | 'outline' | 'evidence' | 'table' | 'sources' | 'questions' | 'history';
+type CanvasTool = 'select' | 'connect' | 'hand';
 
 const primary = [
   { id: 'canvas', label: 'Knowledge graph', icon: Network },
@@ -17,21 +19,46 @@ const primary = [
 ] as const;
 
 export function WorkspaceSidebar({
-  projects, projectId, section, aiConfigured, pendingCount = 0, onSelectProject, onOpenProjects, onNavigate, onSearch
+  projects, projectId, section, aiConfigured, pendingCount = 0, floating = false, activeTool = 'select', onSelectTool, onSelectProject, onOpenProjects, onNavigate, onSearch
 }: {
   projects: ResearchProject[];
   projectId: string;
   section: WorkspaceSection;
   aiConfigured: boolean;
   pendingCount?: number;
+  floating?: boolean;
+  activeTool?: CanvasTool;
+  onSelectTool?: (tool: CanvasTool) => void;
   onSelectProject: (id: string) => void;
   onOpenProjects: () => void;
   onNavigate: (section: WorkspaceSection) => void;
   onSearch: () => void;
 }) {
   const project = projects.find(item => item.id === projectId);
+  const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
+  const dragOrigin = useRef<{ x: number; y: number; left: number; top: number } | null>(null);
+  useEffect(() => {
+    const move = (event: PointerEvent) => {
+      const origin = dragOrigin.current;
+      if (!origin) return;
+      setPosition({
+        x: Math.max(8, Math.min(window.innerWidth - 240, origin.left + event.clientX - origin.x)),
+        y: Math.max(8, Math.min(window.innerHeight - 160, origin.top + event.clientY - origin.y))
+      });
+    };
+    const up = () => { dragOrigin.current = null; };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+    return () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
+  }, []);
   return (
-    <aside className="workspace-sidebar">
+    <aside className={`workspace-sidebar ${floating ? 'floating-workspace-sidebar' : ''}`} style={floating && position ? { left: position.x, top: position.y, right: 'auto', bottom: 'auto', height: `min(680px, calc(100dvh - ${position.y + 14}px))` } : undefined}>
+      {floating && <button className="sidebar-drag-handle" aria-label="Move workspace sidebar" title="Drag to move sidebar" onPointerDown={event => {
+        const rect = event.currentTarget.closest('.workspace-sidebar')?.getBoundingClientRect();
+        if (!rect) return;
+        dragOrigin.current = { x: event.clientX, y: event.clientY, left: rect.left, top: rect.top };
+        setPosition({ x: rect.left, y: rect.top });
+      }}><GripVertical size={14} /><span>Workspace</span><span className="drag-handle-spacer" /></button>}
       <a className="brand-lockup" href="#workspace" aria-label="Synthex workspace">
         <span className="brand-mark"><i /><i /><i /><i /></span>
         <span className="brand-name">Synthex</span>
@@ -50,6 +77,15 @@ export function WorkspaceSidebar({
       <button className="sidebar-search" aria-label="Search knowledge" title="Search knowledge" onClick={onSearch}>
         <Search size={15} /><span>Search knowledge</span><kbd>Ctrl K</kbd>
       </button>
+
+      {floating && <div className="sidebar-canvas-tools">
+        <span className="sidebar-tool-heading">Canvas tools</span>
+        <div className="sidebar-tool-row" role="group" aria-label="Canvas tools">
+          <button className={`sidebar-tool-button ${activeTool === 'select' ? 'active' : ''}`} aria-label="Select and move records" aria-pressed={activeTool === 'select'} title="Select and move records" onClick={() => onSelectTool?.('select')}><MousePointer2 size={15} /></button>
+          <button className={`sidebar-tool-button ${activeTool === 'connect' ? 'active' : ''}`} aria-label="Connect records (C)" aria-pressed={activeTool === 'connect'} title="Connect records (C)" onClick={() => onSelectTool?.('connect')}><GitBranch size={15} /><kbd>C</kbd></button>
+          <button className={`sidebar-tool-button ${activeTool === 'hand' ? 'active' : ''}`} aria-label="Pan canvas" aria-pressed={activeTool === 'hand'} title="Pan canvas" onClick={() => onSelectTool?.('hand')}><Hand size={15} /></button>
+        </div>
+      </div>}
 
       <nav className="sidebar-nav" aria-label="Workspace navigation">
         <div className="sidebar-nav-heading">Research space</div>
