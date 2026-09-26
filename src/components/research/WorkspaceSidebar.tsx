@@ -1,6 +1,6 @@
 'use client';
 
-import { BookOpenText, Boxes, ChevronDown, FileClock, Files, FolderKanban, GripVertical, Hand, MousePointer2, Network, Plus, Search, Shapes, Sparkles, CircleHelp, GitBranch } from 'lucide-react';
+import { BookOpenText, Boxes, ChevronDown, FileClock, Files, FolderKanban, GripVertical, Hand, MousePointer2, Network, Plus, Search, Shapes, Sparkles, CircleHelp, GitBranch, Scan } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { CustomSelect } from './CustomSelect';
 export interface ResearchProject {
@@ -20,7 +20,7 @@ const primary = [
 ] as const;
 
 export function WorkspaceSidebar({
-  projects, projectId, section, aiConfigured, pendingCount = 0, floating = false, activeTool = 'select', onSelectTool, onSelectProject, onOpenProjects, onNavigate, onSearch
+  projects, projectId, section, aiConfigured, pendingCount = 0, floating = false, activeTool = 'select', onSelectTool, onFit, onSelectProject, onOpenProjects, onNavigate, onSearch
 }: {
   projects: ResearchProject[];
   projectId: string;
@@ -30,6 +30,7 @@ export function WorkspaceSidebar({
   floating?: boolean;
   activeTool?: CanvasTool;
   onSelectTool?: (tool: CanvasTool) => void;
+  onFit?: () => void;
   onSelectProject: (id: string) => void;
   onOpenProjects: () => void;
   onNavigate: (section: WorkspaceSection) => void;
@@ -63,6 +64,7 @@ export function WorkspaceSidebar({
       <button className={`sidebar-tool-button ${activeTool === 'select' ? 'active' : ''}`} aria-label="Select and move records" aria-pressed={activeTool === 'select'} onClick={() => onSelectTool?.('select')}><MousePointer2 size={16} /><span className="tool-tooltip">Select and move</span></button>
       <button className={`sidebar-tool-button ${activeTool === 'connect' ? 'active' : ''}`} aria-label="Connect records" aria-pressed={activeTool === 'connect'} onClick={() => onSelectTool?.('connect')}><GitBranch size={16} /><span className="tool-tooltip">Connect records · C</span></button>
       <button className={`sidebar-tool-button ${activeTool === 'hand' ? 'active' : ''}`} aria-label="Pan canvas" aria-pressed={activeTool === 'hand'} onClick={() => onSelectTool?.('hand')}><Hand size={16} /><span className="tool-tooltip">Pan canvas</span></button>
+      <button className="sidebar-tool-button" aria-label="Fit sheet" onClick={onFit}><Scan size={16} /><span className="tool-tooltip">Fit sheet</span></button>
     </div>
   </aside>;
   return (

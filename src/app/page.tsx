@@ -406,6 +406,7 @@ export default function SynthexWorkspace() {
         projects={projects} projectId={projectId} section={section} aiConfigured={aiConfigured} pendingCount={pendingCount}
         floating={section === 'canvas'}
         activeTool={tool} onSelectTool={value => { setTool(value); setLinkingFromId(null); }}
+        onFit={() => setCanvasFitKey(value => value + 1)}
         onSelectProject={setProjectId} onOpenProjects={() => setModal('project')} onNavigate={value => { setSection(value); setSelectedIds([]); setEditingNoteId(null); setLinkingFromId(null); setTool('select'); }}
         onSearch={() => setModal('search')}
       />
@@ -452,17 +453,6 @@ export default function SynthexWorkspace() {
 
         <section className={`workspace-stage ${section === 'canvas' ? 'stage-canvas' : 'stage-view'}`}>
           {section === 'canvas' ? <>
-            <div className="graph-toolbar">
-              <div className="tool-set" role="group" aria-label="Canvas tools">
-                <button className={`tool-button ${tool === 'select' ? 'active' : ''}`} title="Select and move" aria-label="Select tool" onClick={() => { setTool('select'); setLinkingFromId(null); }}><Layers2 size={15} /></button>
-                <button className={`tool-button ${tool === 'connect' ? 'active' : ''}`} title="Connect two records" aria-label="Relationship tool" onClick={() => { setTool(tool === 'connect' ? 'select' : 'connect'); setLinkingFromId(null); }}><GitBranch size={15} /></button>
-                <button className={`tool-button ${tool === 'hand' ? 'active' : ''}`} title="Pan canvas" aria-label="Pan tool" onClick={() => setTool(tool === 'hand' ? 'select' : 'hand')}><ArrowRight size={15} /></button>
-              </div>
-              <div className="canvas-hint">
-                {tool === 'connect' ? <><span className="canvas-hint-wide">Choose two records to form a relationship</span><span className="canvas-hint-compact">Tap two records</span></> : tool === 'hand' ? <><span className="canvas-hint-wide">Drag to move around the sheet</span><span className="canvas-hint-compact">Drag sheet to pan</span></> : <><span className="canvas-hint-wide">Drag records to arrange · scroll to zoom</span><span className="canvas-hint-compact">Drag to pan · pinch to zoom</span></>}
-              </div>
-              <button className="canvas-fit" onClick={() => setCanvasFitKey(value => value + 1)}>Fit sheet</button>
-            </div>
             <div className="canvas-and-inspector">
               <div className="graph-wrap">
                 {loading ? <div className="canvas-loading"><LoaderCircle size={21} className="spin" />Opening research sheet…</div> : nodes.length === 0 ? <div className="canvas-empty"><span className="empty-orbit"><Network size={24} /></span><h2>Your research sheet is ready</h2><p>Add a first idea or run grounded research to build a map of what you know.</p><div><button className="primary-button" onClick={() => setModal('research')}><Sparkles size={15} /> Start with research</button><button className="quiet-button" onClick={() => addRecord('concept')}><Plus size={15} /> Add a concept</button></div></div> : <GraphCanvas
