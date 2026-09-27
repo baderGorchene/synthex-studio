@@ -8,9 +8,9 @@
 
 | Section | Focus | Pending | In Progress | Completed |
 |---|---|---|---|---|
-| **Part 1: Code-Only & Local** | Storage, Canvas UI, Math, Exports, Cleanups | 9 | 0 | 9 |
+| **Part 1: Code-Only & Local** | Storage, Canvas UI, Math, Exports, Cleanups | 8 | 0 | 10 |
 | **Part 2: AI & External Services** | Gemini Embeddings, Google Search Grounding, SSE | 3 | 0 | 0 |
-| **Total** | | **12** | **0** | **9** |
+| **Total** | | **11** | **0** | **10** |
 
 ---
 
@@ -61,9 +61,13 @@
   - Connected canvas drag-and-drop, clipboard paste, and property inspector file/media uploaders to disk storage with visual upload progress spinners.
   - Updated [FileAndMediaModal.tsx](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/src/components/research/FileAndMediaModal.tsx) to dynamically stream disk-stored text/code/data files while preserving backward compatibility for legacy `data:` URIs.
   - Prevents payload bloat and eliminates HTTP 413 "Graph payload is too large" autosave errors on `PUT /api/graph`.
-- [ ] **Persistent Revision History & Time-Travel Undo/Redo**
-  - *Current Defect:* Undo/redo stack (`undoStack.current`, `redoStack.current`) lives strictly in volatile React component refs and resets on page reload or workspace switch.
-  - *Solution:* Add a `graph_revisions` table in `canvas.db` recording transactional changesets with timestamps and user-reversible history.
+- [x] **Persistent Revision History & Time-Travel Undo/Redo**
+  - Added `graph_revisions` table and index in SQLite [src/lib/db.ts](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/src/lib/db.ts) capturing point-in-time graph states with 100-revision automatic retention.
+  - Implemented `POST /api/revisions` and `GET /api/revisions` with fast summary listing and atomic 1-click restore/rollback.
+  - Built dedicated Revisions View in [src/components/research/KnowledgeViews.tsx](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/src/components/research/KnowledgeViews.tsx) with relative timestamps, manual checkpoint creation, and rollback controls.
+  - Connected topbar Time-Travel shortcut button `(H)` and navigation menu in [src/app/page.tsx](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/src/app/page.tsx).
+  - Configured automatic checkpointing on research application, file import, and throttled periodic background saves.
+  - Added unit tests in [tests/graph.test.mjs](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/tests/graph.test.mjs) verifying creation, listing, atomic restoration, and deletion.
 - [ ] **Automatic Local Workspace Snapshot & Rollback**
   - Save full snapshot backups of `canvas.db` before major edits with a one-click restore UI.
 

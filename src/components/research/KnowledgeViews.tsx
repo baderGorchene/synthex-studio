@@ -1,8 +1,9 @@
 'use client';
 /* eslint-disable @next/next/no-img-element */
 
-import { ArrowDownRight, ArrowUpRight, CircleHelp, ExternalLink, FileClock, Layers2, Quote } from 'lucide-react';
-import type { CanvasNode, Connection, ResearchSession } from '@/types/canvas';
+import { useCallback, useEffect, useState } from 'react';
+import { ArrowDownRight, ArrowUpRight, CircleHelp, ExternalLink, FileClock, History, Layers2, LoaderCircle, Plus, Quote, RotateCcw, Trash2 } from 'lucide-react';
+import type { CanvasNode, Connection, GraphRevisionSummary, ResearchSession } from '@/types/canvas';
 import type { WorkspaceSection } from './WorkspaceSidebar';
 import { WebsiteLogo, getLinkThumbnail } from './SourceMetadata';
 
@@ -10,6 +11,18 @@ const names: Record<string, string> = {
   concept: 'Concept', claim: 'Claim', question: 'Question', hypothesis: 'Hypothesis', source: 'Source',
   link: 'Link & Website', note: 'Note', group: 'Cluster', section: 'Cluster', ai_insight: 'AI insight', research_result: 'Research result'
 };
+
+function formatRelativeTime(timestamp: number): string {
+  const diffSec = Math.floor((Date.now() - timestamp) / 1000);
+  if (diffSec < 60) return 'Just now';
+  const diffMin = Math.floor(diffSec / 60);
+  if (diffMin < 60) return `${diffMin}m ago`;
+  const diffHours = Math.floor(diffMin / 60);
+  if (diffHours < 24) return `${diffHours}h ago`;
+  const diffDays = Math.floor(diffHours / 24);
+  if (diffDays < 7) return `${diffDays}d ago`;
+  return new Date(timestamp).toLocaleDateString();
+}
 
 function sourceHost(value?: string) {
   try {
@@ -19,7 +32,7 @@ function sourceHost(value?: string) {
 }
 
 export function KnowledgeViews({
-  section, nodes, edges, sessions, onSelectNode, onOpenSession
+  section, nodes, edges, sessions, onSelectNode, onOpenSession, projectId, onRestoreRevision, onCreateCheckpoint
 }: {
   section: WorkspaceSection;
   nodes: CanvasNode[];
@@ -27,7 +40,22 @@ export function KnowledgeViews({
   sessions: ResearchSession[];
   onSelectNode: (id: string) => void;
   onOpenSession: (session: ResearchSession) => void;
+  projectId?: string;
+  onRestoreRevision?: (revisionId: string) => Promise<void> | void;
+  onCreateCheckpoint?: (title: string) => Promise<void> | void;
 }) {
+  if (section === 'revisions') {
+    return (
+      <RevisionsView
+        projectId={projectId || 'default'}
+        currentNodesCount={nodes.length}
+        currentEdgesCount={edges.length}
+        onRestoreRevision={onRestoreRevision}
+        onCreateCheckpoint={onCreateCheckpoint}
+      />
+    );
+  }
+
   if (section === 'history') return (
     <div className="content-view">
       <div className="view-heading"><div><span className="panel-overline">Activity</span><h2>Research history</h2><p>Each run keeps its question, search trail, and review decisions.</p></div><FileClock size={21} /></div>
@@ -108,3 +136,239 @@ export function KnowledgeViews({
       })}</div>}
   </div>;
 }
+
+function RevisionsView({
+  projectId,
+  currentNodesCount,
+  currentEdgesCount,
+  onRestoreRevision,
+  onCreateCheckpoint
+}: {
+  projectId: string;
+  currentNodesCount: number;
+  currentEdgesCount: number;
+  onRestoreRevision?: (revisionId: string) => Promise<void> | void;
+  onCreateCheckpoint?: (title: string) => Promise<void> | void;
+}) {
+  const [revisions, setRevisions] = useState<GraphRevisionSummary[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [restoringId, setRestoringId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [checkpointTitle, setCheckpointTitle] = useState('');
+  const [creating, setCreating] = useState(false);
+  const [showCreateInput, setShowCreateInput] = useState(false);
+
+  const fetchRevisions = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/revisions?projectId=${encodeURIComponent(projectId)}`);
+      const data = await res.json();
+      if (data.revisions) {
+        setRevisions(data.revisions);
+      }
+    } catch (err) {
+      console.error('Failed to fetch revisions:', err);
+    } finally {
+      setLoading(false);
+    }
+  }, [projectId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/revisions?projectId=${encodeURIComponent(projectId)}`)
+      .then(res => res.json())
+      .then(data => {
+        if (!cancelled && data.revisions) {
+          setRevisions(data.revisions);
+        }
+      })
+      .catch(err => console.error('Failed to fetch revisions:', err))
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [projectId]);
+
+  const handleCreate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!checkpointTitle.trim() && !onCreateCheckpoint) return;
+    setCreating(true);
+    try {
+      if (onCreateCheckpoint) {
+        await onCreateCheckpoint(checkpointTitle.trim());
+      } else {
+        await fetch('/api/revisions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            projectId,
+            action: 'create',
+            title: checkpointTitle.trim() || 'Manual Checkpoint'
+          })
+        });
+      }
+      setCheckpointTitle('');
+      setShowCreateInput(false);
+      await fetchRevisions();
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const handleRestore = async (id: string, title: string) => {
+    const confirmRestore = window.confirm(`Restore this revision "${title}"? Any unsaved edits will be preserved in a new restore checkpoint.`);
+    if (!confirmRestore) return;
+
+    setRestoringId(id);
+    try {
+      if (onRestoreRevision) {
+        await onRestoreRevision(id);
+      } else {
+        await fetch('/api/revisions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ projectId, action: 'restore', revisionId: id })
+        });
+      }
+      await fetchRevisions();
+    } finally {
+      setRestoringId(null);
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    setDeletingId(id);
+    try {
+      await fetch('/api/revisions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId, action: 'delete', revisionId: id })
+      });
+      setRevisions(current => current.filter(rev => rev.id !== id));
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  return (
+    <div className="content-view">
+      <div className="view-heading">
+        <div>
+          <span className="panel-overline">Version History</span>
+          <h2>Persistent Revisions & Checkpoints</h2>
+          <p>Time-travel to previous states. All revisions are stored permanently in local SQLite.</p>
+        </div>
+        <History size={21} />
+      </div>
+
+      <div className="revisions-toolbar">
+        {showCreateInput ? (
+          <form onSubmit={handleCreate} className="revisions-checkpoint-form">
+            <input
+              type="text"
+              className="field-input revisions-checkpoint-input"
+              placeholder="e.g. Before merging research notes..."
+              value={checkpointTitle}
+              autoFocus
+              onChange={e => setCheckpointTitle(e.target.value)}
+              disabled={creating}
+            />
+            <button type="submit" className="primary-button" disabled={creating}>
+              {creating ? <LoaderCircle size={14} className="spin" /> : <Plus size={14} />}
+              <span>{creating ? 'Saving…' : 'Save'}</span>
+            </button>
+            <button
+              type="button"
+              className="quiet-button"
+              onClick={() => { setShowCreateInput(false); setCheckpointTitle(''); }}
+              disabled={creating}
+            >
+              Cancel
+            </button>
+          </form>
+        ) : (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+            <span style={{ fontSize: '11px', color: '#3c6e71' }}>
+              Current sheet: <strong>{currentNodesCount}</strong> records, <strong>{currentEdgesCount}</strong> links
+            </span>
+            <button
+              type="button"
+              className="primary-button"
+              onClick={() => setShowCreateInput(true)}
+            >
+              <Plus size={14} />
+              <span>Create checkpoint</span>
+            </button>
+          </div>
+        )}
+      </div>
+
+      {loading ? (
+        <div className="empty-view">
+          <LoaderCircle size={22} className="spin" />
+          <strong>Loading revisions…</strong>
+        </div>
+      ) : revisions.length === 0 ? (
+        <div className="empty-view">
+          <History size={22} />
+          <strong>No revisions recorded yet</strong>
+          <span>Create a checkpoint above or make changes to start recording point-in-time snapshots.</span>
+        </div>
+      ) : (
+        <div className="revisions-list">
+          {revisions.map(rev => {
+            const isRestoring = restoringId === rev.id;
+            const isDeleting = deletingId === rev.id;
+            const isRestored = rev.title.startsWith('Restored:');
+
+            return (
+              <div className="revision-card" key={rev.id}>
+                <div className="revision-card-left">
+                  <div className="revision-icon-wrap" style={isRestored ? { background: '#3c6e71', color: '#fff' } : undefined}>
+                    <History size={16} />
+                  </div>
+                  <div className="revision-details">
+                    <div className="revision-title-row">
+                      <strong className="revision-title">{rev.title}</strong>
+                      {isRestored && <span className="revision-badge">Restoration</span>}
+                    </div>
+                    <div className="revision-meta-row">
+                      <span>{formatRelativeTime(rev.createdAt)}</span>
+                      <span>·</span>
+                      <span>{new Date(rev.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                      <span>·</span>
+                      <span className="revision-badge">{rev.nodeCount} records · {rev.edgeCount} relationships</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="revision-actions">
+                  <button
+                    type="button"
+                    className="restore-btn"
+                    disabled={isRestoring || isDeleting}
+                    onClick={() => handleRestore(rev.id, rev.title)}
+                    title="Restore graph to this state"
+                  >
+                    {isRestoring ? <LoaderCircle size={13} className="spin" /> : <RotateCcw size={13} />}
+                    <span>{isRestoring ? 'Restoring…' : 'Restore'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="delete-rev-btn"
+                    disabled={isRestoring || isDeleting}
+                    onClick={() => handleDelete(rev.id)}
+                    title="Delete this revision"
+                    aria-label="Delete revision"
+                  >
+                    {isDeleting ? <LoaderCircle size={13} className="spin" /> : <Trash2 size={13} />}
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+

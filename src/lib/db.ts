@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3';
 import path from 'path';
-import {
+import type {
   AccentColor,
   ArrowheadType,
   CanvasNode,
@@ -9,11 +9,13 @@ import {
   ConnectionColor,
   ConnectionLineStyle,
   ConnectionStrokePattern,
+  GraphRevision,
+  GraphRevisionSummary,
   ResearchChangeStatus,
   ResearchSession
-} from '@/types/canvas';
-import { SEED_CONNECTIONS, SEED_NODES } from '@/constants/seedData';
-import { addNode, addRelationship, normalizeGraph } from '@/lib/graph';
+} from '../types/canvas';
+import { SEED_CONNECTIONS, SEED_NODES } from '../constants/seedData.ts';
+import { addNode, addRelationship, normalizeGraph } from './graph.ts';
 
 // Ensure database file path in workspace
 const dbPath = path.join(process.cwd(), 'canvas.db');
@@ -129,6 +131,17 @@ function ensureSchemaColumns(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS connections_project_idx ON connections(projectId);
     CREATE INDEX IF NOT EXISTS research_project_idx ON research_sessions(projectId, createdAt);
     INSERT OR IGNORE INTO projects (id, title, createdAt) VALUES ('default', 'Research workspace', 1761000000000);
+
+    CREATE TABLE IF NOT EXISTS graph_revisions (
+      id TEXT PRIMARY KEY,
+      projectId TEXT NOT NULL DEFAULT 'default',
+      title TEXT NOT NULL,
+      nodeCount INTEGER NOT NULL,
+      edgeCount INTEGER NOT NULL,
+      graphData TEXT NOT NULL,
+      createdAt INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS graph_revisions_project_idx ON graph_revisions(projectId, createdAt DESC);
   `);
 }
 
@@ -672,3 +685,111 @@ export function createProjectInDb(id: string, title: string, template: 'blank' |
   }
   return project;
 }
+
+export function createGraphRevision(
+  projectId: string,
+  title: string,
+  nodes: CanvasNode[],
+  relationships: Connection[]
+): GraphRevisionSummary {
+  const db = getDatabase();
+  const id = `rev-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+  const createdAt = Date.now();
+  const nodeCount = nodes.length;
+  const edgeCount = relationships.length;
+  const graphData = JSON.stringify({ nodes, relationships });
+
+  const record: GraphRevisionSummary = {
+    id,
+    projectId,
+    title: title.trim() || 'Snapshot checkpoint',
+    nodeCount,
+    edgeCount,
+    createdAt
+  };
+
+  db.transaction(() => {
+    db.prepare(`
+      INSERT INTO graph_revisions (id, projectId, title, nodeCount, edgeCount, graphData, createdAt)
+      VALUES (@id, @projectId, @title, @nodeCount, @edgeCount, @graphData, @createdAt)
+    `).run({ ...record, graphData });
+
+    // Prune revisions beyond the last 100 per project
+    db.prepare(`
+      DELETE FROM graph_revisions
+      WHERE projectId = ? AND id NOT IN (
+        SELECT id FROM graph_revisions WHERE projectId = ? ORDER BY createdAt DESC LIMIT 100
+      )
+    `).run(projectId, projectId);
+  })();
+
+  return record;
+}
+
+export function getGraphRevisions(projectId: string, limit = 50): GraphRevisionSummary[] {
+  const db = getDatabase();
+  return db.prepare(`
+    SELECT id, projectId, title, nodeCount, edgeCount, createdAt
+    FROM graph_revisions
+    WHERE projectId = ?
+    ORDER BY createdAt DESC
+    LIMIT ?
+  `).all(projectId, limit) as GraphRevisionSummary[];
+}
+
+export function getGraphRevisionById(projectId: string, revisionId: string): GraphRevision | null {
+  const db = getDatabase();
+  const row = db.prepare(`
+    SELECT id, projectId, title, nodeCount, edgeCount, graphData, createdAt
+    FROM graph_revisions
+    WHERE id = ? AND projectId = ?
+  `).get(revisionId, projectId) as (GraphRevisionSummary & { graphData: string }) | undefined;
+
+  if (!row) return null;
+
+  try {
+    const parsed = JSON.parse(row.graphData);
+    return {
+      id: row.id,
+      projectId: row.projectId,
+      title: row.title,
+      nodeCount: row.nodeCount,
+      edgeCount: row.edgeCount,
+      createdAt: row.createdAt,
+      nodes: parsed.nodes || [],
+      relationships: parsed.relationships || []
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function restoreGraphRevision(
+  projectId: string,
+  revisionId: string
+): { revision: GraphRevisionSummary; nodes: CanvasNode[]; relationships: Connection[] } | null {
+  const target = getGraphRevisionById(projectId, revisionId);
+  if (!target) return null;
+
+  // Atomically save the target graph to the database and record a restoration checkpoint
+  bulkSaveCanvasToDb(target.nodes, target.relationships, projectId);
+  const restoreCheckpoint = createGraphRevision(
+    projectId,
+    `Restored: ${target.title}`,
+    target.nodes,
+    target.relationships
+  );
+
+  return {
+    revision: restoreCheckpoint,
+    nodes: target.nodes,
+    relationships: target.relationships
+  };
+}
+
+export function deleteGraphRevision(projectId: string, revisionId: string): boolean {
+  const db = getDatabase();
+  const result = db.prepare('DELETE FROM graph_revisions WHERE id = ? AND projectId = ?').run(revisionId, projectId);
+  return result.changes > 0;
+}
+

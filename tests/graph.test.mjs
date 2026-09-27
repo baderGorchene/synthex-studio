@@ -85,3 +85,49 @@ test('calculateConnectionPaths connects flush to bottom of cards with 0 gap', as
   assert.ok(reversePath.endsWith(`240 ${expectedStartY}`), `Reverse path should end flush at bottom of Card A (${expectedStartY}), got: ${reversePath}`);
 });
 
+test('persistent revisions create, list, restore, and delete correctly', async () => {
+  const {
+    createGraphRevision,
+    getGraphRevisions,
+    getGraphRevisionById,
+    restoreGraphRevision,
+    deleteGraphRevision
+  } = await import('../src/lib/db.ts');
+
+  const testProject = `test-rev-${Date.now()}`;
+  const nodes = [concept('n1', 'First node'), concept('n2', 'Second node')];
+  const connections = [relation('r1', 'n1', 'n2')];
+
+  // 1. Create a revision
+  const rev = createGraphRevision(testProject, 'Initial architecture draft', nodes, connections);
+  assert.equal(rev.projectId, testProject);
+  assert.equal(rev.title, 'Initial architecture draft');
+  assert.equal(rev.nodeCount, 2);
+  assert.equal(rev.edgeCount, 1);
+
+  // 2. List revisions
+  const list = getGraphRevisions(testProject);
+  assert.ok(list.length >= 1);
+  assert.equal(list[0].id, rev.id);
+
+  // 3. Get revision by ID with full graph
+  const loaded = getGraphRevisionById(testProject, rev.id);
+  assert.ok(loaded);
+  assert.equal(loaded.nodes.length, 2);
+  assert.equal(loaded.relationships.length, 1);
+  assert.equal(loaded.nodes[0].title, 'First node');
+
+  // 4. Restore revision
+  const restored = restoreGraphRevision(testProject, rev.id);
+  assert.ok(restored);
+  assert.equal(restored.nodes.length, 2);
+  assert.ok(restored.revision.title.includes('Restored:'));
+
+  // 5. Delete revision
+  const deleted = deleteGraphRevision(testProject, rev.id);
+  assert.equal(deleted, true);
+  const reloaded = getGraphRevisionById(testProject, rev.id);
+  assert.equal(reloaded, null);
+});
+
+

@@ -3282,3 +3282,158 @@ button:not(.tool-button):not(.icon-button):not(.group-fold):not(.assistant-trigg
   margin-top: 1px;
 }
 
+/* Revisions & Time-Travel Styles */
+.revisions-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+  gap: 12px;
+}
+
+.revisions-checkpoint-form {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  max-width: 480px;
+}
+
+.revisions-checkpoint-input {
+  flex: 1;
+  min-height: 34px;
+}
+
+.revisions-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.revision-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 13px 16px;
+  border: 1px solid #d9d9d9;
+  border-radius: 9px;
+  background: #ffffff;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.revision-card:hover {
+  border-color: #3c6e71;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+}
+
+.revision-card-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.revision-icon-wrap {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: #d9d9d9;
+  color: #284b63;
+  flex-shrink: 0;
+}
+
+.revision-details {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.revision-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.revision-title {
+  color: #353535;
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.revision-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 10.5px;
+  color: #3c6e71;
+}
+
+.revision-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 9.5px;
+  font-weight: 550;
+  background: #d9d9d9;
+  color: #353535;
+}
+
+.revision-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.restore-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 11px;
+  border-radius: 6px;
+  border: 1px solid #3c6e71;
+  background: #3c6e71;
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 550;
+  cursor: pointer;
+  transition: opacity 0.15s ease, transform 0.1s ease;
+}
+
+.restore-btn:hover {
+  opacity: 0.9;
+}
+
+.restore-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.delete-rev-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #353535;
+  cursor: pointer;
+}
+
+.delete-rev-btn:hover {
+  background: rgba(249, 65, 68, 0.1);
+  color: #f94144;
+  border-color: rgba(249, 65, 68, 0.2);
+}
+
+

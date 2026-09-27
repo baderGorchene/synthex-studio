@@ -216,3 +216,17 @@ export interface ResearchSession {
   changes: ResearchChange[];
   createdAt: number;
 }
+
+export interface GraphRevisionSummary {
+  id: string;
+  projectId: string;
+  title: string;
+  nodeCount: number;
+  edgeCount: number;
+  createdAt: number;
+}
+
+export interface GraphRevision extends GraphRevisionSummary {
+  nodes: CanvasNode[];
+  relationships: Connection[];
+}

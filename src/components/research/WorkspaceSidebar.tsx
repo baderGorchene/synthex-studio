@@ -10,7 +10,7 @@ export interface ResearchProject {
   createdAt: number;
 }
 
-export type WorkspaceSection = 'canvas' | 'outline' | 'evidence' | 'table' | 'sources' | 'questions' | 'history';
+export type WorkspaceSection = 'canvas' | 'outline' | 'evidence' | 'table' | 'sources' | 'questions' | 'history' | 'revisions';
 export type CanvasTool = 'select' | 'connect' | 'hand';
 
 export const addableRecords = [

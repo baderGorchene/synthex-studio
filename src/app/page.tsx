@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } fro
 import {
   ArrowDownToLine, ArrowRight, BookOpenText, Check, ChevronDown, CircleHelp, Clock3,
   Compass, FileClock, FileJson2, Files, FileText, FolderKanban, GitBranch,
-  Layers2, LoaderCircle, MessageCircle, Network, Plus, Redo2,
+  History, Layers2, LoaderCircle, MessageCircle, Network, Plus, Redo2,
   Search, Send, Shapes, SlidersHorizontal, Sparkles, Trash2, Undo2, Upload, X
 } from 'lucide-react';
 import { GraphCanvas, membersOf } from '@/components/research/GraphCanvas';
@@ -14,7 +14,7 @@ import { CustomSelect } from '@/components/research/CustomSelect';
 import { CanvasToolDock, addableRecords, type ResearchProject, type WorkspaceSection } from '@/components/research/WorkspaceSidebar';
 import { extractYouTubeVideoId } from '@/components/research/SourceMetadata';
 import { addNode, addRelationship, exportContextMarkdown, exportGraphJson, exportMermaid, normalizeGraph, removeNode, updateNode, updateRelationship, type KnowledgeGraph } from '@/lib/graph';
-import type { CanvasNode, CanvasNodeType, Connection, Coordinates, ResearchChange, ResearchSession } from '@/types/canvas';
+import type { CanvasNode, CanvasNodeType, Connection, Coordinates, GraphRevisionSummary, ResearchChange, ResearchSession } from '@/types/canvas';
 import { ELEMENT_PALETTE } from '@/types/canvas';
 
 type Viewport = { zoom: number; pan: Coordinates };
@@ -171,6 +171,50 @@ export default function SynthexWorkspace() {
     setRedoReady(redoStack.current.length > 0);
   }, []);
 
+  const lastRevisionTime = useRef(Date.now());
+
+  const restoreRevision = useCallback(async (revisionId: string) => {
+    try {
+      const res = await fetch('/api/revisions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId, action: 'restore', revisionId })
+      });
+      const data = await readJson<{ success: boolean; nodes: CanvasNode[]; relationships: Connection[]; revision: GraphRevisionSummary }>(res);
+      if (data.nodes) {
+        updateGraph(() => normalizeGraph(data.nodes, data.relationships || []));
+        setCanvasFitKey(v => v + 1);
+        setSelectedIds([]);
+        announce(`Restored snapshot: ${data.revision.title}`);
+      }
+    } catch (err) {
+      announce(err instanceof Error ? err.message : 'Could not restore this revision.');
+    }
+  }, [projectId, updateGraph, announce]);
+
+  const createCheckpoint = useCallback(async (customTitle?: string) => {
+    try {
+      const title = customTitle?.trim() || `Manual checkpoint (${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })})`;
+      const res = await fetch('/api/revisions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectId,
+          action: 'create',
+          title,
+          nodes: Object.values(graph.nodesById),
+          relationships: Object.values(graph.edgesById)
+        })
+      });
+      const data = await readJson<{ success: boolean; revision: GraphRevisionSummary }>(res);
+      if (data.success) {
+        announce(`Checkpoint saved: "${data.revision.title}"`);
+      }
+    } catch (err) {
+      announce(err instanceof Error ? err.message : 'Could not create checkpoint.');
+    }
+  }, [projectId, graph, announce]);
+
   const loadProject = useCallback(async (id: string) => {
     const requestId = ++loadRequest.current;
     setLoading(true);
@@ -229,6 +273,21 @@ export default function SynthexWorkspace() {
           body: JSON.stringify({ projectId, nodes: Object.values(graph.nodesById), relationships: Object.values(graph.edgesById) })
         }));
         setSaveState('saved');
+        const now = Date.now();
+        if (now - lastRevisionTime.current > 120_000) {
+          lastRevisionTime.current = now;
+          fetch('/api/revisions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              projectId,
+              action: 'create',
+              title: `Auto-saved snapshot (${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })})`,
+              nodes: Object.values(graph.nodesById),
+              relationships: Object.values(graph.edgesById)
+            })
+          }).catch(() => {});
+        }
       } catch (error) {
         setSaveState('error');
         announce(error instanceof Error ? error.message : 'Changes could not be saved.');
@@ -625,6 +684,15 @@ export default function SynthexWorkspace() {
       }));
       setActiveSession(data.session); setReviewDecisions({});
       await Promise.all([reloadHistory(), reloadGraph()]);
+      fetch('/api/revisions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectId,
+          action: 'create',
+          title: `Research review applied (${decisions.filter(d => d.status === 'accepted').length} accepted)`
+        })
+      }).catch(() => {});
       announce('Review saved. Accepted changes are now in the graph.');
     } catch (error) { announce(error instanceof Error ? error.message : 'Could not save this review.'); }
   }
@@ -638,6 +706,17 @@ export default function SynthexWorkspace() {
         const parsed = JSON.parse(String(reader.result));
         const imported = normalizeGraph(parsed.nodes, parsed.relationships || parsed.connections || []);
         updateGraph(() => imported);
+        fetch('/api/revisions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            projectId,
+            action: 'create',
+            title: `Imported graph: ${file.name.replace(/\.[^/.]+$/, '')}`,
+            nodes: Object.values(imported.nodesById),
+            relationships: Object.values(imported.edgesById)
+          })
+        }).catch(() => {});
         setCanvasFitKey(value => value + 1);
         setSelectedIds([]); setSection('canvas'); setExportMenu(false);
         announce('Graph imported. Saving changes…');
@@ -813,6 +892,14 @@ export default function SynthexWorkspace() {
                       {pendingCount > 0 && <span className="nav-item-badge">{pendingCount} pending</span>}
                       {section === 'history' && <Check size={13} className="active-tick" />}
                     </button>
+                    <button className={`nav-menu-item ${section === 'revisions' ? 'is-active' : ''}`} onClick={() => { navigateTo('revisions'); setNavMenuOpen(false); }}>
+                      <History size={15} />
+                      <div className="nav-item-content">
+                        <strong>Revisions & Time-Travel</strong>
+                        <small>Point-in-time snapshots & rollback</small>
+                      </div>
+                      {section === 'revisions' && <Check size={13} className="active-tick" />}
+                    </button>
                   </div>
                 </div>
               )}
@@ -929,6 +1016,14 @@ export default function SynthexWorkspace() {
             <button className="icon-button history-action" title="Redo (⌘Shift+Z / Ctrl+Y)" aria-label="Redo" disabled={!redoReady} onClick={redo}>
               <Redo2 size={15} />
             </button>
+            <button
+              className={`icon-button history-action ${section === 'revisions' ? 'is-active' : ''}`}
+              title="Persistent Revisions & Time-Travel (H)"
+              aria-label="Revisions and Time-Travel"
+              onClick={() => navigateTo('revisions')}
+            >
+              <History size={15} />
+            </button>
 
             <div className="menu-anchor" ref={exportMenuRef}>
               <button
@@ -985,10 +1080,10 @@ export default function SynthexWorkspace() {
           <section className="page-heading">
             <div className="heading-copy">
               <span className="heading-icon">
-                {section === 'table' ? <Files size={17} /> : section === 'history' ? <FileClock size={17} /> : section === 'evidence' ? <Shapes size={17} /> : section === 'sources' ? <FolderKanban size={17} /> : section === 'questions' ? <CircleHelp size={17} /> : <BookOpenText size={17} />}
+                {section === 'table' ? <Files size={17} /> : section === 'history' ? <FileClock size={17} /> : section === 'revisions' ? <History size={17} /> : section === 'evidence' ? <Shapes size={17} /> : section === 'sources' ? <FolderKanban size={17} /> : section === 'questions' ? <CircleHelp size={17} /> : <BookOpenText size={17} />}
               </span>
               <div>
-                <h1>{section === 'table' ? 'Claims & questions' : section === 'history' ? 'Research history' : section === 'evidence' ? 'Evidence paths' : section === 'sources' ? 'Sources' : section === 'questions' ? 'Open questions' : 'Outline'}</h1>
+                <h1>{section === 'table' ? 'Claims & questions' : section === 'history' ? 'Research history' : section === 'revisions' ? 'Persistent revisions & time-travel' : section === 'evidence' ? 'Evidence paths' : section === 'sources' ? 'Sources' : section === 'questions' ? 'Open questions' : 'Outline'}</h1>
                 <p>{plural(nodes.length, 'record')} <span>·</span> {plural(edges.length, 'relationship')} <span>·</span> {plural(nodes.filter(node => node.type === 'source' || node.type === 'link').length, 'source')}</p>
               </div>
             </div>
@@ -1199,7 +1294,17 @@ export default function SynthexWorkspace() {
             </div>
             <div className="canvas-footer"><span><i className="legend-dot idea" /> Ideas <i className="legend-dot claim" /> Claims <i className="legend-dot source" /> Sources <i className="legend-line" /> Relationships</span><span>{plural(nodes.length, 'record')} · {plural(edges.length, 'relationship')} · {viewport.zoom.toFixed(2)}×</span></div>
           </> : <div className="views-stage">
-            <KnowledgeViews section={section} nodes={nodes} edges={edges} sessions={sessions} onSelectNode={id => { setSelectedIds([id]); setSection('canvas'); }} onOpenSession={openSession} />
+            <KnowledgeViews
+              section={section}
+              nodes={nodes}
+              edges={edges}
+              sessions={sessions}
+              onSelectNode={id => { setSelectedIds([id]); setSection('canvas'); }}
+              onOpenSession={openSession}
+              projectId={projectId}
+              onRestoreRevision={restoreRevision}
+              onCreateCheckpoint={createCheckpoint}
+            />
           </div>}
         </section>
       </main>
