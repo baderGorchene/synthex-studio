@@ -8,9 +8,9 @@
 
 | Section | Focus | Pending | In Progress | Completed |
 |---|---|---|---|---|
-| **Part 1: Code-Only & Local** | Storage, Canvas UI, Math, Exports, Cleanups | 8 | 0 | 10 |
+| **Part 1: Code-Only & Local** | Storage, Canvas UI, Math, Exports, Cleanups | 3 | 0 | 15 |
 | **Part 2: AI & External Services** | Gemini Embeddings, Google Search Grounding, SSE | 3 | 0 | 0 |
-| **Total** | | **11** | **0** | **10** |
+| **Total** | | **6** | **0** | **15** |
 
 ---
 
@@ -68,26 +68,39 @@
   - Connected topbar Time-Travel shortcut button `(H)` and navigation menu in [src/app/page.tsx](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/src/app/page.tsx).
   - Configured automatic checkpointing on research application, file import, and throttled periodic background saves.
   - Added unit tests in [tests/graph.test.mjs](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/tests/graph.test.mjs) verifying creation, listing, atomic restoration, and deletion.
-- [ ] **Automatic Local Workspace Snapshot & Rollback**
-  - Save full snapshot backups of `canvas.db` before major edits with a one-click restore UI.
+- [x] **Automatic Local Workspace Snapshot & Rollback**
+  - Implemented SQLite database snapshot and restore engine in [src/lib/db.ts](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/src/lib/db.ts) using `db.backup()`, WAL checkpointing, and safe Windows file handle management.
+  - Created `/api/backup` route supporting atomic snapshot creation, restore, deletion, and direct `.db` file downloads.
+  - Added dual-tab switcher to Revisions View in [src/components/research/KnowledgeViews.tsx](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/src/components/research/KnowledgeViews.tsx) enabling researchers to inspect, download, and restore both project-level graph checkpoints and full SQLite database snapshots.
+  - Added "Download active `canvas.db`" 1-click button for full offline archiving.
+  - Configured automatic pre-import safety backups in [src/app/page.tsx](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/src/app/page.tsx) before applying external graph files.
+  - Added unit tests in [tests/graph.test.mjs](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/tests/graph.test.mjs) verifying creation, listing, file verification, restoration, and deletion (7/7 tests passing).
 
 ---
 
 ## 1.3 Canvas Interaction & Spatial Performance (P3)
 
-- [ ] **Canvas Virtualization (60 FPS for 200+ Nodes)**
-  - Cull DOM elements outside the current visible viewport (`viewport.pan` + `viewport.zoom`) to keep rendering performant on massive knowledge graphs.
-- [ ] **Smart Alignment Guides & Snapping**
-  - Display magnetic alignment lines (center, edges) when dragging cards near adjacent nodes using coordinate math.
-- [ ] **Semantic Relationship Ontology Presets**
-  - In connection line editor, provide one-click relation presets with semantic color accents:
-    - `supports` (Emerald green, solid)
-    - `contradicts` / `refutes` (Rose red, dashed)
-    - `depends_on` / `prerequisite` (Amber, solid)
-    - `derived_from` (Sky blue, dotted)
-    - `answers` (Indigo, solid)
-- [ ] **Interactive Mini-Map Navigation**
-  - Collapsible bird's-eye canvas minimap in the corner displaying viewport position relative to graph bounding box with click-to-pan.
+- [x] **Canvas Virtualization (60 FPS for 200+ Nodes)**
+  - Implemented viewport bounding-box culling in [src/components/research/GraphCanvas.tsx](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/src/components/research/GraphCanvas.tsx) based on `viewport.pan`, `viewport.zoom`, and container dimensions with a 600px buffer margin.
+  - Automatically culls off-screen knowledge cards, clusters, and SVG relationship paths on large graphs while preserving selected, dragged, linking, and editing nodes in the active DOM tree.
+  - Added real-time 60 FPS performance status pill indicator with active card telemetry.
+  - Verified with unit tests in [tests/graph.test.mjs](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/tests/graph.test.mjs) confirming >75% DOM culling efficiency on a 250-node benchmark.
+- [x] **Smart Alignment Guides & Snapping**
+  - Added magnetic coordinate snapping when dragging cards within 7px of adjacent cards (left, center, right, top, middle, bottom edges).
+  - Implemented dynamic SVG alignment guide lines with animated pulse effect (`.canvas-guide-line`) showing exact collinear axes in real time.
+  - Added `Shift` key bypass allowing researchers to disable magnetic snapping on demand for freeform placement.
+  - Verified with automated unit tests in [tests/graph.test.mjs](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/tests/graph.test.mjs).
+- [x] **Semantic Relationship Ontology Presets**
+  - Canonical ontology definitions (`supports`, `contradicts`, `depends_on`, `derived_from`, `answers`) integrated into [src/types/canvas.ts](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/src/types/canvas.ts).
+  - Built 1-click Ontology Presets selector in [RelationshipControls.tsx](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/src/components/research/RelationshipControls.tsx) automatically setting label, semantic color accent, line style, stroke pattern, and directional arrow.
+  - Upgraded SVG relationship paths, arrowheads, and color palettes across [GraphCanvas.tsx](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/src/components/research/GraphCanvas.tsx) and [globals.css](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/src/app/globals.css) with vibrant semantic tokens (`emerald`: `#10b981`, `rose`: `#f43f5e`, `amber`: `#f59e0b`, `indigo`: `#6366f1`, `sky`: `#0ea5e9`, `purple`: `#a855f7`).
+  - Added unit test in [tests/graph.test.mjs](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/tests/graph.test.mjs) verifying canonical configurations and accurate edge application (10/10 tests passing).
+- [x] **Interactive Mini-Map Navigation**
+  - Built interactive glassmorphic bird's-eye canvas minimap in [Minimap.tsx](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/src/components/research/Minimap.tsx).
+  - Dynamically calculates world bounds encompassing all nodes, clusters, and current viewport with smooth scale normalization.
+  - Interactive Viewfinder lens (`.canvas-minimap-lens`) displaying current viewport position with real-time drag-to-pan and click-to-center navigation.
+  - Integrated 1-click "Fit graph to view" action and collapsible floating pill state with keyboard shortcut (`M`) and `localStorage` preference persistence.
+  - Added unit test in [tests/graph.test.mjs](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/tests/graph.test.mjs) verifying world bounds, lens coordinate math, and click-to-pan translation (11/11 tests passing).
 
 ---
 

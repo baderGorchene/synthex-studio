@@ -2,8 +2,8 @@
 /* eslint-disable @next/next/no-img-element */
 
 import { useCallback, useEffect, useState } from 'react';
-import { ArrowDownRight, ArrowUpRight, CircleHelp, ExternalLink, FileClock, History, Layers2, LoaderCircle, Plus, Quote, RotateCcw, Trash2 } from 'lucide-react';
-import type { CanvasNode, Connection, GraphRevisionSummary, ResearchSession } from '@/types/canvas';
+import { ArrowDownRight, ArrowUpRight, CircleHelp, Database, Download, ExternalLink, FileClock, History, Layers2, LoaderCircle, Plus, Quote, RotateCcw, Trash2 } from 'lucide-react';
+import type { CanvasNode, Connection, DatabaseSnapshotSummary, GraphRevisionSummary, ResearchSession } from '@/types/canvas';
 import type { WorkspaceSection } from './WorkspaceSidebar';
 import { WebsiteLogo, getLinkThumbnail } from './SourceMetadata';
 
@@ -24,6 +24,14 @@ function formatRelativeTime(timestamp: number): string {
   return new Date(timestamp).toLocaleDateString();
 }
 
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  const kb = bytes / 1024;
+  if (kb < 1024) return `${kb.toFixed(1)} KB`;
+  const mb = kb / 1024;
+  return `${mb.toFixed(2)} MB`;
+}
+
 function sourceHost(value?: string) {
   try {
     const url = new URL(value || '');
@@ -32,7 +40,7 @@ function sourceHost(value?: string) {
 }
 
 export function KnowledgeViews({
-  section, nodes, edges, sessions, onSelectNode, onOpenSession, projectId, onRestoreRevision, onCreateCheckpoint
+  section, nodes, edges, sessions, onSelectNode, onOpenSession, projectId, onRestoreRevision, onCreateCheckpoint, onRestoreDatabase
 }: {
   section: WorkspaceSection;
   nodes: CanvasNode[];
@@ -43,6 +51,7 @@ export function KnowledgeViews({
   projectId?: string;
   onRestoreRevision?: (revisionId: string) => Promise<void> | void;
   onCreateCheckpoint?: (title: string) => Promise<void> | void;
+  onRestoreDatabase?: () => Promise<void> | void;
 }) {
   if (section === 'revisions') {
     return (
@@ -52,6 +61,7 @@ export function KnowledgeViews({
         currentEdgesCount={edges.length}
         onRestoreRevision={onRestoreRevision}
         onCreateCheckpoint={onCreateCheckpoint}
+        onRestoreDatabase={onRestoreDatabase}
       />
     );
   }
@@ -142,14 +152,19 @@ function RevisionsView({
   currentNodesCount,
   currentEdgesCount,
   onRestoreRevision,
-  onCreateCheckpoint
+  onCreateCheckpoint,
+  onRestoreDatabase
 }: {
   projectId: string;
   currentNodesCount: number;
   currentEdgesCount: number;
   onRestoreRevision?: (revisionId: string) => Promise<void> | void;
   onCreateCheckpoint?: (title: string) => Promise<void> | void;
+  onRestoreDatabase?: () => Promise<void> | void;
 }) {
+  const [activeTab, setActiveTab] = useState<'revisions' | 'snapshots'>('revisions');
+
+  // Revisions state
   const [revisions, setRevisions] = useState<GraphRevisionSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [restoringId, setRestoringId] = useState<string | null>(null);
@@ -157,6 +172,15 @@ function RevisionsView({
   const [checkpointTitle, setCheckpointTitle] = useState('');
   const [creating, setCreating] = useState(false);
   const [showCreateInput, setShowCreateInput] = useState(false);
+
+  // Snapshots state
+  const [snapshots, setSnapshots] = useState<DatabaseSnapshotSummary[]>([]);
+  const [loadingSnapshots, setLoadingSnapshots] = useState(false);
+  const [snapshotLabel, setSnapshotLabel] = useState('');
+  const [creatingSnapshot, setCreatingSnapshot] = useState(false);
+  const [showSnapshotInput, setShowSnapshotInput] = useState(false);
+  const [restoringSnapshotFile, setRestoringSnapshotFile] = useState<string | null>(null);
+  const [deletingSnapshotFile, setDeletingSnapshotFile] = useState<string | null>(null);
 
   const fetchRevisions = useCallback(async () => {
     try {
@@ -171,6 +195,21 @@ function RevisionsView({
       setLoading(false);
     }
   }, [projectId]);
+
+  const fetchSnapshots = useCallback(async () => {
+    setLoadingSnapshots(true);
+    try {
+      const res = await fetch('/api/backup');
+      const data = await res.json();
+      if (data.snapshots) {
+        setSnapshots(data.snapshots);
+      }
+    } catch (err) {
+      console.error('Failed to fetch snapshots:', err);
+    } finally {
+      setLoadingSnapshots(false);
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -249,124 +288,352 @@ function RevisionsView({
     }
   };
 
+  const handleCreateSnapshot = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setCreatingSnapshot(true);
+    try {
+      const res = await fetch('/api/backup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'create', label: snapshotLabel.trim() || undefined })
+      });
+      const data = await res.json();
+      if (data.success && data.snapshot) {
+        setSnapshots(curr => [data.snapshot, ...curr]);
+        setSnapshotLabel('');
+        setShowSnapshotInput(false);
+      }
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Could not create database snapshot');
+    } finally {
+      setCreatingSnapshot(false);
+    }
+  };
+
+  const handleRestoreSnapshot = async (fileName: string, label: string) => {
+    const confirmed = window.confirm(
+      `RESTORE DATABASE SNAPSHOT\n\nAre you sure you want to restore "${label}"?\n\nThis will overwrite the entire canvas.db database with this snapshot. All workspaces will revert to the snapshot state.`
+    );
+    if (!confirmed) return;
+
+    setRestoringSnapshotFile(fileName);
+    try {
+      const res = await fetch('/api/backup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'restore', fileName })
+      });
+      const data = await res.json();
+      if (data.success) {
+        if (onRestoreDatabase) {
+          await onRestoreDatabase();
+        } else {
+          window.location.reload();
+        }
+      } else {
+        alert(data.error || 'Could not restore snapshot');
+      }
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Could not restore snapshot');
+    } finally {
+      setRestoringSnapshotFile(null);
+    }
+  };
+
+  const handleDeleteSnapshot = async (fileName: string) => {
+    const confirmed = window.confirm(`Delete snapshot "${fileName}"? This cannot be undone.`);
+    if (!confirmed) return;
+
+    setDeletingSnapshotFile(fileName);
+    try {
+      await fetch('/api/backup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'delete', fileName })
+      });
+      setSnapshots(curr => curr.filter(s => s.fileName !== fileName));
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Could not delete snapshot');
+    } finally {
+      setDeletingSnapshotFile(null);
+    }
+  };
+
   return (
     <div className="content-view">
       <div className="view-heading">
         <div>
-          <span className="panel-overline">Version History</span>
-          <h2>Persistent Revisions & Checkpoints</h2>
-          <p>Time-travel to previous states. All revisions are stored permanently in local SQLite.</p>
+          <span className="panel-overline">Version History & Recovery</span>
+          <h2>{activeTab === 'revisions' ? 'Persistent Revisions & Checkpoints' : 'Workspace Database Snapshots'}</h2>
+          <p>
+            {activeTab === 'revisions'
+              ? 'Time-travel to previous states in this workspace. All revisions are stored permanently in local SQLite.'
+              : 'Full offline SQLite snapshots of canvas.db. Backs up all projects, nodes, links, and history.'}
+          </p>
         </div>
-        <History size={21} />
+        {activeTab === 'revisions' ? <History size={21} /> : <Database size={21} />}
       </div>
 
-      <div className="revisions-toolbar">
-        {showCreateInput ? (
-          <form onSubmit={handleCreate} className="revisions-checkpoint-form">
-            <input
-              type="text"
-              className="field-input revisions-checkpoint-input"
-              placeholder="e.g. Before merging research notes..."
-              value={checkpointTitle}
-              autoFocus
-              onChange={e => setCheckpointTitle(e.target.value)}
-              disabled={creating}
-            />
-            <button type="submit" className="primary-button" disabled={creating}>
-              {creating ? <LoaderCircle size={14} className="spin" /> : <Plus size={14} />}
-              <span>{creating ? 'Saving…' : 'Save'}</span>
-            </button>
-            <button
-              type="button"
-              className="quiet-button"
-              onClick={() => { setShowCreateInput(false); setCheckpointTitle(''); }}
-              disabled={creating}
-            >
-              Cancel
-            </button>
-          </form>
-        ) : (
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
-            <span style={{ fontSize: '11px', color: '#3c6e71' }}>
-              Current sheet: <strong>{currentNodesCount}</strong> records, <strong>{currentEdgesCount}</strong> links
-            </span>
-            <button
-              type="button"
-              className="primary-button"
-              onClick={() => setShowCreateInput(true)}
-            >
-              <Plus size={14} />
-              <span>Create checkpoint</span>
-            </button>
+      <div className="revisions-tabs">
+        <button
+          type="button"
+          className={`revisions-tab ${activeTab === 'revisions' ? 'active' : ''}`}
+          onClick={() => { setActiveTab('revisions'); fetchRevisions(); }}
+        >
+          <History size={14} />
+          <span>Project Checkpoints ({revisions.length})</span>
+        </button>
+        <button
+          type="button"
+          className={`revisions-tab ${activeTab === 'snapshots' ? 'active' : ''}`}
+          onClick={() => { setActiveTab('snapshots'); fetchSnapshots(); }}
+        >
+          <Database size={14} />
+          <span>Database Snapshots ({snapshots.length})</span>
+        </button>
+      </div>
+
+      {activeTab === 'revisions' ? (
+        <>
+          <div className="revisions-toolbar">
+            {showCreateInput ? (
+              <form onSubmit={handleCreate} className="revisions-checkpoint-form">
+                <input
+                  type="text"
+                  className="field-input revisions-checkpoint-input"
+                  placeholder="e.g. Before merging research notes..."
+                  value={checkpointTitle}
+                  autoFocus
+                  onChange={e => setCheckpointTitle(e.target.value)}
+                  disabled={creating}
+                />
+                <button type="submit" className="primary-button" disabled={creating}>
+                  {creating ? <LoaderCircle size={14} className="spin" /> : <Plus size={14} />}
+                  <span>{creating ? 'Saving…' : 'Save'}</span>
+                </button>
+                <button
+                  type="button"
+                  className="quiet-button"
+                  onClick={() => { setShowCreateInput(false); setCheckpointTitle(''); }}
+                  disabled={creating}
+                >
+                  Cancel
+                </button>
+              </form>
+            ) : (
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+                <span style={{ fontSize: '11px', color: '#3c6e71' }}>
+                  Current sheet: <strong>{currentNodesCount}</strong> records, <strong>{currentEdgesCount}</strong> links
+                </span>
+                <button
+                  type="button"
+                  className="primary-button"
+                  onClick={() => setShowCreateInput(true)}
+                >
+                  <Plus size={14} />
+                  <span>Create checkpoint</span>
+                </button>
+              </div>
+            )}
           </div>
-        )}
-      </div>
 
-      {loading ? (
-        <div className="empty-view">
-          <LoaderCircle size={22} className="spin" />
-          <strong>Loading revisions…</strong>
-        </div>
-      ) : revisions.length === 0 ? (
-        <div className="empty-view">
-          <History size={22} />
-          <strong>No revisions recorded yet</strong>
-          <span>Create a checkpoint above or make changes to start recording point-in-time snapshots.</span>
-        </div>
+          {loading ? (
+            <div className="empty-view">
+              <LoaderCircle size={22} className="spin" />
+              <strong>Loading revisions…</strong>
+            </div>
+          ) : revisions.length === 0 ? (
+            <div className="empty-view">
+              <History size={22} />
+              <strong>No revisions recorded yet</strong>
+              <span>Create a checkpoint above or make changes to start recording point-in-time snapshots.</span>
+            </div>
+          ) : (
+            <div className="revisions-list">
+              {revisions.map(rev => {
+                const isRestoring = restoringId === rev.id;
+                const isDeleting = deletingId === rev.id;
+                const isRestored = rev.title.startsWith('Restored:');
+
+                return (
+                  <div className="revision-card" key={rev.id}>
+                    <div className="revision-card-left">
+                      <div className="revision-icon-wrap" style={isRestored ? { background: '#3c6e71', color: '#fff' } : undefined}>
+                        <History size={16} />
+                      </div>
+                      <div className="revision-details">
+                        <div className="revision-title-row">
+                          <strong className="revision-title">{rev.title}</strong>
+                          {isRestored && <span className="revision-badge">Restoration</span>}
+                        </div>
+                        <div className="revision-meta-row">
+                          <span>{formatRelativeTime(rev.createdAt)}</span>
+                          <span>·</span>
+                          <span>{new Date(rev.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                          <span>·</span>
+                          <span className="revision-badge">{rev.nodeCount} records · {rev.edgeCount} relationships</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="revision-actions">
+                      <button
+                        type="button"
+                        className="restore-btn"
+                        disabled={isRestoring || isDeleting}
+                        onClick={() => handleRestore(rev.id, rev.title)}
+                        title="Restore graph to this state"
+                      >
+                        {isRestoring ? <LoaderCircle size={13} className="spin" /> : <RotateCcw size={13} />}
+                        <span>{isRestoring ? 'Restoring…' : 'Restore'}</span>
+                      </button>
+                      <button
+                        type="button"
+                        className="delete-rev-btn"
+                        disabled={isRestoring || isDeleting}
+                        onClick={() => handleDelete(rev.id)}
+                        title="Delete this revision"
+                        aria-label="Delete revision"
+                      >
+                        {isDeleting ? <LoaderCircle size={13} className="spin" /> : <Trash2 size={13} />}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </>
       ) : (
-        <div className="revisions-list">
-          {revisions.map(rev => {
-            const isRestoring = restoringId === rev.id;
-            const isDeleting = deletingId === rev.id;
-            const isRestored = rev.title.startsWith('Restored:');
-
-            return (
-              <div className="revision-card" key={rev.id}>
-                <div className="revision-card-left">
-                  <div className="revision-icon-wrap" style={isRestored ? { background: '#3c6e71', color: '#fff' } : undefined}>
-                    <History size={16} />
-                  </div>
-                  <div className="revision-details">
-                    <div className="revision-title-row">
-                      <strong className="revision-title">{rev.title}</strong>
-                      {isRestored && <span className="revision-badge">Restoration</span>}
-                    </div>
-                    <div className="revision-meta-row">
-                      <span>{formatRelativeTime(rev.createdAt)}</span>
-                      <span>·</span>
-                      <span>{new Date(rev.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                      <span>·</span>
-                      <span className="revision-badge">{rev.nodeCount} records · {rev.edgeCount} relationships</span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="revision-actions">
+        <>
+          <div className="revisions-toolbar">
+            {showSnapshotInput ? (
+              <form onSubmit={handleCreateSnapshot} className="revisions-checkpoint-form">
+                <input
+                  type="text"
+                  className="field-input revisions-checkpoint-input"
+                  placeholder="e.g. Before importing large dataset..."
+                  value={snapshotLabel}
+                  autoFocus
+                  onChange={e => setSnapshotLabel(e.target.value)}
+                  disabled={creatingSnapshot}
+                />
+                <button type="submit" className="primary-button" disabled={creatingSnapshot}>
+                  {creatingSnapshot ? <LoaderCircle size={14} className="spin" /> : <Plus size={14} />}
+                  <span>{creatingSnapshot ? 'Creating…' : 'Create Snapshot'}</span>
+                </button>
+                <button
+                  type="button"
+                  className="quiet-button"
+                  onClick={() => { setShowSnapshotInput(false); setSnapshotLabel(''); }}
+                  disabled={creatingSnapshot}
+                >
+                  Cancel
+                </button>
+              </form>
+            ) : (
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+                <span style={{ fontSize: '11px', color: '#3c6e71' }}>
+                  Offline SQLite snapshots stored in <code>.backups/</code>
+                </span>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <a
+                    href="/api/backup?download=1"
+                    className="download-snap-btn"
+                    title="Download active canvas.db SQLite database"
+                  >
+                    <Download size={13} />
+                    <span>Download canvas.db</span>
+                  </a>
                   <button
                     type="button"
-                    className="restore-btn"
-                    disabled={isRestoring || isDeleting}
-                    onClick={() => handleRestore(rev.id, rev.title)}
-                    title="Restore graph to this state"
+                    className="primary-button"
+                    onClick={() => setShowSnapshotInput(true)}
                   >
-                    {isRestoring ? <LoaderCircle size={13} className="spin" /> : <RotateCcw size={13} />}
-                    <span>{isRestoring ? 'Restoring…' : 'Restore'}</span>
-                  </button>
-                  <button
-                    type="button"
-                    className="delete-rev-btn"
-                    disabled={isRestoring || isDeleting}
-                    onClick={() => handleDelete(rev.id)}
-                    title="Delete this revision"
-                    aria-label="Delete revision"
-                  >
-                    {isDeleting ? <LoaderCircle size={13} className="spin" /> : <Trash2 size={13} />}
+                    <Plus size={14} />
+                    <span>Create DB Snapshot</span>
                   </button>
                 </div>
               </div>
-            );
-          })}
-        </div>
+            )}
+          </div>
+
+          {loadingSnapshots ? (
+            <div className="empty-view">
+              <LoaderCircle size={22} className="spin" />
+              <strong>Loading database snapshots…</strong>
+            </div>
+          ) : snapshots.length === 0 ? (
+            <div className="empty-view">
+              <Database size={22} />
+              <strong>No database snapshots taken yet</strong>
+              <span>Create a snapshot above to backup the entire offline SQLite database.</span>
+            </div>
+          ) : (
+            <div className="revisions-list">
+              {snapshots.map(snap => {
+                const isRestoring = restoringSnapshotFile === snap.fileName;
+                const isDeleting = deletingSnapshotFile === snap.fileName;
+
+                return (
+                  <div className="revision-card" key={snap.id}>
+                    <div className="revision-card-left">
+                      <div className="revision-icon-wrap" style={{ background: '#284b63', color: '#fff' }}>
+                        <Database size={16} />
+                      </div>
+                      <div className="revision-details">
+                        <div className="revision-title-row">
+                          <strong className="revision-title">{snap.label}</strong>
+                          <span className="revision-badge">{snap.fileName}</span>
+                        </div>
+                        <div className="revision-meta-row">
+                          <span>{formatRelativeTime(snap.createdAt)}</span>
+                          <span>·</span>
+                          <span>{new Date(snap.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                          <span>·</span>
+                          <span>{formatBytes(snap.sizeBytes)}</span>
+                          <span>·</span>
+                          <span className="revision-badge">{snap.projectCount} projects · {snap.nodeCount} records · {snap.edgeCount} relationships</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="revision-actions">
+                      <a
+                        href={`/api/backup?download=1&fileName=${encodeURIComponent(snap.fileName)}`}
+                        className="download-snap-btn"
+                        title="Download this SQLite snapshot file"
+                      >
+                        <Download size={13} />
+                        <span>Download</span>
+                      </a>
+                      <button
+                        type="button"
+                        className="restore-btn"
+                        disabled={isRestoring || isDeleting}
+                        onClick={() => handleRestoreSnapshot(snap.fileName, snap.label)}
+                        title="Restore full database from this snapshot"
+                      >
+                        {isRestoring ? <LoaderCircle size={13} className="spin" /> : <RotateCcw size={13} />}
+                        <span>{isRestoring ? 'Restoring…' : 'Restore'}</span>
+                      </button>
+                      <button
+                        type="button"
+                        className="delete-rev-btn"
+                        disabled={isRestoring || isDeleting}
+                        onClick={() => handleDeleteSnapshot(snap.fileName)}
+                        title="Delete this snapshot"
+                        aria-label="Delete snapshot"
+                      >
+                        {isDeleting ? <LoaderCircle size={13} className="spin" /> : <Trash2 size={13} />}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </>
       )}
     </div>
   );

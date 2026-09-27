@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3';
+import fs from 'fs';
 import path from 'path';
 import type {
   AccentColor,
@@ -9,6 +10,7 @@ import type {
   ConnectionColor,
   ConnectionLineStyle,
   ConnectionStrokePattern,
+  DatabaseSnapshotSummary,
   GraphRevision,
   GraphRevisionSummary,
   ResearchChangeStatus,
@@ -791,5 +793,216 @@ export function deleteGraphRevision(projectId: string, revisionId: string): bool
   const db = getDatabase();
   const result = db.prepare('DELETE FROM graph_revisions WHERE id = ? AND projectId = ?').run(revisionId, projectId);
   return result.changes > 0;
+}
+
+// --------------------------------------------------------------------------
+// Database-level Full Snapshots & Rollback
+// --------------------------------------------------------------------------
+
+const BACKUP_DIR = path.join(process.cwd(), '.backups');
+
+function ensureBackupDir() {
+  if (!fs.existsSync(BACKUP_DIR)) {
+    fs.mkdirSync(BACKUP_DIR, { recursive: true });
+  }
+}
+
+export function getDatabaseFilePath(): string {
+  return dbPath;
+}
+
+export function getBackupFilePath(fileName: string): string | null {
+  ensureBackupDir();
+  const safeName = path.basename(fileName);
+  if (!safeName.endsWith('.db')) return null;
+  const target = path.join(BACKUP_DIR, safeName);
+  return fs.existsSync(target) ? target : null;
+}
+
+export async function createDatabaseBackup(label?: string): Promise<DatabaseSnapshotSummary> {
+  ensureBackupDir();
+  const db = getDatabase();
+
+  // Flush WAL changes before backup
+  try {
+    db.pragma('wal_checkpoint(PASSIVE)');
+  } catch {
+    // Continue even if checkpoint fails
+  }
+
+  let projectCount = 0;
+  let nodeCount = 0;
+  let edgeCount = 0;
+  try {
+    const pRow = db.prepare('SELECT count(*) as count FROM projects').get() as { count: number } | undefined;
+    projectCount = pRow?.count || 0;
+    const nRow = db.prepare('SELECT count(*) as count FROM nodes').get() as { count: number } | undefined;
+    nodeCount = nRow?.count || 0;
+    const eRow = db.prepare('SELECT count(*) as count FROM connections').get() as { count: number } | undefined;
+    edgeCount = eRow?.count || 0;
+  } catch {
+    // ignore
+  }
+
+  const now = Date.now();
+  const randomSuffix = Math.random().toString(36).slice(2, 8);
+  const id = `snap_${now}_${randomSuffix}`;
+  const fileName = `${id}.db`;
+  const destPath = path.join(BACKUP_DIR, fileName);
+
+  await db.backup(destPath);
+
+  const stats = fs.statSync(destPath);
+  const summary: DatabaseSnapshotSummary = {
+    id,
+    fileName,
+    label: label?.trim() || `Workspace Snapshot (${new Date(now).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })})`,
+    sizeBytes: stats.size,
+    projectCount,
+    nodeCount,
+    edgeCount,
+    createdAt: now
+  };
+
+  const metaPath = path.join(BACKUP_DIR, `${id}.meta.json`);
+  fs.writeFileSync(metaPath, JSON.stringify(summary, null, 2), 'utf-8');
+
+  return summary;
+}
+
+export function getDatabaseBackups(): DatabaseSnapshotSummary[] {
+  ensureBackupDir();
+  const files = fs.readdirSync(BACKUP_DIR);
+  const snapshots: DatabaseSnapshotSummary[] = [];
+
+  for (const file of files) {
+    if (!file.endsWith('.db')) continue;
+    const dbFilePath = path.join(BACKUP_DIR, file);
+    const metaPath = path.join(BACKUP_DIR, file.replace(/\.db$/, '.meta.json'));
+
+    if (fs.existsSync(metaPath)) {
+      try {
+        const meta = JSON.parse(fs.readFileSync(metaPath, 'utf-8')) as DatabaseSnapshotSummary;
+        snapshots.push(meta);
+        continue;
+      } catch {
+        // Fall back to reading file stats
+      }
+    }
+
+    try {
+      const stats = fs.statSync(dbFilePath);
+      const id = file.replace(/\.db$/, '');
+      snapshots.push({
+        id,
+        fileName: file,
+        label: `Snapshot ${file}`,
+        sizeBytes: stats.size,
+        projectCount: 1,
+        nodeCount: 0,
+        edgeCount: 0,
+        createdAt: stats.mtimeMs
+      });
+    } catch {
+      // ignore
+    }
+  }
+
+  return snapshots.sort((a, b) => b.createdAt - a.createdAt);
+}
+
+export async function restoreDatabaseBackup(
+  fileName: string
+): Promise<{ success: boolean; snapshot: DatabaseSnapshotSummary }> {
+  ensureBackupDir();
+  const safeName = path.basename(fileName);
+  const sourcePath = path.join(BACKUP_DIR, safeName);
+  if (!fs.existsSync(sourcePath) || !safeName.endsWith('.db')) {
+    throw new Error('Snapshot file not found.');
+  }
+
+  // 1. If DB is open, checkpoint and close it cleanly
+  if (global._sqliteDb) {
+    try {
+      global._sqliteDb.pragma('wal_checkpoint(TRUNCATE)');
+    } catch {
+      // ignore
+    }
+    try {
+      global._sqliteDb.close();
+    } catch {
+      // ignore
+    }
+    global._sqliteDb = undefined;
+  }
+
+  // 2. Remove lingering WAL/SHM files for canvas.db
+  const walPath = `${dbPath}-wal`;
+  const shmPath = `${dbPath}-shm`;
+  if (fs.existsSync(walPath)) {
+    try { fs.unlinkSync(walPath); } catch {}
+  }
+  if (fs.existsSync(shmPath)) {
+    try { fs.unlinkSync(shmPath); } catch {}
+  }
+
+  // 3. Copy snapshot over canvas.db
+  fs.copyFileSync(sourcePath, dbPath);
+
+  // 4. Re-open DB to verify and run schema migration if needed
+  getDatabase();
+
+  // 5. Read metadata
+  const metaPath = path.join(BACKUP_DIR, safeName.replace(/\.db$/, '.meta.json'));
+  let snapshot: DatabaseSnapshotSummary;
+  if (fs.existsSync(metaPath)) {
+    try {
+      snapshot = JSON.parse(fs.readFileSync(metaPath, 'utf-8'));
+    } catch {
+      snapshot = {
+        id: safeName.replace(/\.db$/, ''),
+        fileName: safeName,
+        label: safeName,
+        sizeBytes: fs.statSync(sourcePath).size,
+        projectCount: 1,
+        nodeCount: 0,
+        edgeCount: 0,
+        createdAt: Date.now()
+      };
+    }
+  } else {
+    snapshot = {
+      id: safeName.replace(/\.db$/, ''),
+      fileName: safeName,
+      label: safeName,
+      sizeBytes: fs.statSync(sourcePath).size,
+      projectCount: 1,
+      nodeCount: 0,
+      edgeCount: 0,
+      createdAt: Date.now()
+    };
+  }
+
+  return { success: true, snapshot };
+}
+
+export function deleteDatabaseBackup(fileName: string): boolean {
+  ensureBackupDir();
+  const safeName = path.basename(fileName);
+  if (!safeName.endsWith('.db')) return false;
+
+  const dbFilePath = path.join(BACKUP_DIR, safeName);
+  const metaFilePath = path.join(BACKUP_DIR, safeName.replace(/\.db$/, '.meta.json'));
+
+  let deleted = false;
+  if (fs.existsSync(dbFilePath)) {
+    fs.unlinkSync(dbFilePath);
+    deleted = true;
+  }
+  if (fs.existsSync(metaFilePath)) {
+    try { fs.unlinkSync(metaFilePath); } catch {}
+  }
+
+  return deleted;
 }
 

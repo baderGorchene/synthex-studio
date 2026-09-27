@@ -705,6 +705,14 @@ export default function SynthexWorkspace() {
       try {
         const parsed = JSON.parse(String(reader.result));
         const imported = normalizeGraph(parsed.nodes, parsed.relationships || parsed.connections || []);
+        fetch('/api/backup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'create',
+            label: `Pre-import snapshot: ${file.name.replace(/\.[^/.]+$/, '')}`
+          })
+        }).catch(() => {});
         updateGraph(() => imported);
         fetch('/api/revisions', {
           method: 'POST',
@@ -1304,6 +1312,7 @@ export default function SynthexWorkspace() {
               projectId={projectId}
               onRestoreRevision={restoreRevision}
               onCreateCheckpoint={createCheckpoint}
+              onRestoreDatabase={() => { window.location.reload(); }}
             />
           </div>}
         </section>

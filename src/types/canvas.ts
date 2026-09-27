@@ -102,6 +102,76 @@ export type ConnectionLineStyle = 'curved' | 'straight' | 'stepped';
 export type ConnectionStrokePattern = 'solid' | 'dashed' | 'dotted';
 export type ConnectionColor = 'indigo' | 'emerald' | 'rose' | 'amber' | 'sky' | 'purple' | 'neutral';
 
+export interface OntologyPreset {
+  id: string;
+  label: string;
+  displayName: string;
+  color: ConnectionColor;
+  strokePattern: ConnectionStrokePattern;
+  lineStyle: ConnectionLineStyle;
+  arrowhead: ArrowheadType;
+  description: string;
+  hex: string;
+}
+
+export const ONTOLOGY_PRESETS: OntologyPreset[] = [
+  {
+    id: 'supports',
+    label: 'supports',
+    displayName: 'Supports',
+    color: 'emerald',
+    strokePattern: 'solid',
+    lineStyle: 'curved',
+    arrowhead: 'end',
+    description: 'Evidentiary backing or validation',
+    hex: '#10b981'
+  },
+  {
+    id: 'contradicts',
+    label: 'contradicts',
+    displayName: 'Contradicts',
+    color: 'rose',
+    strokePattern: 'dashed',
+    lineStyle: 'curved',
+    arrowhead: 'end',
+    description: 'Conflicting assertion or counterargument',
+    hex: '#f43f5e'
+  },
+  {
+    id: 'depends_on',
+    label: 'depends_on',
+    displayName: 'Depends on',
+    color: 'amber',
+    strokePattern: 'solid',
+    lineStyle: 'stepped',
+    arrowhead: 'end',
+    description: 'Prerequisite requirement or dependency',
+    hex: '#f59e0b'
+  },
+  {
+    id: 'derived_from',
+    label: 'derived_from',
+    displayName: 'Derived from',
+    color: 'indigo',
+    strokePattern: 'solid',
+    lineStyle: 'curved',
+    arrowhead: 'end',
+    description: 'Lineage, origin, or inference',
+    hex: '#6366f1'
+  },
+  {
+    id: 'answers',
+    label: 'answers',
+    displayName: 'Answers',
+    color: 'sky',
+    strokePattern: 'dotted',
+    lineStyle: 'straight',
+    arrowhead: 'end',
+    description: 'Resolves question or research inquiry',
+    hex: '#0ea5e9'
+  }
+];
+
 export interface Connection {
   id: string;
   from: string;
@@ -174,6 +244,11 @@ export interface Coordinates {
   y: number;
 }
 
+export interface Viewport {
+  zoom: number;
+  pan: Coordinates;
+}
+
 export interface ResearchBlueprint {
   topicSummary: string;
   nodes: Array<{
@@ -229,4 +304,15 @@ export interface GraphRevisionSummary {
 export interface GraphRevision extends GraphRevisionSummary {
   nodes: CanvasNode[];
   relationships: Connection[];
+}
+
+export interface DatabaseSnapshotSummary {
+  id: string;
+  fileName: string;
+  label: string;
+  sizeBytes: number;
+  projectCount: number;
+  nodeCount: number;
+  edgeCount: number;
+  createdAt: number;
 }

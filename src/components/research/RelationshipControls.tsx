@@ -3,10 +3,16 @@
 import { useEffect, useRef, useState } from 'react';
 import { Check, Settings2, Trash2, X, Zap } from 'lucide-react';
 import type { Connection } from '@/types/canvas';
+import { ONTOLOGY_PRESETS } from '@/types/canvas';
 
 const colors = [
-  ['neutral', '#284b63'], ['indigo', '#284b63'], ['emerald', '#3c6e71'],
-  ['rose', '#353535'], ['amber', '#353535'], ['sky', '#3c6e71'], ['purple', '#284b63']
+  ['neutral', '#64748b'],
+  ['indigo', '#6366f1'],
+  ['emerald', '#10b981'],
+  ['rose', '#f43f5e'],
+  ['amber', '#f59e0b'],
+  ['sky', '#0ea5e9'],
+  ['purple', '#a855f7']
 ] as const;
 
 export function RelationshipControls({ connection, x, y, onUpdate, onDelete }: {
@@ -37,7 +43,7 @@ export function RelationshipControls({ connection, x, y, onUpdate, onDelete }: {
   const activePattern = connection.strokePattern || 'solid';
 
   return (
-    <foreignObject x={x - 110} y={y - 18} width="220" height={optionsOpen ? 370 : 38} className="relationship-controls-foreign">
+    <foreignObject x={x - 130} y={y - 18} width="260" height={optionsOpen ? 480 : 38} className="relationship-controls-foreign">
       <div
         ref={root}
         className={`relationship-controls ${optionsOpen ? 'options-open' : ''} ${editing ? 'is-editing' : ''}`}
@@ -98,6 +104,37 @@ export function RelationshipControls({ connection, x, y, onUpdate, onDelete }: {
               <button aria-label="Close relationship settings" onClick={() => setOptionsOpen(false)}>
                 <X size={12} />
               </button>
+            </div>
+
+            {/* Semantic Relationship Ontology Presets */}
+            <div className="style-section">
+              <span className="style-section-title">Ontology Presets</span>
+              <div className="ontology-presets-grid" role="group" aria-label="Ontology presets">
+                {ONTOLOGY_PRESETS.map(preset => {
+                  const isSelected = (connection.label === preset.label || connection.label === preset.id) && (connection.color === preset.color);
+                  return (
+                    <button
+                      key={preset.id}
+                      type="button"
+                      className={`ontology-preset-chip ${isSelected ? 'active' : ''}`}
+                      title={`${preset.displayName}: ${preset.description}`}
+                      onClick={() => {
+                        onUpdate({
+                          label: preset.label,
+                          color: preset.color,
+                          strokePattern: preset.strokePattern,
+                          lineStyle: preset.lineStyle,
+                          arrowhead: preset.arrowhead
+                        });
+                        setLabel(preset.label);
+                      }}
+                    >
+                      <span className="ontology-preset-indicator" style={{ backgroundColor: preset.hex }} />
+                      <span className="ontology-preset-label">{preset.displayName}</span>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
 
             {/* Line Geometry with Visual Illustrations */}
