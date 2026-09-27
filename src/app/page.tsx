@@ -3,8 +3,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import {
   ArrowDownToLine, ArrowRight, BookOpenText, Check, ChevronDown, CircleHelp, Clock3,
-  Compass, FileClock, FileJson2, Files, FileText, FolderKanban, GitBranch,
-  History, Layers2, LoaderCircle, MessageCircle, Network, Plus, Redo2,
+  Compass, FileClock, FileJson2, Files, FileText, FolderArchive, FolderKanban, GitBranch,
+  History, Image as ImageIcon, Layers2, LoaderCircle, MessageCircle, Network, Plus, Redo2,
   Search, Send, Shapes, SlidersHorizontal, Sparkles, Trash2, Undo2, Upload, X
 } from 'lucide-react';
 import { GraphCanvas, membersOf } from '@/components/research/GraphCanvas';
@@ -14,6 +14,8 @@ import { CustomSelect } from '@/components/research/CustomSelect';
 import { CanvasToolDock, addableRecords, type ResearchProject, type WorkspaceSection } from '@/components/research/WorkspaceSidebar';
 import { extractYouTubeVideoId } from '@/components/research/SourceMetadata';
 import { addNode, addRelationship, exportContextMarkdown, exportGraphJson, exportMermaid, normalizeGraph, removeNode, updateNode, updateRelationship, type KnowledgeGraph } from '@/lib/graph';
+import { parseBibTeX, bibEntriesToCanvasNodes } from '@/lib/bibtex';
+import { generateStandaloneSvg, exportGraphToPng } from '@/lib/canvas-export';
 import type { CanvasNode, CanvasNodeType, Connection, Coordinates, GraphRevisionSummary, ResearchChange, ResearchSession } from '@/types/canvas';
 import { ELEMENT_PALETTE } from '@/types/canvas';
 
@@ -121,6 +123,7 @@ export default function SynthexWorkspace() {
   const undoStack = useRef<KnowledgeGraph[]>([]);
   const redoStack = useRef<KnowledgeGraph[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
+  const bibRef = useRef<HTMLInputElement>(null);
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const loadRequest = useRef(0);
   const graphRef = useRef(graph);
@@ -734,6 +737,46 @@ export default function SynthexWorkspace() {
     reader.readAsText(file);
   }
 
+  function handleBibImport(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async () => {
+      try {
+        const text = String(reader.result || '');
+        const entries = parseBibTeX(text);
+        if (entries.length === 0) {
+          announce('No valid BibTeX entries found in file.');
+          return;
+        }
+
+        const safeZoom = Math.max(0.1, viewport.zoom);
+        const startX = Math.round(-viewport.pan.x / safeZoom + 80);
+        const startY = Math.round(-viewport.pan.y / safeZoom + 80);
+
+        const newNodes = bibEntriesToCanvasNodes(entries, startX, startY);
+
+        updateGraph(current => {
+          let updated = current;
+          for (const node of newNodes) {
+            updated = addNode(updated, node);
+          }
+          return updated;
+        });
+
+        setSelectedIds(newNodes.map(n => n.id));
+        setSection('canvas');
+        setExportMenu(false);
+        announce(`Imported ${entries.length} academic ${entries.length === 1 ? 'source' : 'sources'} from BibTeX.`);
+      } catch (err) {
+        console.error('Failed to import BibTeX:', err);
+        announce('Failed to parse that BibTeX file.');
+      }
+      event.target.value = '';
+    };
+    reader.readAsText(file);
+  }
+
   function exportAs(format: 'json' | 'markdown' | 'mermaid') {
     const safeTitle = (project?.title || 'knowledge-graph').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'knowledge-graph';
     const content = format === 'json' ? exportGraphJson(graph) : format === 'markdown' ? exportContextMarkdown(graph, project?.title || 'Knowledge graph') : exportMermaid(graph);
@@ -741,6 +784,62 @@ export default function SynthexWorkspace() {
     const mime = format === 'json' ? 'application/json;charset=utf-8' : 'text/plain;charset=utf-8';
     downloadText(`${safeTitle}.${extension}`, content, mime);
     setExportMenu(false); announce(`${format === 'markdown' ? 'Context Markdown' : format === 'mermaid' ? 'Mermaid graph' : 'Graph JSON'} exported.`);
+  }
+
+  async function exportObsidianVault() {
+    try {
+      announce('Generating Obsidian / Logseq vault archive…');
+      const safeTitle = (project?.title || 'knowledge-graph').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'knowledge-graph';
+      const response = await fetch('/api/export/vault', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ graph, title: project?.title || 'Research Workspace' })
+      });
+      if (!response.ok) throw new Error('Failed to generate vault archive');
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${safeTitle}-obsidian-vault.zip`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      setExportMenu(false);
+      announce('Obsidian / Logseq Vault (.zip) exported successfully.');
+    } catch (err) {
+      console.error('Failed to export vault:', err);
+      announce('Could not export vault. Please try again.');
+    }
+  }
+
+  function exportSvgCanvas() {
+    const safeTitle = (project?.title || 'knowledge-graph').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'knowledge-graph';
+    const svg = generateStandaloneSvg(graph, project?.title || 'Synthex Knowledge Graph');
+    downloadText(`${safeTitle}-canvas.svg`, svg, 'image/svg+xml;charset=utf-8');
+    setExportMenu(false);
+    announce('Vector SVG canvas exported.');
+  }
+
+  async function exportPngCanvas() {
+    try {
+      announce('Rendering high-resolution PNG image…');
+      const safeTitle = (project?.title || 'knowledge-graph').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'knowledge-graph';
+      const blob = await exportGraphToPng(graph, project?.title || 'Synthex Knowledge Graph', 2);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${safeTitle}-canvas.png`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      setExportMenu(false);
+      announce('High-resolution PNG canvas exported.');
+    } catch (err) {
+      console.error('PNG export failed:', err);
+      announce('Could not render PNG. Try exporting as SVG instead.');
+    }
   }
 
   function openSession(session: ResearchSession) { setActiveSession(session); setReviewDecisions({}); }
@@ -1049,8 +1148,12 @@ export default function SynthexWorkspace() {
                   <button onClick={() => exportAs('json')}><FileJson2 size={15} /><span>Graph JSON</span><small>Full editable graph</small></button>
                   <button onClick={() => exportAs('markdown')}><FileText size={15} /><span>Context Markdown</span><small>Readable research brief</small></button>
                   <button onClick={() => exportAs('mermaid')}><GitBranch size={15} /><span>Mermaid diagram</span><small>Text-based graph</small></button>
+                  <button onClick={exportObsidianVault}><FolderArchive size={15} /><span>Obsidian Vault</span><small>.zip with [[wikilinks]] & canvas</small></button>
+                  <button onClick={exportPngCanvas}><ImageIcon size={15} /><span>PNG Image</span><small>High-DPI publication image</small></button>
+                  <button onClick={exportSvgCanvas}><Shapes size={15} /><span>Vector SVG</span><small>Scalable standalone vector</small></button>
                   <div className="menu-separator" />
                   <button onClick={() => fileRef.current?.click()}><Upload size={15} /><span>Import graph</span><small>JSON export</small></button>
+                  <button onClick={() => bibRef.current?.click()}><BookOpenText size={15} /><span>Import BibTeX</span><small>.bib academic papers</small></button>
                 </div>
               )}
             </div>
@@ -1082,6 +1185,7 @@ export default function SynthexWorkspace() {
             </button>
           </div>
           <input ref={fileRef} type="file" accept="application/json,.json" hidden onChange={handleImport} />
+          <input ref={bibRef} type="file" accept=".bib,.txt" hidden onChange={handleBibImport} />
         </header>
 
         {section !== 'canvas' && (
@@ -1171,6 +1275,7 @@ export default function SynthexWorkspace() {
                         onDelete={() => { deleteSelected(); setRightDrawerOpen(false); }}
                         onClose={() => { setSelectedIds([]); setRightDrawerOpen(false); }}
                         projectId={projectId}
+                        allNodes={nodes}
                       />
                     ) : selectedIds.length > 1 ? (
                       <div className="drawer-multi-select">

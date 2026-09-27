@@ -1,11 +1,12 @@
 import { useState } from 'react';
-import { Check, ExternalLink, Images, LoaderCircle, Maximize2, Paperclip, Sparkles, Trash2, Upload, X } from 'lucide-react';
+import { Check, ExternalLink, FileText, Images, LoaderCircle, Maximize2, Paperclip, Sparkles, Trash2, Upload, X } from 'lucide-react';
 import { CanvasNode, CanvasNodeType, ELEMENT_PALETTE, formatFileSize } from '@/types/canvas';
 import { uploadFile } from '@/lib/upload';
 import { MarkdownEditor } from './MarkdownEditor';
 import { CustomSelect } from './CustomSelect';
 import { WebsiteLogo, WebsiteImage, getWebsiteDomain, extractYouTubeVideoId } from './SourceMetadata';
 import { AttachedFileBadge, FileViewerModal, ImageViewerModal } from './FileAndMediaModal';
+import { extractPageNumber } from '@/utils/citation';
 
 const types: Array<{ id: CanvasNodeType; label: string }> = [
   { id: 'note', label: 'Note & Idea' },
@@ -24,7 +25,7 @@ const types: Array<{ id: CanvasNodeType; label: string }> = [
 ];
 
 export function NodeInspector({
-  node, relationshipCount, onUpdate, onDelete, onClose, floating = false, hideHeader = false, projectId
+  node, relationshipCount, onUpdate, onDelete, onClose, floating = false, hideHeader = false, projectId, allNodes = []
 }: {
   node: CanvasNode;
   relationshipCount: number;
@@ -34,6 +35,7 @@ export function NodeInspector({
   floating?: boolean;
   hideHeader?: boolean;
   projectId?: string;
+  allNodes?: CanvasNode[];
 }) {
   const isClaim = node.type === 'claim';
   let safeUrl: string | undefined;
@@ -117,6 +119,10 @@ export function NodeInspector({
         ]} onChange={value => onUpdate({ metadata: { ...node.metadata, claimStatus: value as NonNullable<CanvasNode['metadata']>['claimStatus'] } })} />
       </>}
 
+      {(isClaim || (node.metadata?.evidence && node.metadata.evidence.length > 0)) && (
+        <EvidenceInspectorSection node={node} allNodes={allNodes} onUpdate={onUpdate} />
+      )}
+
       <div className="inspector-facts">
         <div><span>Origin</span><strong>{node.metadata?.origin || 'user'}</strong></div>
         <div><span>Relationships</span><strong>{relationshipCount}</strong></div>
@@ -125,6 +131,219 @@ export function NodeInspector({
       {node.metadata?.rationale && <p className="inspector-rationale">{node.metadata.rationale}</p>}
       <button className="danger-button" title="Delete record (Delete / Backspace)" onClick={onDelete}><Trash2 size={15} /> Delete record</button>
     </aside>
+  );
+}
+
+function EvidenceInspectorSection({
+  node,
+  allNodes = [],
+  onUpdate
+}: {
+  node: CanvasNode;
+  allNodes?: CanvasNode[];
+  onUpdate: (fields: Partial<CanvasNode>) => void;
+}) {
+  const [activePdfPreview, setActivePdfPreview] = useState<{
+    fileData: string;
+    fileName?: string;
+    fileSize?: number;
+    fileType?: string;
+    initialPage?: number;
+    highlightExcerpt?: string;
+  } | null>(null);
+
+  const [isAdding, setIsAdding] = useState(false);
+  const [sourceId, setSourceId] = useState('');
+  const [page, setPage] = useState('');
+  const [excerpt, setExcerpt] = useState('');
+  const [relation, setRelation] = useState<'supports' | 'contradicts'>('supports');
+
+  const evidenceList = node.metadata?.evidence || [];
+  const sources = allNodes.filter(n => n.type === 'source' || n.type === 'link' || n.fileData);
+
+  const handleAddCitation = () => {
+    if (!sourceId) return;
+    const pageNum = parseInt(page, 10);
+    const newCitation = {
+      sourceId,
+      page: !isNaN(pageNum) && pageNum > 0 ? pageNum : undefined,
+      location: !isNaN(pageNum) && pageNum > 0 ? `p. ${pageNum}` : (page.trim() || undefined),
+      excerpt: excerpt.trim() || undefined,
+      relation
+    };
+    const updated = [...evidenceList, newCitation];
+    onUpdate({
+      metadata: {
+        ...node.metadata,
+        evidence: updated,
+        sourceIds: Array.from(new Set([...(node.metadata?.sourceIds || []), sourceId]))
+      }
+    });
+    setSourceId('');
+    setPage('');
+    setExcerpt('');
+    setIsAdding(false);
+  };
+
+  const handleRemoveCitation = (indexToRemove: number) => {
+    const updated = evidenceList.filter((_, idx) => idx !== indexToRemove);
+    onUpdate({
+      metadata: {
+        ...node.metadata,
+        evidence: updated
+      }
+    });
+  };
+
+  return (
+    <div className="inspector-evidence-section">
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <label className="field-label" style={{ margin: 0 }}>Grounding & Evidence ({evidenceList.length})</label>
+        <button
+          type="button"
+          className="inspector-action-btn"
+          onClick={() => setIsAdding(prev => !prev)}
+          title="Add evidence citation"
+        >
+          <span>{isAdding ? 'Cancel' : '+ Add Citation'}</span>
+        </button>
+      </div>
+
+      {isAdding && (
+        <div className="evidence-citation-card" style={{ background: '#f0fdf4', borderColor: '#bbf7d0' }}>
+          <span style={{ fontSize: 11, fontWeight: 700, color: '#166534' }}>Attach Source Citation</span>
+          <select
+            className="field-input"
+            value={sourceId}
+            onChange={e => setSourceId(e.target.value)}
+            style={{ fontSize: 11, padding: '4px 6px' }}
+          >
+            <option value="">-- Choose source / document --</option>
+            {sources.map(s => (
+              <option key={s.id} value={s.id}>
+                {s.title} {s.fileName ? `(${s.fileName})` : ''}
+              </option>
+            ))}
+          </select>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <input
+              type="number"
+              min={1}
+              placeholder="Page #"
+              value={page}
+              onChange={e => setPage(e.target.value)}
+              className="field-input"
+              style={{ width: '80px', fontSize: 11, padding: '4px 6px' }}
+            />
+            <select
+              className="field-input"
+              value={relation}
+              onChange={e => setRelation(e.target.value as 'supports' | 'contradicts')}
+              style={{ flex: 1, fontSize: 11, padding: '4px 6px' }}
+            >
+              <option value="supports">Supports claim</option>
+              <option value="contradicts">Contradicts claim</option>
+            </select>
+          </div>
+          <textarea
+            placeholder="Quote excerpt from source..."
+            value={excerpt}
+            onChange={e => setExcerpt(e.target.value)}
+            className="field-input field-textarea"
+            style={{ minHeight: '50px', fontSize: 11 }}
+          />
+          <button
+            type="button"
+            className="inspector-action-btn primary"
+            disabled={!sourceId}
+            onClick={handleAddCitation}
+            style={{ alignSelf: 'flex-end' }}
+          >
+            <Check size={12} />
+            <span>Link Evidence</span>
+          </button>
+        </div>
+      )}
+
+      {evidenceList.map((item, idx) => {
+        const srcNode = allNodes.find(n => n.id === item.sourceId);
+        const pageNum = item.page || extractPageNumber(item.location);
+        const isPdf = Boolean(srcNode?.fileData && (srcNode.fileType?.includes('pdf') || srcNode.fileName?.toLowerCase().endsWith('.pdf') || srcNode.fileData.startsWith('data:application/pdf')));
+
+        return (
+          <div key={idx} className="evidence-citation-card">
+            <div className="evidence-citation-top">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 5, minWidth: 0 }}>
+                <span
+                  style={{
+                    width: 7,
+                    height: 7,
+                    borderRadius: '50%',
+                    backgroundColor: item.relation === 'contradicts' ? '#f43f5e' : '#10b981',
+                    flexShrink: 0
+                  }}
+                />
+                <span className="evidence-citation-title" title={srcNode?.title || item.sourceId}>
+                  {srcNode?.title || item.sourceId}
+                </span>
+                {pageNum && (
+                  <span className="evidence-page-badge">p. {pageNum}</span>
+                )}
+              </div>
+              <button
+                type="button"
+                className="inspector-action-btn danger"
+                style={{ padding: '2px 5px' }}
+                onClick={() => handleRemoveCitation(idx)}
+                title="Remove citation"
+              >
+                <Trash2 size={11} />
+              </button>
+            </div>
+
+            {item.excerpt && (
+              <p className="evidence-citation-quote">“{item.excerpt}”</p>
+            )}
+
+            <div className="evidence-citation-actions">
+              <small style={{ color: '#64748b', fontSize: 10 }}>
+                {item.relation === 'contradicts' ? 'Refuting source' : 'Grounding source'}
+              </small>
+              {isPdf && srcNode?.fileData && (
+                <button
+                  type="button"
+                  className="evidence-pdf-link-btn"
+                  onClick={() => setActivePdfPreview({
+                    fileData: srcNode.fileData!,
+                    fileName: srcNode.fileName || srcNode.title,
+                    fileSize: srcNode.fileSize,
+                    fileType: srcNode.fileType || 'application/pdf',
+                    initialPage: pageNum,
+                    highlightExcerpt: item.excerpt
+                  })}
+                  title={`Open PDF at page ${pageNum || 1}`}
+                >
+                  <FileText size={11} />
+                  <span>View in PDF {pageNum ? `(p. ${pageNum})` : ''}</span>
+                </button>
+              )}
+            </div>
+          </div>
+        );
+      })}
+
+      {activePdfPreview && (
+        <FileViewerModal
+          fileData={activePdfPreview.fileData}
+          fileName={activePdfPreview.fileName}
+          fileSize={activePdfPreview.fileSize}
+          fileType={activePdfPreview.fileType}
+          initialPage={activePdfPreview.initialPage}
+          highlightExcerpt={activePdfPreview.highlightExcerpt}
+          onClose={() => setActivePdfPreview(null)}
+        />
+      )}
+    </div>
   );
 }
 

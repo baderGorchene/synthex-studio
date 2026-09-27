@@ -2,6 +2,9 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
 import {
+  Bookmark,
+  ChevronLeft,
+  ChevronRight,
   Copy,
   Check,
   Download,
@@ -13,6 +16,7 @@ import {
   FileText,
   Images,
   Maximize2,
+  Quote,
   RotateCw,
   Search,
   X,
@@ -20,6 +24,7 @@ import {
   ZoomOut
 } from 'lucide-react';
 import { formatFileSize } from '@/types/canvas';
+import { formatPdfPageUrl } from '@/utils/citation';
 
 export type FileCategory = 'pdf' | 'json' | 'txt' | 'csv' | 'md' | 'code' | 'image' | 'file';
 
@@ -292,6 +297,8 @@ export function FileViewerModal({
   fileSize,
   fileType,
   content,
+  initialPage,
+  highlightExcerpt,
   onClose
 }: {
   fileData?: string;
@@ -299,10 +306,25 @@ export function FileViewerModal({
   fileSize?: number;
   fileType?: string;
   content?: string;
+  initialPage?: number;
+  highlightExcerpt?: string;
   onClose: () => void;
 }) {
   const [copied, setCopied] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const [userPage, setUserPage] = useState<number | null>(null);
+  const [lastInitialPage, setLastInitialPage] = useState<number | undefined>(initialPage);
+
+  if (lastInitialPage !== initialPage) {
+    setLastInitialPage(initialPage);
+    setUserPage(null);
+  }
+
+  const currentPage = userPage ?? initialPage ?? 1;
+  const setCurrentPage = (pageOrFn: number | ((p: number) => number)) => {
+    const newPage = typeof pageOrFn === 'function' ? pageOrFn(currentPage) : pageOrFn;
+    setUserPage(Math.max(1, newPage));
+  };
   const meta = getFileCategory(fileName, fileType);
   const IconComponent = meta.icon;
 
@@ -374,6 +396,11 @@ export function FileViewerModal({
     }
   };
 
+  const pdfSourceUrl = useMemo(() => {
+    if (!fileData) return '';
+    return formatPdfPageUrl(fileData, currentPage);
+  }, [fileData, currentPage]);
+
   const isPdf = meta.category === 'pdf';
   const isTextual = Boolean(decodedText && meta.category !== 'pdf');
 
@@ -404,6 +431,53 @@ export function FileViewerModal({
           </div>
 
           <div className="file-viewer-header-actions">
+            {isPdf && fileData && (
+              <div className="pdf-page-controls">
+                <button
+                  type="button"
+                  className="file-page-nav-btn"
+                  disabled={currentPage <= 1}
+                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                  title="Previous page"
+                >
+                  <ChevronLeft size={14} />
+                </button>
+                <div className="file-page-input-wrapper">
+                  <span className="file-page-label">p.</span>
+                  <input
+                    type="number"
+                    min={1}
+                    value={currentPage}
+                    onChange={e => {
+                      const val = parseInt(e.target.value, 10);
+                      if (!isNaN(val) && val > 0) setCurrentPage(val);
+                    }}
+                    className="file-page-number-input"
+                    title="Jump to page number"
+                  />
+                </div>
+                <button
+                  type="button"
+                  className="file-page-nav-btn"
+                  onClick={() => setCurrentPage(p => p + 1)}
+                  title="Next page"
+                >
+                  <ChevronRight size={14} />
+                </button>
+                {initialPage && (
+                  <button
+                    type="button"
+                    className="file-citation-jump-pill"
+                    onClick={() => setCurrentPage(initialPage)}
+                    title={`Jump to cited evidence on page ${initialPage}`}
+                  >
+                    <Bookmark size={11} />
+                    <span>Cited p. {initialPage}</span>
+                  </button>
+                )}
+              </div>
+            )}
+
             {isTextual && (
               <div className="file-search-box">
                 <Search size={13} />
@@ -448,7 +522,7 @@ export function FileViewerModal({
 
             {fileData && isPdf && (
               <a
-                href={fileData}
+                href={pdfSourceUrl || fileData}
                 target="_blank"
                 rel="noreferrer"
                 className="file-action-btn"
@@ -474,9 +548,22 @@ export function FileViewerModal({
         <div className="file-viewer-body">
           {isPdf ? (
             <div className="pdf-embed-wrapper">
+              {highlightExcerpt && (
+                <div className="pdf-citation-callout">
+                  <div className="pdf-citation-header">
+                    <Quote size={13} className="text-amber-500" />
+                    <span className="pdf-citation-badge">Linked Evidence</span>
+                    {initialPage && (
+                      <span className="pdf-citation-loc">Page {initialPage}</span>
+                    )}
+                  </div>
+                  <p className="pdf-citation-excerpt">“{highlightExcerpt}”</p>
+                </div>
+              )}
               {fileData ? (
                 <iframe
-                  src={fileData}
+                  key={pdfSourceUrl}
+                  src={pdfSourceUrl}
                   title={fileName || 'PDF Document'}
                   className="pdf-preview-frame"
                 />

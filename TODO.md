@@ -8,9 +8,9 @@
 
 | Section | Focus | Pending | In Progress | Completed |
 |---|---|---|---|---|
-| **Part 1: Code-Only & Local** | Storage, Canvas UI, Math, Exports, Cleanups | 3 | 0 | 15 |
+| **Part 1: Code-Only & Local** | Storage, Canvas UI, Math, Exports, Cleanups | 0 | 0 | 18 |
 | **Part 2: AI & External Services** | Gemini Embeddings, Google Search Grounding, SSE | 3 | 0 | 0 |
-| **Total** | | **6** | **0** | **15** |
+| **Total** | | **3** | **0** | **18** |
 
 ---
 
@@ -106,20 +106,41 @@
 
 ## 1.4 Local Export & Academic Ingestion (P4)
 
-- [ ] **Obsidian / Logseq Vault Export (.zip)**
-  - Export workspace as a `.zip` archive containing standard Markdown files with `[[wikilinks]]` in the body/frontmatter, preserving the semantic network for external markdown tools.
-- [ ] **BibTeX Academic Ingestion (.bib)**
-  - Local client-side parser for `.bib` files, converting academic papers, DOIs, and abstracts directly into typed `source` nodes.
-- [ ] **PNG / SVG High-Resolution Canvas Export**
-  - Export visible canvas or entire graph boundary as publication-ready vector SVG or high-DPI PNG image using HTML5 Canvas.
+- [x] **Obsidian / Logseq Vault Export (.zip)**
+  - Implemented pure, zero-dependency Vault export engine in [src/lib/vault-export.ts](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/src/lib/vault-export.ts) using built-in `node:zlib` `deflateRawSync` and `crc32`.
+  - Generates typed Markdown files organized into category folders (`concepts/`, `claims/`, `questions/`, `hypotheses/`, `sources/`, `notes/`, `clusters/`).
+  - Formats rich YAML frontmatter (`id`, `title`, `type`, `created`, `claimStatus`, `confidence`, `url`, `tags`).
+  - Translates directional graph edges into bidirectional `[[wikilinks]]` network (`outgoing` and `incoming` sections).
+  - Generates master `Overview.md` index note linking all concepts and claims.
+  - Generates native Obsidian Canvas format (`Synthex Knowledge Canvas.canvas`) JSON mapping nodes and visual connectors.
+  - Created `/api/export/vault` route supporting both database project exports (`GET`) and immediate client-side graph streaming (`POST`).
+  - Added 1-click "Obsidian Vault" export action in topbar dropdown in [src/app/page.tsx](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/src/app/page.tsx).
+  - Verified with unit tests in [tests/graph.test.mjs](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/tests/graph.test.mjs) verifying markdown formatting, wikilinks, canvas JSON, and valid ZIP magic header structure (12/12 tests passing).
+- [x] **BibTeX Academic Ingestion (.bib)**
+  - Built zero-dependency BibTeX parser in [src/lib/bibtex.ts](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/src/lib/bibtex.ts) parsing articles, inproceedings, books, DOIs, URLs, and abstracts.
+  - Implemented LaTeX brace stripper and accent normalizer (`cleanLatex`) handling complex author formatting and special characters.
+  - Added `bibEntriesToCanvasNodes` mapping papers into typed `source` nodes with citation keys, venue/year metadata, and neat grid placement.
+  - Added "Import BibTeX" file picker in topbar dropdown and drag-and-drop ingestion on the canvas with toast feedback and automatic card selection in [src/app/page.tsx](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/src/app/page.tsx).
+  - Verified with unit tests in [tests/graph.test.mjs](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/tests/graph.test.mjs) verifying grammar parsing, LaTeX cleanup, and canvas node generation (13/13 tests passing).
+- [x] **PNG / SVG High-Resolution Canvas Export**
+  - Built publication-ready standalone vector SVG generator (`generateStandaloneSvg`) and high-DPI HTML5 Canvas PNG renderer (`exportGraphToPng`) in [src/lib/canvas-export.ts](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/src/lib/canvas-export.ts).
+  - SVG export embeds full typography, node-type badges, background dot-grid pattern, cluster frames, and flush relationship connectors with ontology markers and labels.
+  - Added 1-click "PNG Image" and "Vector SVG" export actions with instantaneous browser download in the topbar export menu in [src/app/page.tsx](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/src/app/page.tsx).
+  - Verified with unit tests in [tests/graph.test.mjs](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/tests/graph.test.mjs) verifying XML declaration, node titles, markers, formatted labels, and valid closing tags (14/14 tests passing).
 
 ---
 
 ## 1.5 Local Document Linking (P2)
 
-- [ ] **PDF Citation Deep-Linking**
-  - For attached PDF sources, record page numbers and quote excerpts in `metadata.evidence`.
-  - Clicking an evidence badge in a claim opens the built-in PDF viewer directly scrolled to `#page=N`.
+- [x] **PDF Citation Deep-Linking**
+  - Created citation parsing, page extraction, and URL fragment generator (`extractPageNumber`, `formatPdfPageUrl`, `normalizeEvidenceItem`) in [src/utils/citation.ts](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/src/utils/citation.ts).
+  - Extended canvas nodes `metadata.evidence` with page-level referencing (`page?: number;`) in [src/types/canvas.ts](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/src/types/canvas.ts).
+  - Upgraded [src/components/research/FileAndMediaModal.tsx](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/src/components/research/FileAndMediaModal.tsx) `FileViewerModal` with PDF page navigation (`<` / `>`), numeric direct-jump input, and `Cited: p. N` bookmark pill.
+  - Added cited excerpt highlight callout banner above the embedded PDF viewport displaying exact quotes.
+  - Replaced plain text counts on canvas cards with interactive evidence pills in [src/components/research/GraphCanvas.tsx](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/src/components/research/GraphCanvas.tsx); clicking immediately opens the PDF viewer jumped to `#page=N`.
+  - Added dedicated **Grounding & Evidence** citation manager in [src/components/research/NodeInspector.tsx](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/src/components/research/NodeInspector.tsx) allowing researchers to review, attach, and delete document citations with page numbers and excerpts.
+  - Enhanced the **Evidence paths** view in [src/components/research/KnowledgeViews.tsx](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/src/components/research/KnowledgeViews.tsx) with interactive citation badges and PDF deep-linking.
+  - Verified with unit tests in [tests/graph.test.mjs](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/tests/graph.test.mjs) verifying page number extraction across multiple formats, URL fragments, and citation normalization (15/15 tests passing).
 
 ---
 

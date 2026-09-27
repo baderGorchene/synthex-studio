@@ -12,6 +12,7 @@ import { WebsiteLogo, WebsiteImage, getWebsiteDomain, getLinkThumbnail, extractY
 import { AttachedFileBadge, FileViewerModal, ImageViewerModal, getFileCategory } from './FileAndMediaModal';
 import { Minimap } from './Minimap';
 import { uploadFile } from '@/lib/upload';
+import { extractPageNumber, type CitationReference } from '@/utils/citation';
 type Gesture =
   | { kind: 'pan'; start: Coordinates; origin: Coordinates }
   | { kind: 'pinch'; startDistance: number; startZoom: number; anchor: Coordinates }
@@ -387,7 +388,8 @@ function GroupCard({
 }
 
 function KnowledgeCard({
-  node, selected, isEditing, isGrabbed, dragTilt = 0, onToggleEdit, onUpdateContent, onPointerDown, onClick, onOpenLightbox, onOpenFileModal
+  node, selected, isEditing, isGrabbed, dragTilt = 0, onToggleEdit, onUpdateContent, onPointerDown, onClick, onOpenLightbox, onOpenFileModal,
+  allNodesById, onOpenEvidenceCitation
 }: {
   node: CanvasNode;
   selected: boolean;
@@ -399,7 +401,9 @@ function KnowledgeCard({
   onPointerDown: (event: React.PointerEvent, node: CanvasNode) => void;
   onClick: (event: React.MouseEvent, node: CanvasNode) => void;
   onOpenLightbox?: (src: string, title?: string, caption?: string) => void;
-  onOpenFileModal?: (file: { fileData?: string; fileName?: string; fileSize?: number; fileType?: string; content?: string }) => void;
+  onOpenFileModal?: (file: { fileData?: string; fileName?: string; fileSize?: number; fileType?: string; content?: string; initialPage?: number; highlightExcerpt?: string }) => void;
+  allNodesById?: Record<string, CanvasNode>;
+  onOpenEvidenceCitation?: (evidence: CitationReference) => void;
 }) {
   const customColor = node.color;
   const isSource = node.type === 'source' || node.type === 'link';
@@ -601,7 +605,35 @@ function KnowledgeCard({
           {author && <span className="source-author" title={`By ${author}`}>By {author}</span>}
         </div>
       )}
-      {node.metadata?.evidence?.length ? <div className="evidence-count">{node.metadata.evidence.length} evidence links</div> : null}
+      {node.metadata?.evidence?.length ? (
+        <div className="card-evidence-list">
+          {node.metadata.evidence.map((ev, idx) => {
+            const src = allNodesById?.[ev.sourceId];
+            const pageNum = ev.page || extractPageNumber(ev.location);
+            const isContradiction = ev.relation === 'contradicts';
+            const hasPdf = Boolean(src?.fileData && (src.fileType?.includes('pdf') || src.fileName?.toLowerCase().endsWith('.pdf') || src.fileData.startsWith('data:application/pdf')));
+
+            return (
+              <button
+                key={idx}
+                type="button"
+                className={`card-evidence-pill ${isContradiction ? 'contradicts' : 'supports'} ${hasPdf ? 'has-pdf' : ''}`}
+                title={ev.excerpt ? `“${ev.excerpt}” — Click to ${hasPdf ? 'open PDF citation' : 'view source'}` : `Source: ${src?.title || ev.sourceId}`}
+                onPointerDown={e => e.stopPropagation()}
+                onClick={e => {
+                  e.stopPropagation();
+                  onOpenEvidenceCitation?.(ev);
+                }}
+              >
+                <span className="evidence-relation-dot" />
+                <span className="evidence-source-title">{src?.title || ev.sourceId}</span>
+                {pageNum && <span className="evidence-page-badge">p.{pageNum}</span>}
+                {hasPdf && <FileText size={10} className="evidence-pdf-icon" />}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
     </article>
   );
 }
@@ -653,7 +685,28 @@ export function GraphCanvas({
   const [isOverTrash, setIsOverTrash] = useState(false);
   const trashRef = useRef<HTMLDivElement>(null);
   const [activeImage, setActiveImage] = useState<{ src: string; title?: string; caption?: string } | null>(null);
-  const [activeFile, setActiveFile] = useState<{ fileData?: string; fileName?: string; fileSize?: number; fileType?: string; content?: string } | null>(null);
+  const [activeFile, setActiveFile] = useState<{ fileData?: string; fileName?: string; fileSize?: number; fileType?: string; content?: string; initialPage?: number; highlightExcerpt?: string } | null>(null);
+
+  const handleOpenEvidenceCitation = useCallback((evidence: CitationReference) => {
+    const srcNode = graph.nodesById[evidence.sourceId];
+    const pageNum = evidence.page || extractPageNumber(evidence.location);
+
+    if (srcNode?.fileData) {
+      setActiveFile({
+        fileData: srcNode.fileData,
+        fileName: srcNode.fileName || srcNode.title,
+        fileSize: srcNode.fileSize,
+        fileType: srcNode.fileType || 'application/pdf',
+        initialPage: pageNum,
+        highlightExcerpt: evidence.excerpt
+      });
+    } else if (srcNode) {
+      onSelectNode(srcNode.id, false);
+      if (srcNode.url) {
+        window.open(srcNode.url, '_blank', 'noreferrer');
+      }
+    }
+  }, [graph.nodesById, onSelectNode]);
   const lastClientX = useRef<number | null>(null);
   const rafMoveRef = useRef<number | null>(null);
   const [alignmentGuides, setAlignmentGuides] = useState<Array<{ id: string; x1: number; y1: number; x2: number; y2: number; type: 'x' | 'y' }>>([]);
@@ -1575,6 +1628,8 @@ export function GraphCanvas({
             isGrabbed={draggedNodeIds.includes(node.id)}
             dragTilt={draggedNodeIds.includes(node.id) ? dragTilt : 0}
             isEditing={editingNoteId === node.id}
+            allNodesById={graph.nodesById}
+            onOpenEvidenceCitation={handleOpenEvidenceCitation}
             onToggleEdit={() => onEditNote(editingNoteId === node.id ? null : node.id)}
             onUpdateContent={content => onUpdateNote(node.id, content)}
             onOpenLightbox={(src, title, caption) => setActiveImage({ src, title, caption })}
@@ -1655,6 +1710,8 @@ export function GraphCanvas({
           fileSize={activeFile.fileSize}
           fileType={activeFile.fileType}
           content={activeFile.content}
+          initialPage={activeFile.initialPage}
+          highlightExcerpt={activeFile.highlightExcerpt}
           onClose={() => setActiveFile(null)}
         />
       )}

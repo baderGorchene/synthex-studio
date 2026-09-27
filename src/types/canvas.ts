@@ -89,6 +89,7 @@ export interface CanvasNode {
       sourceId: string;
       excerpt?: string;
       location?: string;
+      page?: number;
       relation: 'supports' | 'contradicts';
     }>;
     rationale?: string;
@@ -189,6 +190,8 @@ export interface Connection {
     [key: string]: unknown;
   };
 }
+
+export type CanvasConnection = Connection;
 
 export interface ConnectionPath extends Connection {
   path: string;

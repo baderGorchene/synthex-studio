@@ -10,6 +10,10 @@ import {
   removeNode
 } from '../src/lib/graph.ts';
 import { ONTOLOGY_PRESETS } from '../src/types/canvas.ts';
+import { buildVaultFiles, createZipArchive } from '../src/lib/vault-export.ts';
+import { parseBibTeX, bibEntriesToCanvasNodes } from '../src/lib/bibtex.ts';
+import { generateStandaloneSvg } from '../src/lib/canvas-export.ts';
+import { extractPageNumber, formatPdfPageUrl, normalizeEvidenceItem } from '../src/utils/citation.ts';
 
 const concept = (id, title = id, type = 'concept') => ({ id, type, x: 0, y: 0, title, createdAt: 1 });
 const relation = (id, from, to, label = 'supports') => ({ id, from, to, label });
@@ -408,6 +412,225 @@ test('Interactive Mini-Map Navigation: calculates world bounds, lens coordinates
 
   assert.strictEqual(Math.round(screenCenterX), canvasSize.width / 2, 'World target is centered horizontally on screen');
   assert.strictEqual(Math.round(screenCenterY), canvasSize.height / 2, 'World target is centered vertically on screen');
+});
+
+test('Obsidian / Logseq Vault Export: generates structured markdown with frontmatter, [[wikilinks]], canvas, and valid ZIP archive', () => {
+  const c1 = concept('c1', 'Retrieval-Augmented Generation', 'concept');
+  c1.content = 'RAG combines neural generation with non-parametric memory retrieval.';
+
+  const cl1 = {
+    id: 'cl1',
+    title: 'RAG Reduces Hallucinations',
+    type: 'claim',
+    x: 350,
+    y: 100,
+    createdAt: Date.now(),
+    metadata: {
+      claimStatus: 'supported',
+      confidence: 0.94,
+      evidence: [
+        { sourceId: 's1', excerpt: 'Grounding against verified corpus lowers factual error rates by 68%.', relation: 'supports' }
+      ]
+    }
+  };
+
+  const s1 = {
+    id: 's1',
+    title: 'Lewis et al. 2020',
+    type: 'source',
+    x: 350,
+    y: 350,
+    url: 'https://arxiv.org/abs/2005.11401',
+    domain: 'arxiv.org',
+    createdAt: Date.now()
+  };
+
+  const rel1 = relation('r1', 'cl1', 'c1', 'derives_from');
+  const rel2 = relation('r2', 's1', 'cl1', 'supports');
+
+  const graph = normalizeGraph([c1, cl1, s1], [rel1, rel2]);
+  const vaultFiles = buildVaultFiles(graph, 'RAG Research Project');
+
+  assert.ok(vaultFiles.length >= 5, 'Should generate files for all nodes + Overview + Canvas');
+
+  // Verify paths
+  const paths = vaultFiles.map(f => f.path);
+  assert.ok(paths.some(p => p.includes('concepts/Retrieval-Augmented Generation.md')));
+  assert.ok(paths.some(p => p.includes('claims/RAG Reduces Hallucinations.md')));
+  assert.ok(paths.some(p => p.includes('sources/Lewis et al. 2020.md')));
+  assert.ok(paths.some(p => p.endsWith('Overview.md')));
+  assert.ok(paths.some(p => p.endsWith('.canvas')));
+
+  // Verify markdown content & [[wikilinks]]
+  const claimFile = vaultFiles.find(f => f.path.includes('claims/RAG Reduces Hallucinations.md'));
+  assert.ok(claimFile);
+  assert.ok(claimFile.content.includes('claimStatus: "supported"'));
+  assert.ok(claimFile.content.includes('confidence: 0.94'));
+  assert.ok(claimFile.content.includes('[[Lewis et al. 2020]]'));
+  assert.ok(claimFile.content.includes('[[Retrieval-Augmented Generation]]'));
+
+  // Verify canvas JSON
+  const canvasFile = vaultFiles.find(f => f.path.endsWith('.canvas'));
+  assert.ok(canvasFile);
+  const canvasJson = JSON.parse(canvasFile.content);
+  assert.strictEqual(canvasJson.nodes.length, 3);
+  assert.strictEqual(canvasJson.edges.length, 2);
+
+  // Verify ZIP archive generation
+  const zipBuffer = createZipArchive(vaultFiles);
+  assert.ok(Buffer.isBuffer(zipBuffer), 'Output should be a Buffer');
+  assert.ok(zipBuffer.length > 500, 'Zip should contain compressed files');
+  // Check ZIP magic header PK\x03\x04 (0x04034b50)
+  assert.strictEqual(zipBuffer.readUInt32LE(0), 0x04034b50, 'Must have standard ZIP local header magic bytes');
+});
+
+test('BibTeX Academic Ingestion: parses bib entries, cleans LaTeX formatting, and generates source nodes', () => {
+  const sampleBibTeX = `
+@article{vaswani2017attention,
+  title={Attention Is All You Need},
+  author={Vaswani, Ashish and Shazeer, Noam and Parmar, Niki and Uszkoreit, Jakob and Jones, Llion and Gomez, Aidan N and Kaiser, {\\L}ukasz and Polosukhin, Illia},
+  journal={Advances in Neural Information Processing Systems},
+  volume={30},
+  year={2017},
+  doi={10.48550/arXiv.1706.03762},
+  url={https://arxiv.org/abs/1706.03762},
+  abstract={The dominant sequence transduction models are based on complex recurrent or convolutional neural networks...}
+}
+
+@inproceedings{lewis2020rag,
+  title={Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks},
+  author={Lewis, Patrick and Perez, Ethan and Piktus, Aleksandra and Petroni, Fabio and others},
+  booktitle={Advances in Neural Information Processing Systems},
+  volume={33},
+  pages={9459--9474},
+  year={2020},
+  url={https://arxiv.org/abs/2005.11401}
+}
+  `;
+
+  const entries = parseBibTeX(sampleBibTeX);
+  assert.strictEqual(entries.length, 2, 'Should parse both BibTeX entries');
+
+  const vaswani = entries[0];
+  assert.strictEqual(vaswani.citationKey, 'vaswani2017attention');
+  assert.strictEqual(vaswani.type, 'article');
+  assert.strictEqual(vaswani.title, 'Attention Is All You Need');
+  assert.strictEqual(vaswani.year, '2017');
+  assert.strictEqual(vaswani.doi, '10.48550/arXiv.1706.03762');
+  assert.strictEqual(vaswani.url, 'https://arxiv.org/abs/1706.03762');
+  assert.ok(vaswani.authors.some(a => a.includes('Lukasz Kaiser')));
+  assert.ok(vaswani.abstract.startsWith('The dominant sequence'));
+
+  const lewis = entries[1];
+  assert.strictEqual(lewis.citationKey, 'lewis2020rag');
+  assert.strictEqual(lewis.type, 'inproceedings');
+  assert.strictEqual(lewis.title, 'Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks');
+  assert.strictEqual(lewis.booktitle, 'Advances in Neural Information Processing Systems');
+
+  // Convert to CanvasNode records
+  const nodes = bibEntriesToCanvasNodes(entries, 100, 100);
+  assert.strictEqual(nodes.length, 2, 'Should create 2 canvas nodes');
+
+  const node1 = nodes[0];
+  assert.strictEqual(node1.type, 'source');
+  assert.strictEqual(node1.title, 'Attention Is All You Need');
+  assert.strictEqual(node1.domain, 'arxiv.org');
+  assert.ok(node1.description.includes('Vaswani et al.'));
+  assert.strictEqual(node1.metadata.citationKey, 'vaswani2017attention');
+  assert.strictEqual(node1.metadata.origin, 'imported');
+
+  const node2 = nodes[1];
+  assert.strictEqual(node2.type, 'source');
+  assert.strictEqual(node2.title, 'Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks');
+  assert.strictEqual(node2.metadata.citationKey, 'lewis2020rag');
+});
+
+test('generateStandaloneSvg produces clean, standalone SVG with nodes and connections', () => {
+  const nodeA = {
+    id: 'node-1',
+    title: 'Transformer Architecture',
+    type: 'concept',
+    x: 100,
+    y: 100,
+    width: 280,
+    content: 'Multi-head self-attention mechanism with residual connections.'
+  };
+
+  const nodeB = {
+    id: 'node-2',
+    title: 'Self-Attention Layer',
+    type: 'claim',
+    x: 500,
+    y: 100,
+    width: 280,
+    content: 'Calculates query, key, value matrix dot-products.'
+  };
+
+  const connection = {
+    id: 'conn-1',
+    from: 'node-1',
+    to: 'node-2',
+    label: 'depends_on',
+    color: 'emerald',
+    arrowhead: 'end'
+  };
+
+  const svg = generateStandaloneSvg([nodeA, nodeB], [connection], 'Transformer System');
+
+  assert.ok(svg.includes('<svg xmlns="http://www.w3.org/2000/svg"'), 'Should be valid SVG root element');
+  assert.ok(svg.startsWith('<?xml') || svg.startsWith('<svg'), 'Should be valid XML/SVG output');
+  assert.ok(svg.includes('Transformer Architecture'), 'Should include node A title');
+  assert.ok(svg.includes('Self-Attention Layer'), 'Should include node B title');
+  assert.ok(svg.includes('depends on'), 'Should include formatted edge label');
+  assert.ok(svg.includes('<marker id="arrow-emerald"'), 'Should define color marker for connection');
+  assert.ok(svg.includes('stroke="#10b981"'), 'Should render emerald stroke');
+  assert.ok(svg.endsWith('</svg>'), 'Should properly close svg tag');
+});
+
+test('PDF Citation Deep-Linking: extracts page numbers, formats #page=N URLs, and normalizes evidence items', () => {
+  // Page number extraction from diverse textual formats
+  assert.strictEqual(extractPageNumber(42), 42);
+  assert.strictEqual(extractPageNumber('42'), 42);
+  assert.strictEqual(extractPageNumber('p. 42'), 42);
+  assert.strictEqual(extractPageNumber('p.42'), 42);
+  assert.strictEqual(extractPageNumber('page 108'), 108);
+  assert.strictEqual(extractPageNumber('Page 15'), 15);
+  assert.strictEqual(extractPageNumber('pp. 12-14'), 12);
+  assert.strictEqual(extractPageNumber('Section 3, p. 7'), 7);
+  assert.strictEqual(extractPageNumber('Chapter 1'), 1);
+  assert.strictEqual(extractPageNumber(undefined), undefined);
+  assert.strictEqual(extractPageNumber(''), undefined);
+
+  // PDF URL formatting with #page=N fragment
+  assert.strictEqual(formatPdfPageUrl('/uploads/attention.pdf', 5), '/uploads/attention.pdf#page=5');
+  assert.strictEqual(formatPdfPageUrl('https://arxiv.org/pdf/1706.03762.pdf', 3), 'https://arxiv.org/pdf/1706.03762.pdf#page=3');
+  assert.strictEqual(formatPdfPageUrl('https://example.com/doc.pdf#toolbar=0', 12), 'https://example.com/doc.pdf#page=12');
+  assert.strictEqual(formatPdfPageUrl('/uploads/paper.pdf', undefined), '/uploads/paper.pdf');
+  assert.strictEqual(formatPdfPageUrl('data:application/pdf;base64,JVBERi0...', 8), 'data:application/pdf;base64,JVBERi0...#page=8');
+
+  // Evidence normalization
+  const normalized = normalizeEvidenceItem({
+    sourceId: 'src-vaswani-2017',
+    location: 'p. 4',
+    excerpt: 'Self-attention allows the model to associate each word with other words in the input sequence.',
+    relation: 'supports'
+  });
+
+  assert.strictEqual(normalized.sourceId, 'src-vaswani-2017');
+  assert.strictEqual(normalized.page, 4);
+  assert.strictEqual(normalized.location, 'p. 4');
+  assert.strictEqual(normalized.relation, 'supports');
+  assert.ok(normalized.excerpt.includes('Self-attention allows'));
+
+  // Contradiction citation with numeric page
+  const contradiction = normalizeEvidenceItem({
+    sourceId: 'src-survey',
+    page: 19,
+    relation: 'contradicts'
+  });
+  assert.strictEqual(contradiction.relation, 'contradicts');
+  assert.strictEqual(contradiction.page, 19);
+  assert.strictEqual(contradiction.location, 'p. 19');
 });
 
 

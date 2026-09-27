@@ -2,10 +2,12 @@
 /* eslint-disable @next/next/no-img-element */
 
 import { useCallback, useEffect, useState } from 'react';
-import { ArrowDownRight, ArrowUpRight, CircleHelp, Database, Download, ExternalLink, FileClock, History, Layers2, LoaderCircle, Plus, Quote, RotateCcw, Trash2 } from 'lucide-react';
+import { ArrowDownRight, ArrowUpRight, CircleHelp, Database, Download, ExternalLink, FileClock, FileText, History, Layers2, LoaderCircle, Plus, Quote, RotateCcw, Trash2 } from 'lucide-react';
 import type { CanvasNode, Connection, DatabaseSnapshotSummary, GraphRevisionSummary, ResearchSession } from '@/types/canvas';
 import type { WorkspaceSection } from './WorkspaceSidebar';
 import { WebsiteLogo, getLinkThumbnail } from './SourceMetadata';
+import { FileViewerModal } from './FileAndMediaModal';
+import { extractPageNumber } from '@/utils/citation';
 
 const names: Record<string, string> = {
   concept: 'Concept', claim: 'Claim', question: 'Question', hypothesis: 'Hypothesis', source: 'Source',
@@ -53,6 +55,15 @@ export function KnowledgeViews({
   onCreateCheckpoint?: (title: string) => Promise<void> | void;
   onRestoreDatabase?: () => Promise<void> | void;
 }) {
+  const [activePdfPreview, setActivePdfPreview] = useState<{
+    fileData: string;
+    fileName?: string;
+    fileSize?: number;
+    fileType?: string;
+    initialPage?: number;
+    highlightExcerpt?: string;
+  } | null>(null);
+
   if (section === 'revisions') {
     return (
       <RevisionsView
@@ -89,6 +100,44 @@ export function KnowledgeViews({
             <button className="evidence-claim" onClick={() => onSelectNode(claim.id)}><span className={`status-dot status-${claim.metadata?.claimStatus || 'unverified'}`} />
               <span><strong>{claim.title}</strong><small>{(claim.metadata?.claimStatus || 'unverified').replaceAll('_', ' ')}</small></span><ArrowUpRight size={15} />
             </button>
+            {claim.metadata?.evidence?.length ? (
+              <div className="card-evidence-list" style={{ margin: '6px 0 10px 0' }}>
+                {claim.metadata.evidence.map((ev, idx) => {
+                  const src = nodes.find(n => n.id === ev.sourceId);
+                  const pageNum = ev.page || extractPageNumber(ev.location);
+                  const isContradiction = ev.relation === 'contradicts';
+                  const hasPdf = Boolean(src?.fileData && (src.fileType?.includes('pdf') || src.fileName?.toLowerCase().endsWith('.pdf') || src.fileData.startsWith('data:application/pdf')));
+
+                  return (
+                    <button
+                      key={idx}
+                      type="button"
+                      className={`card-evidence-pill ${isContradiction ? 'contradicts' : 'supports'} ${hasPdf ? 'has-pdf' : ''}`}
+                      title={ev.excerpt ? `“${ev.excerpt}” — Click to ${hasPdf ? 'open PDF citation' : 'view source'}` : `Source: ${src?.title || ev.sourceId}`}
+                      onClick={() => {
+                        if (hasPdf && src?.fileData) {
+                          setActivePdfPreview({
+                            fileData: src.fileData,
+                            fileName: src.fileName || src.title,
+                            fileSize: src.fileSize,
+                            fileType: src.fileType || 'application/pdf',
+                            initialPage: pageNum,
+                            highlightExcerpt: ev.excerpt
+                          });
+                        } else if (src) {
+                          onSelectNode(src.id);
+                        }
+                      }}
+                    >
+                      <span className="evidence-relation-dot" />
+                      <span className="evidence-source-title">{src?.title || ev.sourceId}</span>
+                      {pageNum && <span className="evidence-page-badge">p.{pageNum}</span>}
+                      {hasPdf && <FileText size={10} className="evidence-pdf-icon" />}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : null}
             {related.length ? <div className="evidence-links">{related.map(edge => {
               const otherId = edge.from === claim.id ? edge.to : edge.from;
               const other = nodes.find(node => node.id === otherId);
@@ -96,6 +145,18 @@ export function KnowledgeViews({
             })}</div> : <p className="no-path">No connected sources or related records yet.</p>}
           </article>;
         })}</div>}
+
+      {activePdfPreview && (
+        <FileViewerModal
+          fileData={activePdfPreview.fileData}
+          fileName={activePdfPreview.fileName}
+          fileSize={activePdfPreview.fileSize}
+          fileType={activePdfPreview.fileType}
+          initialPage={activePdfPreview.initialPage}
+          highlightExcerpt={activePdfPreview.highlightExcerpt}
+          onClose={() => setActivePdfPreview(null)}
+        />
+      )}
     </div>;
   }
 
