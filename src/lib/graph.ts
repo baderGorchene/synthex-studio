@@ -44,15 +44,15 @@ export function updateNode(graph: KnowledgeGraph, id: string, fields: Partial<Ca
 }
 
 export function addRelationship(graph: KnowledgeGraph, edge: Connection): KnowledgeGraph {
-  if (graph.edgesById[edge.id]) throw new Error(`Duplicate relationship id: ${edge.id}`);
+  if (graph.edgesById[edge.id]) return graph;
   if (!graph.nodesById[edge.from] || !graph.nodesById[edge.to]) {
     throw new Error('Both relationship endpoints must exist in the graph.');
   }
-  if (edge.from === edge.to) throw new Error('A node cannot have a relationship to itself.');
+  if (edge.from === edge.to) return graph;
   const duplicate = Object.values(graph.edgesById).some(
     current => current.from === edge.from && current.to === edge.to && current.label === edge.label
   );
-  if (duplicate) throw new Error('That relationship already exists.');
+  if (duplicate) return graph;
   return { ...graph, edgesById: { ...graph.edgesById, [edge.id]: edge } };
 }
 

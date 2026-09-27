@@ -4,11 +4,11 @@
 import { ArrowDownRight, ArrowUpRight, CircleHelp, ExternalLink, FileClock, Layers2, Quote } from 'lucide-react';
 import type { CanvasNode, Connection, ResearchSession } from '@/types/canvas';
 import type { WorkspaceSection } from './WorkspaceSidebar';
-import { WebsiteLogo } from '@/components/canvas/SourceMetadata';
+import { WebsiteLogo, getLinkThumbnail } from './SourceMetadata';
 
 const names: Record<string, string> = {
   concept: 'Concept', claim: 'Claim', question: 'Question', hypothesis: 'Hypothesis', source: 'Source',
-  link: 'Source', note: 'Note', group: 'Cluster', section: 'Cluster', ai_insight: 'AI insight', research_result: 'Research result'
+  link: 'Link & Website', note: 'Note', group: 'Cluster', section: 'Cluster', ai_insight: 'AI insight', research_result: 'Research result'
 };
 
 function sourceHost(value?: string) {
@@ -74,7 +74,8 @@ export function KnowledgeViews({
     {viewNodes.length === 0 ? <div className="empty-view"><Layers2 size={22} /><strong>Nothing here yet</strong><span>Add a record from the graph or run research to build this view.</span></div> :
       <div className="records-list">{viewNodes.sort((a, b) => a.y - b.y || a.title.localeCompare(b.title)).map(node => {
         const connectedCount = edges.filter(edge => edge.from === node.id || edge.to === node.id).length;
-        const previewImage = (node.type === 'source' || node.type === 'link') ? (node.imageUrl || (node.metadata?.image as string)) : undefined;
+        const linkThumb = (node.type === 'source' || node.type === 'link') ? getLinkThumbnail(node) : null;
+        const previewImage = linkThumb?.thumbnailUrl;
         return <button className="record-row" key={node.id} onClick={() => onSelectNode(node.id)}>
           <span className={`record-icon type-${node.type}`}>
             {(node.type === 'source' || node.type === 'link') ? (

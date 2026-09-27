@@ -224,7 +224,7 @@ export function RelationshipControls({ connection, x, y, onUpdate, onDelete }: {
                   title="Dotted Line"
                 >
                   <svg width="24" height="10" viewBox="0 0 24 10" fill="none">
-                    <line x1="2" y1="5" x2="22" y2="5" stroke="currentColor" strokeWidth="2.2" strokeDasharray="1.5 3.5" strokeLinecap="round" />
+                    <line x1="3" y1="5" x2="21" y2="5" stroke="currentColor" strokeWidth="2.4" strokeDasharray="0 6" strokeLinecap="round" />
                   </svg>
                   <span className="style-option-caption">Dotted</span>
                 </button>

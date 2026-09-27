@@ -14,11 +14,11 @@ export type WorkspaceSection = 'canvas' | 'outline' | 'evidence' | 'table' | 'so
 export type CanvasTool = 'select' | 'connect' | 'hand';
 
 export const addableRecords = [
-  { type: 'note', label: 'Note & Idea', description: 'Concept, hypothesis or markdown note', icon: FileText },
-  { type: 'claim', label: 'Claim & Inquiry', description: 'Verifiable assertion or open question', icon: Quote },
-  { type: 'source', label: 'Document & Source', description: 'Web reference, PDF, TXT, JSON, paper', icon: BookOpen },
-  { type: 'image', label: 'Media & Figure', description: 'Diagram, chart, screenshot or asset', icon: Images },
-  { type: 'group', label: 'Knowledge cluster', description: 'Collapsible stack & section container', icon: Layers2 }
+  { type: 'note', label: 'Note & Idea', description: 'Concept, hypothesis or markdown note', icon: FileText, shortcut: 'N' },
+  { type: 'claim', label: 'Claim & Inquiry', description: 'Verifiable assertion or open question', icon: Quote, shortcut: 'K' },
+  { type: 'source', label: 'Document & Source', description: 'Web reference, PDF, TXT, JSON, paper', icon: BookOpen, shortcut: 'S' },
+  { type: 'image', label: 'Media & Figure', description: 'Diagram, chart, screenshot or asset', icon: Images, shortcut: 'I' },
+  { type: 'group', label: 'Knowledge cluster', description: 'Collapsible stack & section container', icon: Layers2, shortcut: 'G' }
 ] as const;
 
 export interface CanvasToolDockProps {
@@ -105,9 +105,10 @@ export function CanvasToolDock({
           aria-label="Select and move records"
           aria-pressed={activeTool === 'select'}
           onClick={() => onSelectTool?.('select')}
+          title="Select & multi-select (V)"
         >
           <MousePointer2 size={16} />
-          <span className="tool-tooltip">Select & move · V</span>
+          <span className="tool-tooltip">Select & multi-select · V</span>
         </button>
 
         <button
@@ -115,6 +116,7 @@ export function CanvasToolDock({
           aria-label="Connect records"
           aria-pressed={activeTool === 'connect'}
           onClick={() => onSelectTool?.('connect')}
+          title="Connect records (C)"
         >
           <GitBranch size={16} />
           <span className="tool-tooltip">Connect records · C</span>
@@ -125,15 +127,17 @@ export function CanvasToolDock({
           aria-label="Pan canvas"
           aria-pressed={activeTool === 'hand'}
           onClick={() => onSelectTool?.('hand')}
+          title="Pan canvas (H or Space)"
         >
           <Hand size={16} />
-          <span className="tool-tooltip">Pan canvas · Space</span>
+          <span className="tool-tooltip">Pan canvas · H or Space</span>
         </button>
 
         <button
           className="sidebar-tool-button"
           aria-label="Fit sheet"
           onClick={onFit}
+          title="Fit all records (F)"
         >
           <Scan size={16} />
           <span className="tool-tooltip">Fit all records · F</span>
@@ -146,19 +150,21 @@ export function CanvasToolDock({
             aria-expanded={addMenuOpen}
             aria-haspopup="menu"
             onClick={() => setAddMenuOpen(value => !value)}
+            title="Add record (N)"
           >
             <Plus size={17} />
-            <span className="tool-tooltip">Add record</span>
+            <span className="tool-tooltip">Add record · N</span>
           </button>
 
           {addMenuOpen && (
             <div className="dock-add-record-menu" role="menu" aria-label="Add record type">
               <span className="popover-heading">Add to canvas</span>
-              {addableRecords.map(({ type, label, description, icon: Icon }) => (
+              {addableRecords.map(({ type, label, description, icon: Icon, shortcut }) => (
                 <button
                   key={type}
                   className={`record-create-item type-${type}`}
                   role="menuitem"
+                  title={`${label} (${shortcut})`}
                   onClick={() => {
                     onAddRecord?.(type);
                     setAddMenuOpen(false);
@@ -169,6 +175,7 @@ export function CanvasToolDock({
                     <strong>{label}</strong>
                     <small>{description}</small>
                   </div>
+                  <kbd className="record-shortcut-badge">{shortcut}</kbd>
                 </button>
               ))}
             </div>

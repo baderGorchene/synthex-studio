@@ -77,6 +77,48 @@ export async function GET(request: Request) {
       logo: googleFavicon
     };
 
+    // Special handling for YouTube video URLs via official oEmbed API
+    const isYouTube = domain === 'youtube.com' || domain === 'm.youtube.com' || domain === 'youtu.be';
+    if (isYouTube) {
+      result.siteName = 'YouTube';
+      let videoId: string | null = null;
+      if (domain === 'youtu.be') {
+        videoId = parsedUrl.pathname.slice(1).split('/')[0] || null;
+      } else if (parsedUrl.pathname === '/watch') {
+        videoId = parsedUrl.searchParams.get('v');
+      } else if (parsedUrl.pathname.startsWith('/embed/') || parsedUrl.pathname.startsWith('/shorts/')) {
+        videoId = parsedUrl.pathname.split('/')[2] || null;
+      }
+
+      if (videoId) {
+        result.image = `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`;
+      }
+
+      try {
+        const oembedRes = await fetch(`https://www.youtube.com/oembed?url=${encodeURIComponent(parsedUrl.href)}&format=json`, {
+          headers: { 'Accept': 'application/json' },
+          signal: AbortSignal.timeout(3500)
+        });
+        if (oembedRes.ok) {
+          const oembedData = await oembedRes.json();
+          if (oembedData.title) result.title = oembedData.title;
+          if (oembedData.author_name) {
+            result.description = `Video by ${oembedData.author_name}`;
+            (result as { author?: string }).author = oembedData.author_name;
+          }
+          if (oembedData.thumbnail_url) {
+            result.image = oembedData.thumbnail_url;
+          }
+          return NextResponse.json(result);
+        }
+      } catch {
+        // Fallback to videoId thumbnail if oembed fails or times out
+        if (videoId) {
+          return NextResponse.json(result);
+        }
+      }
+    }
+
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 4500);

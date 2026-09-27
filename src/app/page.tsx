@@ -12,6 +12,7 @@ import { KnowledgeViews } from '@/components/research/KnowledgeViews';
 import { NodeInspector } from '@/components/research/NodeInspector';
 import { CustomSelect } from '@/components/research/CustomSelect';
 import { CanvasToolDock, addableRecords, type ResearchProject, type WorkspaceSection } from '@/components/research/WorkspaceSidebar';
+import { extractYouTubeVideoId } from '@/components/research/SourceMetadata';
 import { addNode, addRelationship, exportContextMarkdown, exportGraphJson, exportMermaid, normalizeGraph, removeNode, updateNode, updateRelationship, type KnowledgeGraph } from '@/lib/graph';
 import type { CanvasNode, CanvasNodeType, Connection, Coordinates, ResearchChange, ResearchSession } from '@/types/canvas';
 import { ELEMENT_PALETTE } from '@/types/canvas';
@@ -134,13 +135,18 @@ export default function SynthexWorkspace() {
   const updateGraph = useCallback((change: (current: KnowledgeGraph) => KnowledgeGraph, recordUndo = true) => {
     let didRecord = false;
     setGraph(current => {
-      const next = change(current);
-      if (next !== current && recordUndo) {
-        undoStack.current = [...undoStack.current.slice(-39), current];
-        redoStack.current = [];
-        didRecord = true;
+      try {
+        const next = change(current);
+        if (next !== current && recordUndo) {
+          undoStack.current = [...undoStack.current.slice(-39), current];
+          redoStack.current = [];
+          didRecord = true;
+        }
+        return next;
+      } catch (err) {
+        console.warn('Graph update prevented:', err);
+        return current;
       }
-      return next;
     });
     if (didRecord) {
       setUndoReady(true);
@@ -231,27 +237,38 @@ export default function SynthexWorkspace() {
     return () => clearTimeout(timer);
   }, [graph, projectId, loadedProject, loading, announce]);
 
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      const target = event.target as HTMLElement | null;
-      const typing = target?.matches('input, textarea, select, [contenteditable="true"]');
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); setModal('search'); return; }
-      if (!typing && (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'z') {
-        event.preventDefault();
-        if (event.shiftKey) redo(); else undo();
-        return;
+  const deleteNodes = useCallback((ids: string[]) => {
+    if (ids.length === 0) return;
+    updateGraph(current => {
+      let next = current;
+      for (const id of ids) {
+        next = removeNode(next, id);
       }
-      if (event.key === 'Escape') { setModal(null); setActiveSession(null); setLinkingFromId(null); setEditingNoteId(null); setGroupCanvasId(null); setTool('select'); }
-      if (!typing && !target?.closest('button, a, [role="button"]') && event.key.toLowerCase() === 'c') { event.preventDefault(); setTool(value => value === 'connect' ? 'select' : 'connect'); setLinkingFromId(null); }
-      if (!typing && !target?.closest('button, a, [role="button"]') && event.code === 'Space') { event.preventDefault(); setSpacePressed(true); }
-    };
-    const onKeyUp = (event: KeyboardEvent) => { if (event.code === 'Space') setSpacePressed(false); };
-    const onBlur = () => setSpacePressed(false);
-    window.addEventListener('keydown', onKey);
-    window.addEventListener('keyup', onKeyUp);
-    window.addEventListener('blur', onBlur);
-    return () => { window.removeEventListener('keydown', onKey); window.removeEventListener('keyup', onKeyUp); window.removeEventListener('blur', onBlur); };
-  }, [undo, redo]);
+      return next;
+    });
+    setSelectedIds(current => current.filter(id => !ids.includes(id)));
+    if (editingNoteId && ids.includes(editingNoteId)) setEditingNoteId(null);
+    announce(ids.length === 1 ? 'Record deleted.' : `${ids.length} records deleted.`);
+  }, [announce, updateGraph, editingNoteId]);
+
+  const deleteSelected = useCallback(() => {
+    deleteNodes(selectedIds);
+  }, [deleteNodes, selectedIds]);
+
+  const selectMultipleNodes = useCallback((ids: string[], additive = false) => {
+    setSelectedIds(current => {
+      if (additive) {
+        const set = new Set(current);
+        ids.forEach(id => set.add(id));
+        return Array.from(set);
+      }
+      return ids;
+    });
+    if (ids.length > 0) {
+      setDrawerTab('inspector');
+      setRightDrawerOpen(true);
+    }
+  }, []);
 
   useEffect(() => {
     const onGlobalPointerDown = (event: PointerEvent) => {
@@ -305,6 +322,113 @@ export default function SynthexWorkspace() {
     }
   }, [announce, updateGraph]);
 
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      const typing = target?.matches('input, textarea, select, [contenteditable="true"]');
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); setModal('search'); return; }
+      if (!typing && (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'z') {
+        event.preventDefault();
+        if (event.shiftKey) redo(); else undo();
+        return;
+      }
+      if (!typing && (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'y') {
+        event.preventDefault();
+        redo();
+        return;
+      }
+      if (!typing && (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'a') {
+        event.preventDefault();
+        setSelectedIds(Object.keys(graphRef.current.nodesById));
+        setDrawerTab('inspector');
+        setRightDrawerOpen(true);
+        return;
+      }
+      if (event.key === 'Escape') { setModal(null); setActiveSession(null); setLinkingFromId(null); setEditingNoteId(null); setGroupCanvasId(null); setTool('select'); }
+      if (!typing && !target?.closest('button, a, [role="button"]')) {
+        const key = event.key.toLowerCase();
+        if (event.key === 'Delete' || event.key === 'Backspace') {
+          if (selectedIds.length > 0) {
+            event.preventDefault();
+            deleteSelected();
+          }
+        } else if (key === 'v') {
+          event.preventDefault();
+          setTool('select');
+        } else if (key === 'h') {
+          event.preventDefault();
+          setTool('hand');
+        } else if (key === 'c' && !event.shiftKey) {
+          event.preventDefault();
+          setTool(value => value === 'connect' ? 'select' : 'connect');
+          setLinkingFromId(null);
+        } else if (key === 'f') {
+          event.preventDefault();
+          setCanvasFitKey(k => k + 1);
+        } else if (key === 'n') {
+          event.preventDefault();
+          addRecord('note');
+        } else if (key === 'k' || (key === 'c' && event.shiftKey)) {
+          event.preventDefault();
+          addRecord('claim');
+        } else if (key === 's') {
+          event.preventDefault();
+          addRecord('source');
+        } else if (key === 'i') {
+          event.preventDefault();
+          addRecord('image');
+        } else if (key === 'g') {
+          event.preventDefault();
+          addRecord('group');
+        } else if (key === 'r') {
+          event.preventDefault();
+          setModal('research');
+        } else if (event.key === '?' || (event.shiftKey && key === 'a')) {
+          event.preventDefault();
+          setDrawerTab('chat');
+          setRightDrawerOpen(true);
+        }
+      }
+      if (!typing && !target?.closest('button, a, [role="button"]') && event.code === 'Space') { event.preventDefault(); setSpacePressed(true); }
+    };
+    const onKeyUp = (event: KeyboardEvent) => { if (event.code === 'Space') setSpacePressed(false); };
+    const onBlur = () => setSpacePressed(false);
+
+    const onPaste = (event: ClipboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      const typing = target?.matches('input, textarea, select, [contenteditable="true"]');
+      if (typing) return;
+      const text = event.clipboardData?.getData('text')?.trim();
+      if (text && (text.startsWith('http://') || text.startsWith('https://'))) {
+        event.preventDefault();
+        const ytId = extractYouTubeVideoId(text);
+        addRecord('source', {
+          title: ytId ? 'YouTube video' : 'Web link',
+          url: text,
+          domain: ytId ? 'youtube.com' : undefined,
+          imageUrl: ytId ? `https://img.youtube.com/vi/${ytId}/hqdefault.jpg` : undefined,
+          metadata: {
+            origin: 'user',
+            siteName: ytId ? 'YouTube' : undefined,
+            image: ytId ? `https://img.youtube.com/vi/${ytId}/hqdefault.jpg` : undefined
+          }
+        });
+        announce(ytId ? 'YouTube video card added.' : 'Link card added.');
+      }
+    };
+
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('keyup', onKeyUp);
+    window.addEventListener('blur', onBlur);
+    window.addEventListener('paste', onPaste);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('blur', onBlur);
+      window.removeEventListener('paste', onPaste);
+    };
+  }, [undo, redo, selectedIds, deleteSelected, addRecord, announce]);
+
   const moveNodes = useCallback((positions: Record<string, Coordinates>) => {
     updateGraph(current => {
       let next = current;
@@ -314,7 +438,7 @@ export default function SynthexWorkspace() {
         const node = next.nodesById[id];
         if (!node) continue;
 
-        let updates: Partial<CanvasNode> = { ...point };
+        const updates: Partial<CanvasNode> = { ...point };
 
         // If not a cluster itself, check if dragged inside or outside any cluster
         if (node.type !== 'group' && node.type !== 'section') {
@@ -373,12 +497,44 @@ export default function SynthexWorkspace() {
   }, [announce, updateGraph]);
 
   const connectNodes = useCallback((from: string, to: string) => {
+    if (from === to) {
+      announce('A record cannot connect to itself.');
+      setLinkingFromId(null);
+      setTool('select');
+      return;
+    }
+    const currentEdges = Object.values(graphRef.current.edgesById);
+    const existing = currentEdges.find(
+      edge => (edge.from === from && edge.to === to) || (edge.from === to && edge.to === from)
+    );
+    if (existing) {
+      announce('That relationship already exists.');
+      setLinkingFromId(null);
+      setTool('select');
+      return;
+    }
+
     try {
-      const edge: Connection = { id: newId(), from, to, label: 'related_to', color: 'neutral', arrowhead: 'end', lineStyle: 'curved', strokePattern: 'dashed', animated: true };
+      const edge: Connection = {
+        id: newId(),
+        from,
+        to,
+        label: 'related_to',
+        color: 'neutral',
+        arrowhead: 'end',
+        lineStyle: 'curved',
+        strokePattern: 'dashed',
+        animated: true
+      };
       updateGraph(current => addRelationship(current, edge));
-      setLinkingFromId(null); setTool('select');
-      announce('Relationship added. Select a record to add a more specific label.');
-    } catch (error) { announce(error instanceof Error ? error.message : 'Could not connect those records.'); }
+      setLinkingFromId(null);
+      setTool('select');
+      announce('Relationship added. Click the connection pill to customize style or label.');
+    } catch (error) {
+      announce(error instanceof Error ? error.message : 'Could not connect those records.');
+      setLinkingFromId(null);
+      setTool('select');
+    }
   }, [announce, updateGraph]);
 
   const toggleGroup = (id: string) => updateGraph(current => {
@@ -401,13 +557,6 @@ export default function SynthexWorkspace() {
   const updateSelectedNode = (fields: Partial<CanvasNode>) => {
     if (!selectedNode) return;
     updateGraph(current => updateNode(current, selectedNode.id, fields), false);
-  };
-
-  const deleteSelected = () => {
-    if (!selectedNode) return;
-    updateGraph(current => removeNode(current, selectedNode.id));
-    setSelectedIds([]);
-    announce('Record deleted.');
   };
 
   const reloadGraph = async () => {
@@ -717,6 +866,7 @@ export default function SynthexWorkspace() {
               <button
                 className="topbar-add-btn"
                 aria-label="Add record to graph"
+                title="Add record (N)"
                 aria-expanded={addRecordMenuOpen}
                 onClick={() => {
                   setAddRecordMenuOpen(v => !v);
@@ -732,11 +882,12 @@ export default function SynthexWorkspace() {
               {addRecordMenuOpen && (
                 <div className="menu-popover topbar-add-menu" role="menu" aria-label="Add record types">
                   <div className="popover-heading">Create Record</div>
-                  {addableRecords.map(({ type, label, description, icon: Icon }) => (
+                  {addableRecords.map(({ type, label, description, icon: Icon, shortcut }) => (
                     <button
                       key={type}
                       className={`record-create-item type-${type}`}
                       role="menuitem"
+                      title={`${label} (${shortcut})`}
                       onClick={() => {
                         addRecord(type);
                         setAddRecordMenuOpen(false);
@@ -747,6 +898,7 @@ export default function SynthexWorkspace() {
                         <strong>{label}</strong>
                         <small>{description}</small>
                       </div>
+                      <kbd className="record-shortcut-badge">{shortcut}</kbd>
                     </button>
                   ))}
                 </div>
@@ -755,7 +907,7 @@ export default function SynthexWorkspace() {
 
             <button
               className="topbar-search-btn"
-              title="Search knowledge (Ctrl K)"
+              title="Search knowledge (⌘K / Ctrl+K)"
               aria-label="Search knowledge"
               onClick={() => setModal('search')}
             >
@@ -771,10 +923,10 @@ export default function SynthexWorkspace() {
 
             <div className="topbar-divider" />
 
-            <button className="icon-button history-action" title="Undo (Ctrl Z)" aria-label="Undo" disabled={!undoReady} onClick={undo}>
+            <button className="icon-button history-action" title="Undo (⌘Z / Ctrl+Z)" aria-label="Undo" disabled={!undoReady} onClick={undo}>
               <Undo2 size={15} />
             </button>
-            <button className="icon-button history-action" title="Redo (Ctrl Y)" aria-label="Redo" disabled={!redoReady} onClick={redo}>
+            <button className="icon-button history-action" title="Redo (⌘Shift+Z / Ctrl+Y)" aria-label="Redo" disabled={!redoReady} onClick={redo}>
               <Redo2 size={15} />
             </button>
 
@@ -802,7 +954,7 @@ export default function SynthexWorkspace() {
 
             <button
               className={`quiet-button topbar-chat-btn ${rightDrawerOpen && drawerTab === 'chat' ? 'is-active' : ''}`}
-              title="Ask this knowledge graph"
+              title="Ask this knowledge graph (? / Shift+A)"
               aria-label="Ask this knowledge graph"
               onClick={() => {
                 if (rightDrawerOpen && drawerTab === 'chat') {
@@ -817,7 +969,7 @@ export default function SynthexWorkspace() {
               <span>Ask AI</span>
             </button>
 
-            <button className="primary-button top-research" onClick={() => setModal('research')}>
+            <button className="primary-button top-research" title="Run web research (R)" onClick={() => setModal('research')}>
               <Sparkles size={14} />
               <span>Research</span>
             </button>
@@ -867,11 +1019,14 @@ export default function SynthexWorkspace() {
                     setDrawerTab('inspector');
                     setRightDrawerOpen(true);
                   }}
+                  onSelectMultipleNodes={selectMultipleNodes}
+                  onDeleteNodes={deleteNodes}
                   onClearSelection={() => setSelectedIds([])} onClickAway={() => setEditingNoteId(null)} onCancelLinking={() => setLinkingFromId(null)} onMoveNodes={moveNodes} onConnect={connectNodes}
                   onStartLinking={setLinkingFromId} onToggleGroup={toggleGroup} onEditNote={setEditingNoteId}
                   onUpdateNote={(id, content) => updateGraph(current => updateNode(current, id, { content }), false)}
                   onUpdateRelationship={editRelationship} onDeleteRelationship={deleteRelationship} onResizeGroup={resizeGroup} onOpenGroup={id => { setEditingNoteId(null); setGroupCanvasId(id); }}
                   onAddRecordWithData={addRecord}
+                  projectId={projectId}
                 />}
               </div>
 
@@ -912,6 +1067,7 @@ export default function SynthexWorkspace() {
                         onUpdate={updateSelectedNode}
                         onDelete={() => { deleteSelected(); setRightDrawerOpen(false); }}
                         onClose={() => { setSelectedIds([]); setRightDrawerOpen(false); }}
+                        projectId={projectId}
                       />
                     ) : selectedIds.length > 1 ? (
                       <div className="drawer-multi-select">
@@ -949,7 +1105,14 @@ export default function SynthexWorkspace() {
                           </div>
                         </div>
 
-                        <button className="danger-button" onClick={() => { updateGraph(current => selectedIds.reduce(removeNode, current)); setSelectedIds([]); setRightDrawerOpen(false); }}>
+                        <button
+                          className="danger-button"
+                          title="Delete selection (Delete / Backspace)"
+                          onClick={() => {
+                            deleteSelected();
+                            setRightDrawerOpen(false);
+                          }}
+                        >
                           <Trash2 size={14} /> Delete selection
                         </button>
                       </div>
@@ -1106,7 +1269,15 @@ export default function SynthexWorkspace() {
         </section>
       </div>}
 
-      {notice && <div role="status" className="toast-note">{notice}</div>}
+      {notice && (
+        <div role="status" className="toast-note">
+          <CircleHelp size={15} className="toast-icon" />
+          <span>{notice}</span>
+          <button className="toast-close" onClick={() => setNotice('')} aria-label="Dismiss notification">
+            <X size={13} />
+          </button>
+        </div>
+      )}
     </div>
   );
 }

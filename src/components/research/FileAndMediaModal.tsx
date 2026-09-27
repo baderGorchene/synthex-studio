@@ -1,12 +1,11 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   Copy,
   Check,
   Download,
   ExternalLink,
-  Eye,
   File,
   FileCode,
   FileJson,
@@ -307,13 +306,36 @@ export function FileViewerModal({
   const meta = getFileCategory(fileName, fileType);
   const IconComponent = meta.icon;
 
+  const [fetchedText, setFetchedText] = useState<string>('');
+
+  useEffect(() => {
+    if (!content && fileData && (fileData.startsWith('/') || fileData.startsWith('http'))) {
+      if (['json', 'txt', 'csv', 'md', 'code'].includes(meta.category)) {
+        fetch(fileData)
+          .then(res => res.text())
+          .then(txt => setFetchedText(txt))
+          .catch(() => {});
+      }
+    }
+  }, [content, fileData, meta.category]);
+
   // Extract readable text if file is text-based (JSON, TXT, CSV, MD)
   const decodedText = useMemo(() => {
     if (content && content.trim()) return content;
+    if (fetchedText && fetchedText.trim()) {
+      if (meta.category === 'json') {
+        try {
+          return JSON.stringify(JSON.parse(fetchedText), null, 2);
+        } catch {
+          return fetchedText;
+        }
+      }
+      return fetchedText;
+    }
     if (fileData) {
       if (meta.category === 'json' || meta.category === 'txt' || meta.category === 'csv' || meta.category === 'md' || meta.category === 'code') {
-        const text = decodeDataUrlText(fileData);
-        if (meta.category === 'json') {
+        const text = fileData.startsWith('data:') ? decodeDataUrlText(fileData) : '';
+        if (meta.category === 'json' && text) {
           try {
             const parsed = JSON.parse(text);
             return JSON.stringify(parsed, null, 2);
@@ -325,7 +347,7 @@ export function FileViewerModal({
       }
     }
     return '';
-  }, [content, fileData, meta.category]);
+  }, [content, fetchedText, fileData, meta.category]);
 
   const lines = useMemo(() => {
     if (!decodedText) return [];
@@ -508,8 +530,6 @@ export function AttachedFileBadge({
   fileName,
   fileSize,
   fileType,
-  fileData,
-  content,
   onOpenPreview
 }: {
   fileName?: string;

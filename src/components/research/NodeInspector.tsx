@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { Check, ExternalLink, Eye, FileText, Images, LoaderCircle, Maximize2, Paperclip, Sparkles, Trash2, Upload, X } from 'lucide-react';
+import { Check, ExternalLink, Images, LoaderCircle, Maximize2, Paperclip, Sparkles, Trash2, Upload, X } from 'lucide-react';
 import { CanvasNode, CanvasNodeType, ELEMENT_PALETTE, formatFileSize } from '@/types/canvas';
+import { uploadFile } from '@/lib/upload';
 import { MarkdownEditor } from './MarkdownEditor';
 import { CustomSelect } from './CustomSelect';
-import { WebsiteLogo, WebsiteImage, getWebsiteDomain } from '@/components/canvas/SourceMetadata';
+import { WebsiteLogo, WebsiteImage, getWebsiteDomain, extractYouTubeVideoId } from './SourceMetadata';
 import { AttachedFileBadge, FileViewerModal, ImageViewerModal } from './FileAndMediaModal';
 
 const types: Array<{ id: CanvasNodeType; label: string }> = [
@@ -11,11 +12,11 @@ const types: Array<{ id: CanvasNodeType; label: string }> = [
   { id: 'claim', label: 'Claim & Inquiry' },
   { id: 'source', label: 'Document & Source' },
   { id: 'image', label: 'Media & Figure' },
+  { id: 'link', label: 'Link & Website' },
   { id: 'group', label: 'Knowledge cluster' },
   { id: 'concept', label: 'Concept (legacy)' },
   { id: 'hypothesis', label: 'Hypothesis (legacy)' },
   { id: 'question', label: 'Question (legacy)' },
-  { id: 'link', label: 'Source (legacy)' },
   { id: 'section', label: 'Knowledge cluster (legacy)' },
   { id: 'task', label: 'Research task' },
   { id: 'research_result', label: 'Research result' },
@@ -23,7 +24,7 @@ const types: Array<{ id: CanvasNodeType; label: string }> = [
 ];
 
 export function NodeInspector({
-  node, relationshipCount, onUpdate, onDelete, onClose, floating = false, hideHeader = false
+  node, relationshipCount, onUpdate, onDelete, onClose, floating = false, hideHeader = false, projectId
 }: {
   node: CanvasNode;
   relationshipCount: number;
@@ -32,6 +33,7 @@ export function NodeInspector({
   onClose: () => void;
   floating?: boolean;
   hideHeader?: boolean;
+  projectId?: string;
 }) {
   const isClaim = node.type === 'claim';
   let safeUrl: string | undefined;
@@ -95,11 +97,11 @@ export function NodeInspector({
       {node.type === 'note' ? <MarkdownEditor className="inspector-markdown-editor" ariaLabel="Note content in Markdown" value={node.content || ''} onChange={content => onUpdate({ content })} /> : <textarea id="node-content" className="field-input field-textarea" maxLength={50000} placeholder="Add a description, evidence, or a working thought…" value={node.content || ''} onChange={event => onUpdate({ content: event.target.value })} />}
 
       {node.type === 'image' && (
-        <ImageInspectorSection node={node} onUpdate={onUpdate} />
+        <ImageInspectorSection node={node} onUpdate={onUpdate} projectId={projectId} />
       )}
 
       {(node.type === 'source' || node.type === 'link') && (
-        <SourceInspectorSection node={node} safeUrl={safeUrl} onUpdate={onUpdate} />
+        <SourceInspectorSection node={node} safeUrl={safeUrl} onUpdate={onUpdate} projectId={projectId} />
       )}
 
       {isClaim && <>
@@ -121,38 +123,42 @@ export function NodeInspector({
         {typeof node.metadata?.confidence === 'number' && <div><span>AI confidence</span><strong>{Math.round(node.metadata.confidence * 100)}%</strong></div>}
       </div>
       {node.metadata?.rationale && <p className="inspector-rationale">{node.metadata.rationale}</p>}
-      <button className="danger-button" onClick={onDelete}><Trash2 size={15} /> Delete record</button>
+      <button className="danger-button" title="Delete record (Delete / Backspace)" onClick={onDelete}><Trash2 size={15} /> Delete record</button>
     </aside>
   );
 }
 
 function ImageInspectorSection({
   node,
-  onUpdate
+  onUpdate,
+  projectId
 }: {
   node: CanvasNode;
   onUpdate: (fields: Partial<CanvasNode>) => void;
+  projectId?: string;
 }) {
   const [showViewer, setShowViewer] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const rawImage = node.fileData || node.imageUrl;
   const currentImage = (rawImage && !rawImage.includes('Changes icon') && !rawImage.includes('stays white')) ? rawImage : undefined;
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const dataUrl = event.target?.result as string;
+    setUploading(true);
+    try {
+      const uploaded = await uploadFile(file, projectId);
       onUpdate({
-        imageUrl: dataUrl,
-        fileData: dataUrl,
-        fileName: file.name,
-        fileSize: file.size,
-        fileType: file.type,
+        imageUrl: uploaded.url,
+        fileData: uploaded.url,
+        fileName: uploaded.fileName,
+        fileSize: uploaded.fileSize,
+        fileType: uploaded.fileType,
         ...(node.title === 'Media & figure' || node.title === 'New media & figure' ? { title: file.name.replace(/\.[^/.]+$/, '') } : {})
       });
-    };
-    reader.readAsDataURL(file);
+    } finally {
+      setUploading(false);
+    }
   };
 
   return (
@@ -195,10 +201,10 @@ function ImageInspectorSection({
         </div>
       ) : (
         <div className="inspector-media-dropzone">
-          <label className="inspector-upload-button">
-            <Upload size={14} />
-            <span>Upload image file</span>
-            <input type="file" accept="image/*" className="sr-only" onChange={handleFileUpload} />
+          <label className="inspector-upload-button" style={uploading ? { opacity: 0.7, pointerEvents: 'none' } : undefined}>
+            {uploading ? <LoaderCircle size={14} className="spin" /> : <Upload size={14} />}
+            <span>{uploading ? 'Uploading image…' : 'Upload image file'}</span>
+            <input type="file" accept="image/*" className="sr-only" onChange={handleFileUpload} disabled={uploading} />
           </label>
           <span className="inspector-or-divider">or paste URL</span>
           <input
@@ -236,13 +242,16 @@ function ImageInspectorSection({
 function SourceInspectorSection({
   node,
   safeUrl,
-  onUpdate
+  onUpdate,
+  projectId
 }: {
   node: CanvasNode;
   safeUrl?: string;
   onUpdate: (fields: Partial<CanvasNode>) => void;
+  projectId?: string;
 }) {
   const [fetching, setFetching] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [showFileModal, setShowFileModal] = useState(false);
 
@@ -252,12 +261,12 @@ function SourceInspectorSection({
   const previewImage = node.imageUrl || (node.metadata?.image as string) || (node.metadata?.ogImage as string);
   const hasAttachedDoc = Boolean(node.fileData || node.fileName);
 
-  const handleFetchMetadata = async () => {
-    if (!node.url || !node.url.trim()) return;
+  const handleFetchMetadataForUrl = async (urlToFetch: string) => {
+    if (!urlToFetch || !urlToFetch.trim() || !urlToFetch.trim().startsWith('http')) return;
     setFetching(true);
     setErrorMsg(null);
     try {
-      const response = await fetch(`/api/metadata?url=${encodeURIComponent(node.url.trim())}`);
+      const response = await fetch(`/api/metadata?url=${encodeURIComponent(urlToFetch.trim())}`);
       const data = await response.json();
       if (!response.ok || data.error) {
         setErrorMsg(data.error || 'Failed to extract metadata');
@@ -270,14 +279,15 @@ function SourceInspectorSection({
           ...node.metadata,
           siteName: data.siteName || node.metadata?.siteName,
           logo: data.logo || node.metadata?.logo,
-          image: data.image || node.metadata?.image
+          image: data.image || node.metadata?.image,
+          ...(data.author ? { author: data.author } : {})
         }
       };
 
       if (data.image) {
         updates.imageUrl = data.image;
       }
-      if ((!node.title || node.title === 'New source' || node.title.startsWith('http')) && data.title) {
+      if ((!node.title || node.title === 'New source' || node.title === 'New link' || node.title.startsWith('http')) && data.title) {
         updates.title = data.title;
       }
       if (!node.description && data.description) {
@@ -295,40 +305,57 @@ function SourceInspectorSection({
     }
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFetchMetadata = () => {
+    if (node.url) handleFetchMetadataForUrl(node.url);
+  };
+
+  const handleUrlChange = (newUrl: string) => {
+    const trimmed = newUrl.trim();
+    const ytId = extractYouTubeVideoId(trimmed);
+    if (ytId) {
+      onUpdate({
+        url: newUrl,
+        imageUrl: `https://img.youtube.com/vi/${ytId}/hqdefault.jpg`,
+        domain: 'youtube.com',
+        metadata: {
+          ...node.metadata,
+          siteName: 'YouTube',
+          image: `https://img.youtube.com/vi/${ytId}/hqdefault.jpg`
+        }
+      });
+      handleFetchMetadataForUrl(trimmed);
+    } else {
+      onUpdate({ url: newUrl });
+    }
+  };
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const ext = file.name.split('.').pop()?.toLowerCase() || 'file';
-    const isText = ['json', 'txt', 'csv', 'tsv', 'md', 'js', 'ts', 'jsx', 'tsx', 'py', 'html', 'css', 'sql', 'sh', 'yaml', 'yml'].includes(ext) || file.type.startsWith('text/') || file.type.includes('json');
+    setUploading(true);
+    try {
+      const ext = file.name.split('.').pop()?.toLowerCase() || 'file';
+      const isText = ['json', 'txt', 'csv', 'tsv', 'md', 'js', 'ts', 'jsx', 'tsx', 'py', 'html', 'css', 'sql', 'sh', 'yaml', 'yml'].includes(ext) || file.type.startsWith('text/') || file.type.includes('json');
 
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const dataUrl = event.target?.result as string;
+      let textContent = '';
       if (isText) {
-        const textReader = new FileReader();
-        textReader.onload = (textEv) => {
-          const textContent = textEv.target?.result as string;
-          onUpdate({
-            fileData: dataUrl,
-            fileName: file.name,
-            fileSize: file.size,
-            fileType: ext,
-            ...(node.content ? {} : { content: textContent.length > 50000 ? textContent.slice(0, 50000) : textContent }),
-            ...(node.title === 'New source' || !node.title ? { title: file.name.replace(/\.[^/.]+$/, '') } : {})
-          });
-        };
-        textReader.readAsText(file);
-      } else {
-        onUpdate({
-          fileData: dataUrl,
-          fileName: file.name,
-          fileSize: file.size,
-          fileType: ext,
-          ...(node.title === 'New source' || !node.title ? { title: file.name.replace(/\.[^/.]+$/, '') } : {})
-        });
+        try {
+          textContent = await file.text();
+        } catch { /* Ignore text parse error */ }
       }
-    };
-    reader.readAsDataURL(file);
+
+      const uploaded = await uploadFile(file, projectId);
+      onUpdate({
+        fileData: uploaded.url,
+        fileName: uploaded.fileName,
+        fileSize: uploaded.fileSize,
+        fileType: ext,
+        ...(node.content ? {} : textContent ? { content: textContent.length > 50000 ? textContent.slice(0, 50000) : textContent } : {}),
+        ...(node.title === 'New source' || !node.title ? { title: file.name.replace(/\.[^/.]+$/, '') } : {})
+      });
+    } finally {
+      setUploading(false);
+    }
   };
 
   return (
@@ -341,8 +368,21 @@ function SourceInspectorSection({
           type="url"
           maxLength={4096}
           value={node.url || ''}
-          placeholder="https://..."
-          onChange={event => onUpdate({ url: event.target.value })}
+          placeholder="https://... video or website URL"
+          onChange={event => handleUrlChange(event.target.value)}
+          onPaste={event => {
+            const pasted = event.clipboardData.getData('text')?.trim();
+            if (pasted && (pasted.startsWith('http://') || pasted.startsWith('https://'))) {
+              setTimeout(() => {
+                handleFetchMetadataForUrl(pasted);
+              }, 40);
+            }
+          }}
+          onBlur={() => {
+            if (node.url?.trim().startsWith('http') && (!node.imageUrl || !node.title || node.title === 'New source' || node.title === 'New link')) {
+              handleFetchMetadataForUrl(node.url.trim());
+            }
+          }}
         />
         {safeUrl && (
           <a
@@ -405,14 +445,15 @@ function SourceInspectorSection({
             </div>
           </div>
         ) : (
-          <label className="inspector-upload-doc-btn">
-            <Paperclip size={13} />
-            <span>Attach File (PDF, TXT, JSON, CSV, MD...)</span>
+          <label className="inspector-upload-doc-btn" style={uploading ? { opacity: 0.7, pointerEvents: 'none' } : undefined}>
+            {uploading ? <LoaderCircle size={13} className="spin" /> : <Paperclip size={13} />}
+            <span>{uploading ? 'Uploading file…' : 'Attach File (PDF, TXT, JSON, CSV, MD...)'}</span>
             <input
               type="file"
               accept=".pdf,.txt,.json,.csv,.tsv,.md,.js,.ts,.py,.html,.css,.yaml,.yml,application/pdf,application/json,text/*"
               className="sr-only"
               onChange={handleFileUpload}
+              disabled={uploading}
             />
           </label>
         )}
@@ -457,7 +498,9 @@ function SourceInspectorSection({
               <WebsiteImage
                 imageUrl={previewImage}
                 alt={node.title}
-                maxHeight={110}
+                maxHeight={115}
+                isYouTube={Boolean(extractYouTubeVideoId(node.url))}
+                linkUrl={safeUrl}
               />
               <button
                 type="button"

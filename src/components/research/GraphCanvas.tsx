@@ -1,27 +1,39 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
-import { BookOpen, Check, ChevronDown, CircleHelp, Download, ExternalLink, FileText, Images, Layers2, Lightbulb, Link2, Maximize2, Paperclip, Pencil, Quote, Sparkles, X } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { BookOpen, Check, ChevronDown, CircleHelp, ExternalLink, FileText, Images, Layers2, Lightbulb, Link2, Maximize2, Pencil, Quote, Sparkles, Trash2 } from 'lucide-react';
 import type { CanvasNode, Connection, Coordinates, SectionResizeHandle, CanvasNodeType } from '@/types/canvas';
 import { hexToRgba, formatFileSize } from '@/types/canvas';
 import type { KnowledgeGraph } from '@/lib/graph';
 import { MarkdownEditor } from './MarkdownEditor';
 import { MarkdownView } from './MarkdownView';
 import { RelationshipControls } from './RelationshipControls';
-import { WebsiteLogo, WebsiteImage, getWebsiteDomain } from '@/components/canvas/SourceMetadata';
+import { WebsiteLogo, WebsiteImage, getWebsiteDomain, getLinkThumbnail, extractYouTubeVideoId } from './SourceMetadata';
 import { AttachedFileBadge, FileViewerModal, ImageViewerModal, getFileCategory } from './FileAndMediaModal';
+import { uploadFile } from '@/lib/upload';
 
 type Viewport = { zoom: number; pan: Coordinates };
 type Gesture =
   | { kind: 'pan'; start: Coordinates; origin: Coordinates }
   | { kind: 'pinch'; startDistance: number; startZoom: number; anchor: Coordinates }
   | { kind: 'drag'; start: Coordinates; origins: Record<string, Coordinates> }
-  | { kind: 'resize'; start: Coordinates; node: CanvasNode; handle: SectionResizeHandle };
+  | { kind: 'resize'; start: Coordinates; node: CanvasNode; handle: SectionResizeHandle }
+  | { kind: 'marquee'; startClient: Coordinates; currentClient: Coordinates; additive: boolean };
 
 const nodeLabel: Record<string, string> = {
   note: 'Note & Idea', claim: 'Claim & Inquiry', source: 'Document & Source', image: 'Media & Figure', group: 'Knowledge cluster',
-  concept: 'Concept', hypothesis: 'Hypothesis', question: 'Question', link: 'Source', section: 'Knowledge cluster',
+  concept: 'Concept', hypothesis: 'Hypothesis', question: 'Question', link: 'Link & Website', section: 'Knowledge cluster',
   research_result: 'Research result', task: 'Research task', ai_insight: 'AI insight'
+};
+
+const RELATION_PALETTE: Record<string, string> = {
+  neutral: '#284b63',
+  indigo: '#284b63',
+  emerald: '#3c6e71',
+  rose: '#353535',
+  amber: '#353535',
+  sky: '#3c6e71',
+  purple: '#284b63'
 };
 
 function safeExternalHref(value?: string) {
@@ -120,9 +132,11 @@ export function estimateNodeHeight(node: CanvasNode): number {
   h += titleLines * 22;
 
   const isSource = node.type === 'source' || node.type === 'link';
-  const previewImage = node.imageUrl || (node.metadata?.image as string) || (node.metadata?.ogImage as string);
-  if (isSource && previewImage) {
-    h += 127;
+  const { thumbnailUrl } = getLinkThumbnail(node);
+  if (isSource && thumbnailUrl) {
+    h += 138;
+  } else if (isSource && !node.fileData && (node.url || node.domain)) {
+    h += 48;
   }
   if (isSource && node.fileData) {
     h += 46;
@@ -397,7 +411,8 @@ function KnowledgeCard({
   const effectiveDomain = getWebsiteDomain(node.url, node.domain);
   const websiteLogo = (node.metadata?.logo as string) || (node.metadata?.favicon as string);
   const siteName = (node.metadata?.siteName as string);
-  const rawImage = isImage ? (node.fileData || node.imageUrl) : (node.imageUrl || (node.metadata?.image as string) || (node.metadata?.ogImage as string));
+  const linkThumb = getLinkThumbnail(node);
+  const rawImage = isImage ? (node.fileData || node.imageUrl) : (linkThumb.thumbnailUrl || node.imageUrl || (node.metadata?.image as string) || (node.metadata?.ogImage as string));
   const previewImage = (rawImage && !rawImage.includes('Changes icon') && !rawImage.includes('stays white')) ? rawImage : undefined;
   const caption = (node.caption && !node.caption.includes('Changes icon') && !node.caption.includes('stays white')) ? node.caption : undefined;
   const author = (node.metadata?.author as string);
@@ -412,8 +427,8 @@ function KnowledgeCard({
         width: node.width || (isImage ? 320 : 280),
         backgroundColor: '#ffffff',
         ...(customColor ? {
-          ['--node-custom-color' as any]: customColor,
-          ['--node-custom-ring' as any]: hexToRgba(customColor, 0.28),
+          ['--node-custom-color' as `--${string}`]: customColor,
+          ['--node-custom-ring' as `--${string}`]: hexToRgba(customColor, 0.28),
           borderColor: customColor,
           borderWidth: '1.5px',
           borderStyle: 'solid'
@@ -427,15 +442,17 @@ function KnowledgeCard({
     >
       <div className="knowledge-card-topline">
         <span
-          className="node-glyph"
-          style={customColor ? (
+          className={`node-glyph ${isSource && !hasFile && (safeUrl || effectiveDomain) ? 'has-favicon' : ''}`}
+          style={isSource && !hasFile && (safeUrl || effectiveDomain) ? (
+            { backgroundColor: 'transparent', borderColor: 'transparent', borderWidth: 0 }
+          ) : customColor ? (
             node.type === 'image'
               ? { backgroundColor: 'transparent', borderColor: customColor, color: customColor }
               : { backgroundColor: customColor, borderColor: customColor, color: '#ffffff' }
           ) : undefined}
         >
           {isSource && !hasFile && (safeUrl || effectiveDomain) ? (
-            <WebsiteLogo url={safeUrl} domain={effectiveDomain} logo={websiteLogo} size={14} />
+            <WebsiteLogo url={safeUrl} domain={effectiveDomain} logo={websiteLogo} size={16} />
           ) : (
             <NodeGlyph type={node.type} fileName={node.fileName} fileType={node.fileType} />
           )}
@@ -497,9 +514,43 @@ function KnowledgeCard({
         </div>
       )}
 
-      {/* Website preview image if available */}
-      {isSource && !hasFile && previewImage && (
-        <WebsiteImage imageUrl={previewImage} alt={node.title} maxHeight={115} className="my-1.5" />
+      {/* Messenger-style Link Preview: Thumbnail banner (with YouTube play badge) OR clean favicon preview */}
+      {isSource && !hasFile && (safeUrl || effectiveDomain) && (
+        linkThumb.thumbnailUrl ? (
+          <WebsiteImage
+            imageUrl={linkThumb.thumbnailUrl}
+            alt={node.title}
+            maxHeight={135}
+            isYouTube={linkThumb.isYouTube}
+            linkUrl={safeUrl}
+            className="my-1.5"
+          />
+        ) : (
+          <div
+            className="link-no-thumb-preview"
+            onClick={(e) => {
+              if (safeUrl) {
+                e.stopPropagation();
+                window.open(safeUrl, '_blank', 'noopener,noreferrer');
+              }
+            }}
+            onPointerDown={(e) => {
+              if (safeUrl) e.stopPropagation();
+            }}
+            title={safeUrl ? `Open ${safeUrl}` : undefined}
+          >
+            <div className="link-no-thumb-favicon">
+              <WebsiteLogo url={safeUrl} domain={effectiveDomain} logo={websiteLogo} size={22} />
+            </div>
+            <div className="link-no-thumb-info">
+              <span className="link-no-thumb-domain">{effectiveDomain || 'web link'}</span>
+              {(node.description || node.content) && (
+                <span className="link-no-thumb-desc">{node.description || node.content}</span>
+              )}
+            </div>
+            {safeUrl && <ExternalLink size={12} className="source-link-icon flex-shrink-0 text-slate-400" />}
+          </div>
+        )
       )}
 
       {/* File Attachment Badge for PDF, TXT, JSON, CSV, MD, Code */}
@@ -532,8 +583,8 @@ function KnowledgeCard({
         <p className="node-summary">{body}</p>
       ) : null}
 
-      {/* Website metadata: logo, domain, author and external link */}
-      {isSource && (safeUrl || effectiveDomain) && !hasFile && (
+      {/* Website metadata: logo, domain, author and external link (shown below thumbnail) */}
+      {isSource && (safeUrl || effectiveDomain) && !hasFile && linkThumb.thumbnailUrl && (
         <div className="source-meta-row">
           <a
             className="source-domain"
@@ -558,9 +609,9 @@ function KnowledgeCard({
 
 export function GraphCanvas({
   graph, selectedNodeIds, viewport, setViewport, activeTool, spacePressed, linkingFromId,
-  autoFitKey, editingNoteId, onSelectNode, onClearSelection, onClickAway, onCancelLinking, onMoveNodes, onConnect,
+  autoFitKey, editingNoteId, onSelectNode, onSelectMultipleNodes, onClearSelection, onClickAway, onCancelLinking, onMoveNodes, onConnect,
   onStartLinking, onToggleGroup, onEditNote, onUpdateNote, onUpdateRelationship, onDeleteRelationship, onResizeGroup, onOpenGroup,
-  onAddRecordWithData
+  onAddRecordWithData, onDeleteNodes, projectId
 }: {
   graph: KnowledgeGraph;
   selectedNodeIds: string[];
@@ -572,6 +623,7 @@ export function GraphCanvas({
   autoFitKey: number;
   editingNoteId: string | null;
   onSelectNode: (id: string, additive: boolean) => void;
+  onSelectMultipleNodes?: (ids: string[], additive?: boolean) => void;
   onClearSelection: () => void;
   onClickAway: () => void;
   onCancelLinking: () => void;
@@ -586,6 +638,8 @@ export function GraphCanvas({
   onResizeGroup: (id: string, fields: Partial<CanvasNode>) => void;
   onOpenGroup: (id: string) => void;
   onAddRecordWithData?: (type: CanvasNodeType, initialData?: Partial<CanvasNode>) => void;
+  onDeleteNodes?: (ids: string[]) => void;
+  projectId?: string;
 }) {
   const canvasRef = useRef<HTMLDivElement>(null);
   const gesture = useRef<Gesture | null>(null);
@@ -596,89 +650,114 @@ export function GraphCanvas({
   const [nodeHeights, setNodeHeights] = useState<Record<string, number>>({});
   const [draggedNodeIds, setDraggedNodeIds] = useState<string[]>([]);
   const [dragTilt, setDragTilt] = useState<number>(0);
+  const [marqueeBox, setMarqueeBox] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
+  const [isOverTrash, setIsOverTrash] = useState(false);
+  const trashRef = useRef<HTMLDivElement>(null);
   const [activeImage, setActiveImage] = useState<{ src: string; title?: string; caption?: string } | null>(null);
   const [activeFile, setActiveFile] = useState<{ fileData?: string; fileName?: string; fileSize?: number; fileType?: string; content?: string } | null>(null);
   const lastClientX = useRef<number | null>(null);
   const rafMoveRef = useRef<number | null>(null);
   const pendingMoveEvent = useRef<{ clientX: number; clientY: number } | null>(null);
-  const nodes = Object.values(graph.nodesById);
-  const groups = nodes.filter(node => node.type === 'group' || node.type === 'section');
-  const visibleIds = new Set(nodes.filter(node => {
+  const nodes = useMemo(() => Object.values(graph.nodesById), [graph]);
+  const groups = useMemo(() => nodes.filter(node => node.type === 'group' || node.type === 'section'), [nodes]);
+  const visibleIds = useMemo(() => new Set(nodes.filter(node => {
     if (node.type === 'group' || node.type === 'section') return true;
     return !groups.some(group => group.metadata?.collapsed === true && membersOf(group, nodes).some(member => member.id === node.id));
-  }).map(node => node.id));
+  }).map(node => node.id)), [nodes, groups]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || !onAddRecordWithData) return;
 
     const handleDragOver = (e: DragEvent) => {
-      if (e.dataTransfer?.types.includes('Files')) {
+      if (
+        e.dataTransfer?.types.includes('Files') ||
+        e.dataTransfer?.types.includes('text/uri-list') ||
+        e.dataTransfer?.types.includes('text/plain')
+      ) {
         e.preventDefault();
         e.dataTransfer.dropEffect = 'copy';
       }
     };
 
     const handleDrop = (e: DragEvent) => {
-      if (!e.dataTransfer?.files?.length) return;
-      e.preventDefault();
-      const file = e.dataTransfer.files[0];
+      const uri = e.dataTransfer?.getData('text/uri-list') || e.dataTransfer?.getData('text/plain');
       const rect = canvas.getBoundingClientRect();
       const worldX = (e.clientX - rect.left - viewport.pan.x) / viewport.zoom;
       const worldY = (e.clientY - rect.top - viewport.pan.y) / viewport.zoom;
 
+      if (uri && (uri.trim().startsWith('http://') || uri.trim().startsWith('https://'))) {
+        e.preventDefault();
+        const cleanUrl = uri.trim();
+        const ytId = extractYouTubeVideoId(cleanUrl);
+        onAddRecordWithData('source', {
+          x: Math.round(worldX - 140),
+          y: Math.round(worldY - 80),
+          title: ytId ? 'YouTube video' : 'Web link',
+          url: cleanUrl,
+          imageUrl: ytId ? `https://img.youtube.com/vi/${ytId}/hqdefault.jpg` : undefined,
+          domain: ytId ? 'youtube.com' : undefined,
+          metadata: {
+            origin: 'user',
+            siteName: ytId ? 'YouTube' : undefined,
+            image: ytId ? `https://img.youtube.com/vi/${ytId}/hqdefault.jpg` : undefined
+          }
+        });
+        return;
+      }
+
+      if (!e.dataTransfer?.files?.length) return;
+      e.preventDefault();
+      const file = e.dataTransfer.files[0];
+
       if (file.type.startsWith('image/')) {
-        const reader = new FileReader();
-        reader.onload = (ev) => {
-          const dataUrl = ev.target?.result as string;
+        uploadFile(file, projectId).then(uploaded => {
           onAddRecordWithData('image', {
             x: Math.round(worldX - 160),
             y: Math.round(worldY - 100),
             title: file.name.replace(/\.[^/.]+$/, ''),
-            imageUrl: dataUrl,
-            fileData: dataUrl,
-            fileName: file.name,
-            fileSize: file.size,
-            fileType: file.type
+            imageUrl: uploaded.url,
+            fileData: uploaded.url,
+            fileName: uploaded.fileName,
+            fileSize: uploaded.fileSize,
+            fileType: uploaded.fileType
           });
-        };
-        reader.readAsDataURL(file);
+        });
       } else {
         const ext = file.name.split('.').pop()?.toLowerCase() || 'file';
         const isText = ['json', 'txt', 'csv', 'tsv', 'md', 'js', 'ts', 'jsx', 'tsx', 'py', 'html', 'css', 'sql', 'sh', 'yaml', 'yml'].includes(ext) || file.type.startsWith('text/') || file.type.includes('json');
 
-        const readerDataUrl = new FileReader();
-        readerDataUrl.onload = (ev) => {
-          const dataUrl = ev.target?.result as string;
-          if (isText) {
-            const textReader = new FileReader();
-            textReader.onload = (textEv) => {
-              const textContent = textEv.target?.result as string;
+        if (isText) {
+          const textReader = new FileReader();
+          textReader.onload = (textEv) => {
+            const textContent = textEv.target?.result as string;
+            uploadFile(file, projectId).then(uploaded => {
               onAddRecordWithData('source', {
                 x: Math.round(worldX - 140),
                 y: Math.round(worldY - 80),
                 title: file.name.replace(/\.[^/.]+$/, ''),
                 content: textContent.length > 50000 ? textContent.slice(0, 50000) : textContent,
-                fileData: dataUrl,
-                fileName: file.name,
-                fileSize: file.size,
+                fileData: uploaded.url,
+                fileName: uploaded.fileName,
+                fileSize: uploaded.fileSize,
                 fileType: ext
               });
-            };
-            textReader.readAsText(file);
-          } else {
+            });
+          };
+          textReader.readAsText(file);
+        } else {
+          uploadFile(file, projectId).then(uploaded => {
             onAddRecordWithData('source', {
               x: Math.round(worldX - 140),
               y: Math.round(worldY - 80),
               title: file.name.replace(/\.[^/.]+$/, ''),
-              fileData: dataUrl,
-              fileName: file.name,
-              fileSize: file.size,
+              fileData: uploaded.url,
+              fileName: uploaded.fileName,
+              fileSize: uploaded.fileSize,
               fileType: ext
             });
-          }
-        };
-        readerDataUrl.readAsDataURL(file);
+          });
+        }
       }
     };
 
@@ -696,20 +775,20 @@ export function GraphCanvas({
           const blob = item.getAsFile();
           if (blob) {
             e.preventDefault();
-            const reader = new FileReader();
-            reader.onload = (ev) => {
-              const dataUrl = ev.target?.result as string;
-              const cx = (window.innerWidth / 2 - viewport.pan.x) / viewport.zoom;
-              const cy = (window.innerHeight / 2 - viewport.pan.y) / viewport.zoom;
+            const cx = (window.innerWidth / 2 - viewport.pan.x) / viewport.zoom;
+            const cy = (window.innerHeight / 2 - viewport.pan.y) / viewport.zoom;
+            uploadFile(blob, projectId, 'pasted-figure.png').then(uploaded => {
               onAddRecordWithData('image', {
                 x: Math.round(cx - 160),
                 y: Math.round(cy - 100),
                 title: 'Pasted figure',
-                imageUrl: dataUrl,
-                fileData: dataUrl
+                imageUrl: uploaded.url,
+                fileData: uploaded.url,
+                fileName: uploaded.fileName,
+                fileSize: uploaded.fileSize,
+                fileType: uploaded.fileType
               });
-            };
-            reader.readAsDataURL(blob);
+            });
             return;
           }
         }
@@ -724,7 +803,7 @@ export function GraphCanvas({
       canvas.removeEventListener('drop', handleDrop);
       window.removeEventListener('paste', handlePaste);
     };
-  }, [onAddRecordWithData, viewport]);
+  }, [onAddRecordWithData, viewport, projectId]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -805,6 +884,46 @@ export function GraphCanvas({
           ...value,
           pan: { x: current.origin.x + event.clientX - current.start.x, y: current.origin.y + event.clientY - current.start.y }
         }));
+      } else if (current.kind === 'marquee') {
+        current.currentClient = { x: event.clientX, y: event.clientY };
+        setMarqueeBox({
+          x1: current.startClient.x,
+          y1: current.startClient.y,
+          x2: event.clientX,
+          y2: event.clientY
+        });
+
+        const rect = canvasRef.current?.getBoundingClientRect();
+        if (rect) {
+          const worldX1 = (current.startClient.x - rect.left - viewport.pan.x) / viewport.zoom;
+          const worldY1 = (current.startClient.y - rect.top - viewport.pan.y) / viewport.zoom;
+          const worldX2 = (event.clientX - rect.left - viewport.pan.x) / viewport.zoom;
+          const worldY2 = (event.clientY - rect.top - viewport.pan.y) / viewport.zoom;
+          const minX = Math.min(worldX1, worldX2);
+          const maxX = Math.max(worldX1, worldX2);
+          const minY = Math.min(worldY1, worldY2);
+          const maxY = Math.max(worldY1, worldY2);
+
+          const intersectingIds = nodes.filter(node => {
+            if (!visibleIds.has(node.id)) return false;
+            const b = node.type === 'group' || node.type === 'section'
+              ? groupBounds(node, membersOf(node, nodes))
+              : {
+                  x: node.x,
+                  y: node.y,
+                  width: node.width || 280,
+                  height: nodeHeights[node.id] || estimateNodeHeight(node)
+                };
+            return !(
+              b.x > maxX ||
+              b.x + b.width < minX ||
+              b.y > maxY ||
+              b.y + b.height < minY
+            );
+          }).map(n => n.id);
+
+          onSelectMultipleNodes?.(intersectingIds, current.additive);
+        }
       } else if (current.kind === 'pinch') {
         activePointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
         const points = [...activePointers.current.values()];
@@ -849,6 +968,17 @@ export function GraphCanvas({
             }
             lastClientX.current = ev.clientX;
 
+            if (trashRef.current) {
+              const tRect = trashRef.current.getBoundingClientRect();
+              const isOver = (
+                ev.clientX >= tRect.left - 28 &&
+                ev.clientX <= tRect.right + 28 &&
+                ev.clientY >= tRect.top - 28 &&
+                ev.clientY <= tRect.bottom + 28
+              );
+              setIsOverTrash(isOver);
+            }
+
             onMoveNodes(
               Object.fromEntries(
                 Object.entries(cur.origins).map(([id, point]) => [id, { x: point.x + dx, y: point.y + dy }])
@@ -866,9 +996,27 @@ export function GraphCanvas({
       }
       pendingMoveEvent.current = null;
       lastClientX.current = null;
-      if (gesture.current?.kind === 'drag') {
+
+      if (gesture.current?.kind === 'marquee') {
+        const cur = gesture.current;
+        const dist = Math.hypot(event.clientX - cur.startClient.x, event.clientY - cur.startClient.y);
+        if (dist < 5) {
+          onClearSelection();
+          onClickAway();
+        }
+        setMarqueeBox(null);
+      } else if (gesture.current?.kind === 'drag') {
+        const isTrashDrop = isOverTrash;
+        const nodesToDelete = [...draggedNodeIds];
         setDraggedNodeIds([]);
         setDragTilt(0);
+        setIsOverTrash(false);
+
+        if (isTrashDrop && nodesToDelete.length > 0) {
+          onDeleteNodes?.(nodesToDelete);
+          gesture.current = null;
+          return;
+        }
       }
       gesture.current = null;
     };
@@ -881,6 +1029,8 @@ export function GraphCanvas({
       lastClientX.current = null;
       setDraggedNodeIds([]);
       setDragTilt(0);
+      setIsOverTrash(false);
+      setMarqueeBox(null);
       gesture.current = null;
     };
     window.addEventListener('pointermove', move);
@@ -895,7 +1045,7 @@ export function GraphCanvas({
       window.removeEventListener('pointerup', up);
       window.removeEventListener('pointercancel', cancel);
     };
-  }, [onMoveNodes, onResizeGroup, setViewport, viewport.zoom]);
+  }, [onMoveNodes, onResizeGroup, onSelectMultipleNodes, onDeleteNodes, setViewport, viewport.zoom, viewport.pan, nodes, visibleIds, nodeHeights, isOverTrash, draggedNodeIds, onClearSelection, onClickAway]);
 
   const trackTouchPointer = (event: React.PointerEvent<HTMLDivElement>) => {
     if (event.pointerType !== 'touch') return;
@@ -916,12 +1066,40 @@ export function GraphCanvas({
     event.currentTarget.setPointerCapture(event.pointerId);
   };
 
-  const startPan = (event: React.PointerEvent) => {
+  const startCanvasPointerDown = (event: React.PointerEvent) => {
     if (gesture.current?.kind === 'pinch') return;
-    if ((event.target as HTMLElement).closest('button, input, textarea, a, .markdown-editor, .relationship-controls')) return;
+    if ((event.target as HTMLElement).closest('button, input, textarea, a, .markdown-editor, .relationship-controls, .knowledge-card, .graph-group-position, .canvas-tool-dock')) return;
     if (event.button !== 0 && event.button !== 1) return;
-    gesture.current = { kind: 'pan', start: { x: event.clientX, y: event.clientY }, origin: viewport.pan };
-    if (event.button === 0) { onClearSelection(); onClickAway(); }
+
+    if (linkingFromId) {
+      onCancelLinking();
+      return;
+    }
+
+    if (spacePressed || activeTool === 'hand' || event.button === 1) {
+      gesture.current = { kind: 'pan', start: { x: event.clientX, y: event.clientY }, origin: viewport.pan };
+      return;
+    }
+
+    if (activeTool === 'select' && event.button === 0) {
+      const additive = event.ctrlKey || event.metaKey || event.shiftKey;
+      gesture.current = {
+        kind: 'marquee',
+        startClient: { x: event.clientX, y: event.clientY },
+        currentClient: { x: event.clientX, y: event.clientY },
+        additive
+      };
+      setMarqueeBox({
+        x1: event.clientX,
+        y1: event.clientY,
+        x2: event.clientX,
+        y2: event.clientY
+      });
+      if (!additive) {
+        onClearSelection();
+      }
+      onClickAway();
+    }
   };
 
   const startGroupResize = (event: React.PointerEvent, node: CanvasNode, handle: SectionResizeHandle) => {
@@ -936,7 +1114,7 @@ export function GraphCanvas({
       return;
     }
     if (spacePressed || activeTool === 'hand' || event.button === 1) {
-      startPan(event);
+      gesture.current = { kind: 'pan', start: { x: event.clientX, y: event.clientY }, origin: viewport.pan };
       return;
     }
     if (event.button !== 0) return;
@@ -944,8 +1122,8 @@ export function GraphCanvas({
     if (activeTool === 'connect' || linkingFromId) {
       event.preventDefault();
       event.stopPropagation();
-      if (linkingFromId && linkingFromId !== node.id) onConnect(linkingFromId, node.id);
-      else if (!linkingFromId) onStartLinking(node.id);
+      if (linkingFromId) onConnect(linkingFromId, node.id);
+      else onStartLinking(node.id);
       return;
     }
     const additive = event.ctrlKey || event.metaKey;
@@ -1034,13 +1212,20 @@ export function GraphCanvas({
     edges.push({ edge, ...calculated });
   }
 
+  const screenMarquee = marqueeBox ? {
+    left: Math.min(marqueeBox.x1, marqueeBox.x2),
+    top: Math.min(marqueeBox.y1, marqueeBox.y2),
+    width: Math.abs(marqueeBox.x2 - marqueeBox.x1),
+    height: Math.abs(marqueeBox.y2 - marqueeBox.y1)
+  } : null;
+
   return (
     <div
       className={`graph-canvas ${spacePressed || activeTool === 'hand' ? 'is-hand-tool' : ''} ${activeTool === 'connect' ? 'is-link-tool' : ''}`}
       ref={canvasRef}
       onPointerDownCapture={trackTouchPointer}
       onWheel={zoomAtPointer}
-      onPointerDown={startPan}
+      onPointerDown={startCanvasPointerDown}
       onPointerMove={event => {
         if (!linkingFromId) return;
         const rect = canvasRef.current?.getBoundingClientRect();
@@ -1053,20 +1238,53 @@ export function GraphCanvas({
       }}
     >
       <div className="canvas-rules" aria-hidden="true"><span>KNOWLEDGE PLANE</span><span>FOLD TO FOCUS</span></div>
+
+      {screenMarquee && screenMarquee.width > 2 && screenMarquee.height > 2 && (
+        <div
+          className="canvas-marquee-box"
+          style={{
+            left: screenMarquee.left,
+            top: screenMarquee.top,
+            width: screenMarquee.width,
+            height: screenMarquee.height
+          }}
+        />
+      )}
+
       <div className="graph-world" style={{ transform: `translate(${viewport.pan.x}px, ${viewport.pan.y}px) scale(${viewport.zoom})` }}>
         <svg className="relationship-layer" width="100000" height="100000">
           <defs>
-            {(['neutral', 'indigo', 'emerald', 'rose', 'amber', 'sky', 'purple'] as const).map((color, index) => <marker key={color} id={`relation-arrow-${color}`} markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto-start-reverse" markerUnits="strokeWidth"><path d="M0,0 L0,6 L7,3 z" fill={['#284b63', '#284b63', '#3c6e71', '#353535', '#353535', '#3c6e71', '#284b63'][index]} /></marker>)}
-            <marker id="relation-preview-arrow" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L0,6 L7,3 z" fill="#3c6e71" /></marker>
+            {(['neutral', 'indigo', 'emerald', 'rose', 'amber', 'sky', 'purple'] as const).map(color => (
+              <marker
+                key={color}
+                id={`relation-arrow-${color}`}
+                markerWidth="8"
+                markerHeight="8"
+                refX="5.5"
+                refY="3"
+                orient="auto-start-reverse"
+                markerUnits="strokeWidth"
+              >
+                <path d="M0,0 L0,6 L7,3 z" fill={RELATION_PALETTE[color] || '#284b63'} />
+              </marker>
+            ))}
+            <marker id="relation-preview-arrow" markerWidth="8" markerHeight="8" refX="5.5" refY="3" orient="auto">
+              <path d="M0,0 L0,6 L7,3 z" fill="#3c6e71" />
+            </marker>
           </defs>
           {edges.map(({ edge, path, mid }) => (
             <g key={edge.id} className="relationship-mark">
               <path className="relationship-hit" d={path} />
-              <path className={`relationship-stroke ${edge.animated && edge.strokePattern !== 'solid' ? 'relationship-animated' : ''}`} d={path}
-                stroke={(['neutral', 'indigo', 'emerald', 'rose', 'amber', 'sky', 'purple'] as string[]).includes(edge.color || 'neutral') ? ({ neutral: '#284b63', indigo: '#284b63', emerald: '#3c6e71', rose: '#353535', amber: '#353535', sky: '#3c6e71', purple: '#284b63' }[edge.color || 'neutral']) : '#284b63'}
-                strokeDasharray={edge.strokePattern === 'dotted' ? '2 5' : edge.strokePattern === 'dashed' ? '8 6' : undefined}
+              <path
+                className={`relationship-stroke ${edge.animated && edge.strokePattern !== 'solid' ? 'relationship-animated' : ''}`}
+                d={path}
+                stroke={RELATION_PALETTE[edge.color || 'neutral'] || '#284b63'}
+                strokeDasharray={edge.strokePattern === 'dotted' ? '0 8' : edge.strokePattern === 'dashed' ? '8 8' : undefined}
+                strokeLinecap="round"
+                strokeLinejoin="round"
                 markerEnd={edge.arrowhead === 'none' || edge.arrowhead === 'start' ? undefined : `url(#relation-arrow-${edge.color || 'neutral'})`}
-                markerStart={edge.arrowhead === 'both' || edge.arrowhead === 'start' ? `url(#relation-arrow-${edge.color || 'neutral'})` : undefined} />
+                markerStart={edge.arrowhead === 'both' || edge.arrowhead === 'start' ? `url(#relation-arrow-${edge.color || 'neutral'})` : undefined}
+              />
               <RelationshipControls connection={edge} x={mid.x} y={mid.y} onUpdate={fields => onUpdateRelationship(edge.id, fields)} onDelete={() => onDeleteRelationship(edge.id)} />
             </g>
           ))}
@@ -1080,7 +1298,7 @@ export function GraphCanvas({
             };
             const sx = fromBox.x + fromBox.width / 2;
             const sy = cursorWorld.y >= fromBox.y + fromBox.height / 2 ? fromBox.y + fromBox.height : fromBox.y;
-            return <path className="relationship-preview" d={`M ${sx} ${sy} Q ${(sx + cursorWorld.x) / 2} ${(sy + cursorWorld.y) / 2 - 24} ${cursorWorld.x} ${cursorWorld.y}`} markerEnd="url(#relation-preview-arrow)" />;
+            return <path className="relationship-preview" d={`M ${sx} ${sy} Q ${(sx + cursorWorld.x) / 2} ${(sy + cursorWorld.y) / 2 - 24} ${cursorWorld.x} ${cursorWorld.y}`} markerEnd="url(#relation-preview-arrow)" strokeLinecap="round" strokeLinejoin="round" />;
           })()}
         </svg>
         {groups.map(group => {
@@ -1135,6 +1353,40 @@ export function GraphCanvas({
       </div>
       {linkingFromId && <div className="canvas-instruction">Choose a node to create a relationship <button onClick={onCancelLinking}>Cancel</button></div>}
       {activeTool === 'connect' && !linkingFromId && <div className="canvas-instruction">Select two nodes to describe their relationship</div>}
+
+      {/* Interactive Floating Garbage / Trash Drop Zone */}
+      <div
+        ref={trashRef}
+        className={`canvas-trash-zone ${draggedNodeIds.length > 0 ? 'is-visible' : ''} ${isOverTrash ? 'is-active' : ''}`}
+        role="region"
+        aria-label="Delete drop zone"
+      >
+        <div className="trash-icon-wrap">
+          <Trash2 size={isOverTrash ? 20 : 17} />
+        </div>
+        <div className="trash-label-wrap">
+          <span className="trash-primary-label">
+            {isOverTrash
+              ? `Release to delete ${draggedNodeIds.length > 1 ? `${draggedNodeIds.length} records` : 'record'}`
+              : `Drop here to delete ${draggedNodeIds.length > 1 ? `(${draggedNodeIds.length})` : ''}`}
+          </span>
+          <span className="trash-sub-label">
+            {isOverTrash ? 'Action can be undone with Ctrl+Z' : 'Drag onto trash to remove'}
+          </span>
+        </div>
+      </div>
+
+      {screenMarquee && (
+        <div
+          className="canvas-marquee-box"
+          style={{
+            left: `${screenMarquee.left}px`,
+            top: `${screenMarquee.top}px`,
+            width: `${screenMarquee.width}px`,
+            height: `${screenMarquee.height}px`
+          }}
+        />
+      )}
 
       {activeImage && (
         <ImageViewerModal

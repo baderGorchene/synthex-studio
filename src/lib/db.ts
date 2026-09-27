@@ -34,6 +34,12 @@ interface DbNodeRow {
   url: string | null;
   domain: string | null;
   description: string | null;
+  sectionId?: string | null;
+  fileData?: string | null;
+  fileName?: string | null;
+  fileSize?: number | null;
+  fileType?: string | null;
+  pageCount?: number | null;
   metadata: string | null;
   createdAt: number;
 }
@@ -59,7 +65,13 @@ declare global {
 function ensureSchemaColumns(db: Database.Database) {
   const nodeColumns = [
     { name: 'metadata', type: 'TEXT' },
-    { name: 'projectId', type: "TEXT NOT NULL DEFAULT 'default'" }
+    { name: 'projectId', type: "TEXT NOT NULL DEFAULT 'default'" },
+    { name: 'sectionId', type: 'TEXT' },
+    { name: 'fileData', type: 'TEXT' },
+    { name: 'fileName', type: 'TEXT' },
+    { name: 'fileSize', type: 'INTEGER' },
+    { name: 'fileType', type: 'TEXT' },
+    { name: 'pageCount', type: 'INTEGER' }
   ];
   for (const col of nodeColumns) {
     try {
@@ -308,6 +320,12 @@ export function getAllNodesFromDb(projectId = 'default'): CanvasNode[] {
     url: row.url ?? undefined,
     domain: row.domain ?? undefined,
     description: row.description ?? undefined,
+    sectionId: row.sectionId ?? undefined,
+    fileData: row.fileData ?? undefined,
+    fileName: row.fileName ?? undefined,
+    fileSize: row.fileSize ?? undefined,
+    fileType: row.fileType ?? undefined,
+    pageCount: row.pageCount ?? undefined,
     metadata: row.metadata ? JSON.parse(row.metadata) : undefined,
     createdAt: row.createdAt
   }));
@@ -318,10 +336,10 @@ export function saveNodeToDb(node: CanvasNode, projectId = 'default'): void {
   const stmt = db.prepare(`
     INSERT INTO nodes (
       id, projectId, type, x, y, width, height, color, title, content, items,
-      imageUrl, caption, url, domain, description, metadata, createdAt
+      imageUrl, caption, url, domain, description, sectionId, fileData, fileName, fileSize, fileType, pageCount, metadata, createdAt
     ) VALUES (
       @id, @projectId, @type, @x, @y, @width, @height, @color, @title, @content, @items,
-      @imageUrl, @caption, @url, @domain, @description, @metadata, @createdAt
+      @imageUrl, @caption, @url, @domain, @description, @sectionId, @fileData, @fileName, @fileSize, @fileType, @pageCount, @metadata, @createdAt
     )
     ON CONFLICT(projectId, id) DO UPDATE SET
       type = excluded.type,
@@ -338,6 +356,12 @@ export function saveNodeToDb(node: CanvasNode, projectId = 'default'): void {
       url = excluded.url,
       domain = excluded.domain,
       description = excluded.description,
+      sectionId = excluded.sectionId,
+      fileData = excluded.fileData,
+      fileName = excluded.fileName,
+      fileSize = excluded.fileSize,
+      fileType = excluded.fileType,
+      pageCount = excluded.pageCount,
       metadata = excluded.metadata
   `);
 
@@ -358,6 +382,12 @@ export function saveNodeToDb(node: CanvasNode, projectId = 'default'): void {
     url: node.url ?? null,
     domain: node.domain ?? null,
     description: node.description ?? null,
+    sectionId: node.sectionId ?? null,
+    fileData: node.fileData ?? null,
+    fileName: node.fileName ?? null,
+    fileSize: node.fileSize ?? null,
+    fileType: node.fileType ?? null,
+    pageCount: node.pageCount ?? null,
     metadata: node.metadata ? JSON.stringify(node.metadata) : null,
     createdAt: node.createdAt
   });
@@ -406,6 +436,12 @@ export function updateNodeInDb(id: string, fields: Partial<CanvasNode>, projectI
     domain: fields.domain !== undefined ? fields.domain : (existing.domain ?? undefined),
     description:
       fields.description !== undefined ? fields.description : (existing.description ?? undefined),
+    sectionId: fields.sectionId !== undefined ? fields.sectionId : (existing.sectionId ?? undefined),
+    fileData: fields.fileData !== undefined ? fields.fileData : (existing.fileData ?? undefined),
+    fileName: fields.fileName !== undefined ? fields.fileName : (existing.fileName ?? undefined),
+    fileSize: fields.fileSize !== undefined ? fields.fileSize : (existing.fileSize ?? undefined),
+    fileType: fields.fileType !== undefined ? fields.fileType : (existing.fileType ?? undefined),
+    pageCount: fields.pageCount !== undefined ? fields.pageCount : (existing.pageCount ?? undefined),
     metadata: fields.metadata !== undefined ? fields.metadata : (existing.metadata ? JSON.parse(existing.metadata) : undefined),
     createdAt: existing.createdAt
   };
