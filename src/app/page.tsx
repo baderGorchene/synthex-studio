@@ -18,10 +18,18 @@ import { parseBibTeX, bibEntriesToCanvasNodes } from '@/lib/bibtex';
 import { generateStandaloneSvg, exportGraphToPng } from '@/lib/canvas-export';
 import type { CanvasNode, CanvasNodeType, Connection, Coordinates, GraphRevisionSummary, ResearchChange, ResearchSession } from '@/types/canvas';
 import { ELEMENT_PALETTE } from '@/types/canvas';
+import type { AIStatus } from '@/lib/ai-service';
 
 type Viewport = { zoom: number; pan: Coordinates };
 type Tool = 'select' | 'connect' | 'hand';
-type ChatLine = { role: 'user' | 'assistant'; text: string; referencedNodeIds?: string[] };
+type ChatLine = {
+  role: 'user' | 'assistant';
+  text: string;
+  referencedNodeIds?: string[];
+  provider?: 'OpenAI' | 'Gemini';
+  model?: string;
+  usedFallback?: boolean;
+};
 type Modal = 'research' | 'chat' | 'project' | 'search' | null;
 
 const blankGraph = (): KnowledgeGraph => normalizeGraph([], []);
@@ -56,7 +64,8 @@ export default function SynthexWorkspace() {
   const [loadedProject, setLoadedProject] = useState('');
   const [spacePressed, setSpacePressed] = useState(false);
   const [saveState, setSaveState] = useState<'saved' | 'saving' | 'error'>('saved');
-  const [aiConfigured, setAiConfigured] = useState(false);
+  const [aiStatus, setAiStatus] = useState<AIStatus | null>(null);
+  const aiConfigured = Boolean(aiStatus?.configured);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [viewport, setViewport] = useState<Viewport>({ zoom: 0.82, pan: { x: 76, y: 52 } });
   const [canvasFitKey, setCanvasFitKey] = useState(0);
@@ -258,7 +267,14 @@ export default function SynthexWorkspace() {
       setProjects(data.projects);
       if (!data.projects.some(project => project.id === 'default')) setProjectId(data.projects[0]?.id || 'default');
     }).catch(error => announce(error instanceof Error ? error.message : 'Could not load projects.'));
-    fetch('/api/ai/status', { cache: 'no-store' }).then(response => response.json()).then(data => setAiConfigured(Boolean(data.configured))).catch(() => setAiConfigured(false));
+    fetch('/api/ai/status', { cache: 'no-store' })
+      .then(response => response.json())
+      .then((data: AIStatus) => {
+        if (!cancelled) setAiStatus(data);
+      })
+      .catch(() => {
+        if (!cancelled) setAiStatus(null);
+      });
     return () => { cancelled = true; };
   }, [announce]);
 
@@ -658,7 +674,13 @@ export default function SynthexWorkspace() {
       }));
       setResearchQuery(''); setActiveSession(data.session); setReviewDecisions({}); setModal(null);
       await reloadHistory();
-      announce('Research proposals are ready for review.');
+      const usedFallback = data.session.trail?.some(t => t.includes('Fallback Triggered'));
+      if (usedFallback) {
+        announce('Note: OpenAI was unavailable; research generated via Gemini fallback.');
+        fetch('/api/ai/status', { cache: 'no-store' }).then(r => r.json()).then(setAiStatus).catch(() => {});
+      } else {
+        announce('Research proposals are ready for review.');
+      }
     } catch (error) { announce(error instanceof Error ? error.message : 'Research could not complete.'); }
     finally { setResearching(false); }
   }
@@ -669,11 +691,31 @@ export default function SynthexWorkspace() {
     if (!question || chatBusy) return;
     setChatInput(''); setChatLines(current => [...current, { role: 'user', text: question }]); setChatBusy(true);
     try {
-      const data = await readJson<{ answer: string; referencedNodeIds: string[] }>(await fetch('/api/ai/chat', {
+      const data = await readJson<{
+        answer: string;
+        referencedNodeIds: string[];
+        provider?: 'OpenAI' | 'Gemini';
+        model?: string;
+        usedFallback?: boolean;
+      }>(await fetch('/api/ai/chat', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ projectId, question, selectedNodeId: selectedNode?.id })
       }));
-      setChatLines(current => [...current, { role: 'assistant', text: data.answer, referencedNodeIds: data.referencedNodeIds }]);
+      setChatLines(current => [
+        ...current,
+        {
+          role: 'assistant',
+          text: data.answer,
+          referencedNodeIds: data.referencedNodeIds,
+          provider: data.provider,
+          model: data.model,
+          usedFallback: data.usedFallback
+        }
+      ]);
+      if (data.usedFallback) {
+        announce('OpenAI was unavailable; response provided via Gemini fallback.');
+        fetch('/api/ai/status', { cache: 'no-store' }).then(r => r.json()).then(setAiStatus).catch(() => {});
+      }
     } catch (error) {
       setChatLines(current => [...current, { role: 'assistant', text: error instanceof Error ? error.message : 'The assistant could not answer.' }]);
     } finally { setChatBusy(false); }
@@ -1115,6 +1157,33 @@ export default function SynthexWorkspace() {
               <span className="save-label">{saveState === 'saving' ? 'Saving' : saveState === 'error' ? 'Issue' : 'Saved'}</span>
             </span>
 
+            {/* AI Engine & Fallback Status Badge */}
+            <div
+              className={`topbar-ai-badge ${aiStatus?.configured ? 'is-configured' : 'is-unconfigured'} ${aiStatus?.usingFallback ? 'is-fallback-active' : ''}`}
+              title={
+                !aiStatus?.configured
+                  ? 'No AI provider configured. Add OPENAI_API_KEY to .env.local.'
+                  : `${aiStatus.activeProvider} · ${aiStatus.activeModel} (Reasoning: ${aiStatus.reasoningEffort || 'medium'})\n` +
+                    `Embeddings: ${aiStatus.embeddingModel}\n` +
+                    (aiStatus.fallbackConfigured
+                      ? `Fallback: ${aiStatus.fallbackProvider} (${aiStatus.fallbackModel}) ready`
+                      : 'Fallback: Gemini standby')
+              }
+            >
+              <span className="ai-status-pulse" />
+              <Sparkles size={12} className="ai-badge-icon" />
+              <span className="ai-model-name">
+                {aiStatus?.configured
+                  ? `${aiStatus.activeModel} (${aiStatus.reasoningEffort || 'med'})`
+                  : 'AI Offline'}
+              </span>
+              {aiStatus?.configured && (
+                <span className={`ai-fallback-pill ${aiStatus.usingFallback ? 'is-active' : aiStatus.fallbackConfigured ? 'is-ready' : 'is-standby'}`}>
+                  {aiStatus.usingFallback ? 'Fallback Active' : aiStatus.fallbackConfigured ? 'Fallback: Gemini' : 'Fallback: Standby'}
+                </span>
+              )}
+            </div>
+
             <div className="topbar-divider" />
 
             <button className="icon-button history-action" title="Undo (⌘Z / Ctrl+Z)" aria-label="Undo" disabled={!undoReady} onClick={undo}>
@@ -1339,11 +1408,28 @@ export default function SynthexWorkspace() {
                   ) : (
                     <div className="drawer-chat-pane">
                       <div className="chat-intro-card">
-                        <span className="chat-sparkle-pill"><Sparkles size={12} /> Graph assistant</span>
+                        <div className="chat-intro-header">
+                          <span className="chat-sparkle-pill"><Sparkles size={12} /> Graph assistant</span>
+                          {aiStatus?.configured && (
+                            <span className="chat-model-badge" title={`Active model: ${aiStatus.activeModel} (${aiStatus.reasoningEffort || 'medium'} reasoning)`}>
+                              {aiStatus.activeModel} · {aiStatus.reasoningEffort || 'med reasoning'}
+                            </span>
+                          )}
+                        </div>
                         <p>Answers use records in this workspace{selectedNode ? ` with focus on "${selectedNode.title}"` : ''}.</p>
+                        {aiStatus?.configured && (
+                          <div className="chat-fallback-status">
+                            <span className="fallback-dot" />
+                            <span>
+                              {aiStatus.usingFallback
+                                ? `Active: ${aiStatus.activeProvider} (Fallback engaged)`
+                                : `Fallback: ${aiStatus.fallbackConfigured ? `${aiStatus.fallbackProvider} (${aiStatus.fallbackModel}) ready` : 'Gemini standby'}`}
+                            </span>
+                          </div>
+                        )}
                       </div>
                       {!aiConfigured && (
-                        <div className="configuration-note"><CircleHelp size={14} /> Add <code>GEMINI_API_KEY</code> to enable answers.</div>
+                        <div className="configuration-note"><CircleHelp size={14} /> Add <code>OPENAI_API_KEY</code> or <code>GEMINI_API_KEY</code> to enable answers.</div>
                       )}
                       <div className="chat-transcript" aria-live="polite">
                         {chatLines.length === 0 && (
@@ -1369,14 +1455,23 @@ export default function SynthexWorkspace() {
                         {chatLines.map((line, index) => (
                           <div className={`chat-line ${line.role}`} key={`${index}-${line.text.slice(0, 10)}`}>
                             <span>{line.role === 'assistant' ? <Sparkles size={13} /> : 'You'}</span>
-                            <p>
-                              {line.text}
-                              {line.referencedNodeIds?.length ? (
-                                <small className="answer-citations">
-                                  Records: {line.referencedNodeIds.map(id => graph.nodesById[id]?.title || id).join(' · ')}
-                                </small>
-                              ) : null}
-                            </p>
+                            <div>
+                              <p>{line.text}</p>
+                              {line.role === 'assistant' && (
+                                <div className="chat-line-meta" style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '4px' }}>
+                                  {line.model && (
+                                    <span style={{ fontSize: '10px', color: line.usedFallback ? '#b45309' : '#3c6e71', fontWeight: 600 }}>
+                                      via {line.model}{line.usedFallback ? ' (fallback)' : ''}
+                                    </span>
+                                  )}
+                                  {line.referencedNodeIds?.length ? (
+                                    <small className="answer-citations">
+                                      Records: {line.referencedNodeIds.map(id => graph.nodesById[id]?.title || id).join(' · ')}
+                                    </small>
+                                  ) : null}
+                                </div>
+                              )}
+                            </div>
                           </div>
                         ))}
                         {chatBusy && (
@@ -1446,7 +1541,22 @@ export default function SynthexWorkspace() {
             <label className="field-label" htmlFor="research-question">What are you trying to understand?</label>
             <textarea id="research-question" className="field-input research-input" value={researchQuery} onChange={event => setResearchQuery(event.target.value)} maxLength={500} placeholder="e.g. How do retrieval methods affect answer quality?" autoFocus />
             <div className="research-mode-row"><span>Research depth</span><div className="segmented-control"><button type="button" className={researchMode === 'quick' ? 'selected' : ''} onClick={() => setResearchMode('quick')}>Quick <small>5 proposals</small></button><button type="button" className={researchMode === 'deep' ? 'selected' : ''} onClick={() => setResearchMode('deep')}>Deep <small>12 proposals</small></button></div></div>
-            {!aiConfigured && <div className="configuration-note"><CircleHelp size={15} /> Add <code>GEMINI_API_KEY</code> to the server environment to enable web research.</div>}
+            {aiStatus?.configured && (
+              <div className="research-provider-banner">
+                <div className="provider-badge-group">
+                  <Sparkles size={14} className="provider-icon" />
+                  <span className="provider-model">Engine: <strong>{aiStatus.activeProvider} · {aiStatus.activeModel}</strong> ({aiStatus.reasoningEffort || 'medium'} reasoning)</span>
+                </div>
+                <span className={`fallback-indicator-pill ${aiStatus.usingFallback ? 'is-active' : aiStatus.fallbackConfigured ? 'is-ready' : 'is-standby'}`}>
+                  {aiStatus.usingFallback
+                    ? 'Fallback Active'
+                    : aiStatus.fallbackConfigured
+                    ? `Fallback: ${aiStatus.fallbackProvider} ready`
+                    : 'Fallback: Gemini standby'}
+                </span>
+              </div>
+            )}
+            {!aiConfigured && <div className="configuration-note"><CircleHelp size={15} /> Add <code>OPENAI_API_KEY</code> or <code>GEMINI_API_KEY</code> to the server environment to enable web research.</div>}
             <div className="modal-footer"><span><i className="ai-status-dot ready" /> Proposals require your review</span><button className="primary-button" disabled={researching || !researchQuery.trim() || !aiConfigured}>{researching ? <><LoaderCircle size={15} className="spin" /> Researching…</> : <><Sparkles size={15} /> Run research <ArrowRight size={14} /></>}</button></div>
           </form>
         </section>

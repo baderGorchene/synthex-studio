@@ -17,7 +17,8 @@
     "marked": "^18.0.14",
     "next": "16.3.6",
     "react": "19.2.8",
-    "react-dom": "19.2.8"
+    "react-dom": "19.2.8",
+    "sqlite-vec": "^0.1.9"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

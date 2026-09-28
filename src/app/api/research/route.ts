@@ -40,7 +40,7 @@ export async function POST(request: Request) {
     if (body?.mode !== 'quick' && body?.mode !== 'deep') return Response.json({ error: 'Choose quick or deep research.' }, { status: 400 });
 
     const graph = normalizeGraph(getAllNodesFromDb(projectId), getAllConnectionsFromDb(projectId));
-    const { result, sources, searchQueries } = await researchGraph(query, mode, graph);
+    const { result, sources, searchQueries, provider, model, usedFallback } = await researchGraph(query, mode, graph, projectId);
     const existingSourceUrls = new Set(Object.values(graph.nodesById).map(node => node.url).filter(Boolean));
     const idByTempId = new Map<string, string>();
     const changes: ResearchChange[] = [];
@@ -121,6 +121,7 @@ export async function POST(request: Request) {
       id: randomUUID(), query, mode, status: 'review',
       summary: result.summary.slice(0, 6000),
       trail: [
+        `Engine: ${provider} · ${model}${usedFallback ? ' (Automatic Fallback Triggered)' : ''}`,
         `Research question: ${query}`,
         ...searchQueries.map(text => `Search: ${text.slice(0, 500)}`),
         `Grounded sources discovered: ${sources.length}`,
@@ -133,7 +134,7 @@ export async function POST(request: Request) {
     return Response.json({ session }, { status: 201 });
   } catch (error) {
     if (error instanceof Error && error.message === 'AI_NOT_CONFIGURED') {
-      return Response.json({ error: 'Add GEMINI_API_KEY to the server environment to enable research.' }, { status: 503 });
+      return Response.json({ error: 'Add OPENAI_API_KEY or GEMINI_API_KEY to the server environment to enable research.' }, { status: 503 });
     }
     console.error('Research run failed:', error);
     return Response.json({ error: 'Research could not complete. Try again.' }, { status: 502 });

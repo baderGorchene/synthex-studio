@@ -9,8 +9,8 @@
 | Section | Focus | Pending | In Progress | Completed |
 |---|---|---|---|---|
 | **Part 1: Code-Only & Local** | Storage, Canvas UI, Math, Exports, Cleanups | 0 | 0 | 18 |
-| **Part 2: AI & External Services** | Gemini Embeddings, Google Search Grounding, SSE | 3 | 0 | 0 |
-| **Total** | | **3** | **0** | **18** |
+| **Part 2: AI & External Services** | Graph RAG, Multi-Provider Fallback, SSE | 2 | 0 | 1 |
+| **Total** | | **2** | **0** | **19** |
 
 ---
 
@@ -149,13 +149,18 @@
 
 ## 2.1 AI Scaling & Live Web Grounding
 
-- [ ] **Vector Embeddings & Semantic Indexing (Remove 80-Node Limit)**
-  - *Current Defect:* `graphContext()` in `src/lib/ai-service.ts` hard-truncates graphs at **80 nodes** and **160 edges** to fit context windows. Large workspaces lose grounding.
-  - *Third-Party Dependency:* Google Gemini `text-embedding-004` API (or OpenAI Embeddings).
-  - *Solution:*
-    - Generate vector embeddings for node title/content on create/update.
-    - Store vectors in SQLite (via `sqlite-vss` or cosine similarity table).
-    - Retrieve top-k relevant subgraphs dynamically for AI Chat and Research runs.
+- [x] **Vector Embeddings, Semantic Indexing & Graph RAG (Removed 80-Node Limit)**
+  - *Addressed Defect:* Eliminated legacy 80-node hard limit in `src/lib/ai-service.ts`.
+  - *Architecture Specification:* Fully documented in [GRAPH.md](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/GRAPH.md).
+  - *Implemented Solution:*
+    - **OpenAI & Gemini Embedding Pipeline:** Implemented [src/lib/rag/embeddings.ts](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/src/lib/rag/embeddings.ts) using OpenAI `text-embedding-3-small` (1536d) as primary with fallback to Gemini `text-embedding-004` (768d, normalized & padded to 1536d). Integrated SHA-256 content hashing to avoid redundant embedding generations.
+    - **In-Database Vector Index & Hybrid Search:** Implemented [src/lib/rag/vector-store.ts](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/src/lib/rag/vector-store.ts) with `sqlite-vec` (`vec_nodes` virtual table) and SQLite FTS5 (`nodes_fts` BM25 index), unified through Reciprocal Rank Fusion (RRF).
+    - **Epistemic HippoRAG Graph Traversal:** Implemented [src/lib/rag/graph-walker.ts](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/src/lib/rag/graph-walker.ts) featuring Personalized PageRank (PPR) with semantic edge weighting (`contradicts` 1.35x, `supports` 1.15x, `answers` 1.25x) and multi-hop epistemic path expansion.
+    - **Token-Budgeted Context Serialization:** Implemented [src/lib/rag/context-builder.ts](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/src/lib/rag/context-builder.ts) dynamically generating token-budgeted Markdown subgraphs for `/api/ai/chat` and `/api/research`.
+    - **Dual-Provider Engine with Automatic Fallback:** Upgraded [src/lib/ai-service.ts](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/src/lib/ai-service.ts) to prioritize OpenAI `gpt-6-luna` with medium reasoning (`reasoning_effort: 'medium'`) and automatic fallback to Google Gemini (`gemini-3.8-flash`).
+    - **Strict API Key Security:** User's API keys reside exclusively in `.env.local` (git-ignored). `/api/ai/status` exposes provider state, active model name, reasoning level, and fallback readiness without exposing secrets.
+    - **Live UI Visibility:** Added real-time provider and fallback badges in the workspace topbar, AI Chat drawer, and Research modal. Assistant responses display provenance indicators (`via gpt-6-luna`).
+    - **Unit Tests:** Added comprehensive test suite in [tests/graph.test.mjs](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/tests/graph.test.mjs) (18/18 tests passing).
 - [ ] **Server-Sent Events (SSE) Streaming for AI Responses**
   - *Third-Party Dependency:* Google Gemini Streaming REST API.
   - *Solution:* Stream response tokens in `/api/ai/chat` and `/api/research` for real-time progress indicators instead of blocking HTTP requests.

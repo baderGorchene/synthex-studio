@@ -186,7 +186,7 @@ function migrateProjectScopedIds(db: Database.Database) {
   }
 }
 
-function getDatabase(): Database.Database {
+export function getDatabase(): Database.Database {
   if (!global._sqliteDb) {
     global._sqliteDb = new Database(dbPath);
     initSchema(global._sqliteDb);
@@ -196,6 +196,8 @@ function getDatabase(): Database.Database {
 
   return global._sqliteDb;
 }
+
+export const getDb = getDatabase;
 
 function initSchema(db: Database.Database) {
   // Enable WAL mode for concurrent performance

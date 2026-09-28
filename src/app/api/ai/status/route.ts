@@ -1,5 +1,6 @@
-import { isAIConfigured } from '@/lib/ai-service';
+import { getAIStatus } from '@/lib/ai-service';
 
 export async function GET() {
-  return Response.json({ configured: isAIConfigured(), provider: 'Gemini' });
+  const status = getAIStatus();
+  return Response.json(status);
 }

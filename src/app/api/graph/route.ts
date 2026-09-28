@@ -1,3 +1,4 @@
+import { indexGraphNodes } from '@/lib/ai-service';
 import { bulkSaveCanvasToDb, getAllConnectionsFromDb, getAllNodesFromDb, projectExistsInDb } from '@/lib/db';
 import { normalizeGraph } from '@/lib/graph';
 import type { CanvasNodeType, CanvasNode, Connection } from '@/types/canvas';
@@ -60,6 +61,7 @@ export async function PUT(request: Request) {
 
     const graph = normalizeGraph(nodes, relationships);
     bulkSaveCanvasToDb(Object.values(graph.nodesById), Object.values(graph.edgesById), projectId);
+    indexGraphNodes(projectId, nodes);
     return Response.json({ saved: true, nodeCount: nodes.length, relationshipCount: relationships.length });
   } catch (error) {
     const message = error instanceof Error ? error.message : '';

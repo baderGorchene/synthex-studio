@@ -3971,4 +3971,185 @@ button:not(.tool-button):not(.icon-button):not(.group-fold):not(.assistant-trigg
   fill: rgba(60, 110, 113, 0.22);
 }
 
+/* =====================================================================
+   AI Engine & Dual-Provider Fallback Status UI
+===================================================================== */
+.topbar-ai-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 9999px;
+  border: 1px solid rgba(40, 75, 99, 0.18);
+  background: rgba(255, 255, 255, 0.9);
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--ink);
+  cursor: default;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+
+.topbar-ai-badge:hover {
+  border-color: rgba(60, 110, 113, 0.4);
+  box-shadow: 0 2px 8px rgba(60, 110, 113, 0.12);
+}
+
+.topbar-ai-badge.is-unconfigured {
+  opacity: 0.65;
+  border-style: dashed;
+}
+
+.topbar-ai-badge .ai-badge-icon {
+  color: #3c6e71;
+  flex-shrink: 0;
+}
+
+.ai-status-pulse {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #10b981;
+  box-shadow: 0 0 6px rgba(16, 185, 129, 0.7);
+  animation: pulseStatus 2.2s infinite ease-in-out;
+}
+
+.topbar-ai-badge.is-fallback-active .ai-status-pulse {
+  background: #f59e0b;
+  box-shadow: 0 0 6px rgba(245, 158, 11, 0.7);
+}
+
+.topbar-ai-badge.is-unconfigured .ai-status-pulse {
+  background: #9ca3af;
+  box-shadow: none;
+  animation: none;
+}
+
+@keyframes pulseStatus {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.3); opacity: 0.6; }
+}
+
+.ai-model-name {
+  font-family: var(--font-ui);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: #284b63;
+}
+
+.ai-fallback-pill {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 6px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.ai-fallback-pill.is-ready {
+  background: rgba(60, 110, 113, 0.1);
+  color: #3c6e71;
+  border: 1px solid rgba(60, 110, 113, 0.2);
+}
+
+.ai-fallback-pill.is-active {
+  background: rgba(245, 158, 11, 0.15);
+  color: #b45309;
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  font-weight: 600;
+}
+
+.ai-fallback-pill.is-standby {
+  background: rgba(156, 163, 175, 0.12);
+  color: #6b7280;
+  border: 1px solid rgba(156, 163, 175, 0.2);
+}
+
+/* Chat Drawer AI Info Header */
+.chat-intro-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.chat-model-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: 5px;
+  font-size: 10.5px;
+  font-weight: 600;
+  background: rgba(40, 75, 99, 0.08);
+  color: #284b63;
+  border: 1px solid rgba(40, 75, 99, 0.15);
+}
+
+.chat-fallback-status {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 6px;
+  font-size: 11px;
+  color: #6b7280;
+}
+
+.chat-fallback-status .fallback-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #3c6e71;
+}
+
+/* Research Modal Provider Banner */
+.research-provider-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 12px 0 16px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: rgba(60, 110, 113, 0.06);
+  border: 1px solid rgba(60, 110, 113, 0.18);
+}
+
+.provider-badge-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #284b63;
+}
+
+.provider-badge-group .provider-icon {
+  color: #3c6e71;
+}
+
+.fallback-indicator-pill {
+  font-size: 10.5px;
+  padding: 2px 8px;
+  border-radius: 9999px;
+  font-weight: 500;
+}
+
+.fallback-indicator-pill.is-ready {
+  background: rgba(60, 110, 113, 0.12);
+  color: #3c6e71;
+  border: 1px solid rgba(60, 110, 113, 0.25);
+}
+
+.fallback-indicator-pill.is-active {
+  background: rgba(245, 158, 11, 0.18);
+  color: #b45309;
+  border: 1px solid rgba(245, 158, 11, 0.4);
+}
+
+.fallback-indicator-pill.is-standby {
+  background: rgba(156, 163, 175, 0.15);
+  color: #6b7280;
+}
+
+
 

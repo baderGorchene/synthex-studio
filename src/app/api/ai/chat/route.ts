@@ -15,11 +15,11 @@ export async function POST(request: Request) {
     const projectId = typeof body.projectId === 'string' ? body.projectId : 'default';
     if (projectId.length > 80 || !projectExistsInDb(projectId)) return Response.json({ error: 'Project not found.' }, { status: 404 });
     const graph = normalizeGraph(getAllNodesFromDb(projectId), getAllConnectionsFromDb(projectId));
-    const result = await askGraph(question, graph, selectedNodeId);
+    const result = await askGraph(question, graph, selectedNodeId, projectId);
     return Response.json(result);
   } catch (error) {
     if (error instanceof Error && error.message === 'AI_NOT_CONFIGURED') {
-      return Response.json({ error: 'Add GEMINI_API_KEY to the server environment to enable AI.' }, { status: 503 });
+      return Response.json({ error: 'Add OPENAI_API_KEY or GEMINI_API_KEY to the server environment to enable AI.' }, { status: 503 });
     }
     console.error('Graph chat failed:', error);
     return Response.json({ error: 'The graph assistant could not answer. Try again.' }, { status: 502 });

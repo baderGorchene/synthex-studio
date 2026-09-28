@@ -633,4 +633,99 @@ test('PDF Citation Deep-Linking: extracts page numbers, formats #page=N URLs, an
   assert.strictEqual(contradiction.location, 'p. 19');
 });
 
+test('HippoRAG Personalized PageRank: converges and amplifies epistemic contradiction edges', async () => {
+  const { personalizedPageRank, RELATION_WEIGHTS, extractReasoningSubgraph } = await import('../src/lib/rag/graph-walker.ts');
+
+  // Verify relation weights
+  assert.ok(RELATION_WEIGHTS.contradicts > RELATION_WEIGHTS.supports, 'contradictions receive higher epistemic weight');
+  assert.ok(RELATION_WEIGHTS.supports > RELATION_WEIGHTS.neutral, 'supports exceeds neutral');
+
+  const nodes = [
+    concept('seed', 'Core Concept'),
+    concept('neutral_neighbor', 'Neutral Topic'),
+    concept('contradiction_neighbor', 'Contradicting Evidence', 'claim'),
+    concept('distant_node', 'Distant Fact')
+  ];
+
+  const edges = [
+    relation('e1', 'seed', 'neutral_neighbor', 'neutral'),
+    relation('e2', 'seed', 'contradiction_neighbor', 'contradicts'),
+    relation('e3', 'contradiction_neighbor', 'distant_node', 'supports')
+  ];
+
+  const graph = normalizeGraph(nodes, edges);
+  const ppr = personalizedPageRank(graph, ['seed'], { damping: 0.85, maxIterations: 20 });
+
+  assert.ok(ppr.get('seed') > 0, 'seed has positive score');
+  assert.ok(
+    (ppr.get('contradiction_neighbor') || 0) > (ppr.get('neutral_neighbor') || 0),
+    'contradiction neighbor receives higher activation than neutral neighbor'
+  );
+  assert.ok(
+    (ppr.get('distant_node') || 0) > 0,
+    'multi-hop activation reaches distant node through contradiction path'
+  );
+
+  // Subgraph extraction
+  const subgraph = extractReasoningSubgraph(graph, ['seed'], { maxNodes: 3 });
+  assert.ok(subgraph.nodes.length <= 3, 'respects maxNodes');
+  assert.ok(subgraph.nodes.some(n => n.id === 'seed'), 'contains seed');
+  assert.ok(subgraph.nodes.some(n => n.id === 'contradiction_neighbor'), 'contains highest ranked neighbor');
+});
+
+test('Graph RAG Context Builder: produces structured epistemic Markdown within budget', async () => {
+  const { buildGraphRAGContext } = await import('../src/lib/rag/context-builder.ts');
+
+  const nodes = [
+    { ...concept('c1', 'Personalized PageRank'), content: 'PPR propagates seed node activation through relational edges.' },
+    { ...concept('c2', 'Vector Embeddings'), content: 'Dense 1536-dimensional float representations.' },
+    { ...concept('cl1', 'PPR outperforms naive KNN', 'claim'), metadata: { claimStatus: 'supported', confidence: 0.95 } }
+  ];
+
+  const edges = [
+    relation('e1', 'c2', 'c1', 'enables'),
+    relation('e2', 'c1', 'cl1', 'supports')
+  ];
+
+  const graph = normalizeGraph(nodes, edges);
+
+  const ctx = await buildGraphRAGContext({
+    projectId: 'test_project',
+    graph,
+    query: 'How does PPR improve retrieval?',
+    selectedNodeId: 'c1',
+    tokenBudget: 2000
+  });
+
+  assert.ok(ctx.markdown.includes('## Active Knowledge Subgraph'), 'contains subgraph header');
+  assert.ok(ctx.markdown.includes('### CONCEPTS'), 'contains concepts section');
+  assert.ok(ctx.markdown.includes('### CLAIMS'), 'contains claims section');
+  assert.ok(ctx.markdown.includes('[Status: supported]'), 'surfaces epistemic claim status');
+  assert.ok(ctx.markdown.includes('--[supports]-->'), 'surfaces directional edge');
+  assert.ok(ctx.retrievedNodeIds.includes('c1'), 'retrieves seed node c1');
+});
+
+test('AI Status & Multi-Provider Fallback: secure exposure without leaking API keys', async () => {
+  const { getAIStatus } = await import('../src/lib/ai-service.ts');
+
+  const status = getAIStatus();
+  assert.strictEqual(typeof status.configured, 'boolean');
+  assert.strictEqual(typeof status.activeModel, 'string');
+  assert.strictEqual(typeof status.embeddingDimension, 'number');
+  assert.strictEqual(status.embeddingDimension, 1536);
+
+  // Security assertion: NO API key strings anywhere in the returned status payload
+  const serialized = JSON.stringify(status);
+  assert.ok(!serialized.includes('sk-proj'), 'never exposes OpenAI secret key in status');
+  assert.ok(!serialized.includes('AIzaSy'), 'never exposes Google API key in status');
+
+  // Verify provider model configuration
+  if (status.providers.openai.configured) {
+    assert.strictEqual(status.providers.openai.model, 'gpt-6-luna');
+    assert.strictEqual(status.activeModel, 'gpt-6-luna');
+    assert.strictEqual(status.reasoningEffort, 'medium');
+  }
+});
+
+
 
