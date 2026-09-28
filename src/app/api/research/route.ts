@@ -128,8 +128,9 @@ function buildSessionFromResearchResult(
 export async function GET(request: Request) {
   try {
     const projectId = new URL(request.url).searchParams.get('projectId') || 'default';
-    if (projectId.length > 80 || !projectExistsInDb(projectId)) return Response.json({ error: 'Project not found.' }, { status: 404 });
-    return Response.json({ sessions: getResearchSessions(projectId) });
+    if (projectId.length > 80 || !(await projectExistsInDb(projectId))) return Response.json({ error: 'Project not found.' }, { status: 404 });
+    const sessions = await getResearchSessions(projectId);
+    return Response.json({ sessions });
   } catch (error) {
     console.error('Failed to load research history:', error);
     return Response.json({ error: 'Could not load research history.' }, { status: 500 });
@@ -145,7 +146,7 @@ export async function POST(request: Request) {
     const projectId = typeof body?.projectId === 'string' ? body.projectId : 'default';
     const mode: ResearchMode = body?.mode === 'deep' ? 'deep' : 'quick';
     if (!query || query.length > 500) return Response.json({ error: 'Enter a research question under 500 characters.' }, { status: 400 });
-    if (projectId.length > 80 || !projectExistsInDb(projectId)) return Response.json({ error: 'Project not found.' }, { status: 404 });
+    if (projectId.length > 80 || !(await projectExistsInDb(projectId))) return Response.json({ error: 'Project not found.' }, { status: 404 });
     if (body?.mode !== 'quick' && body?.mode !== 'deep') return Response.json({ error: 'Choose quick or deep research.' }, { status: 400 });
 
     // Check Context Credits balance
@@ -153,7 +154,7 @@ export async function POST(request: Request) {
     const userId = auth.user?.id || auth.clerkId;
     const creditAction = mode === 'deep' ? 'deep_research' : 'quick_research';
     if (userId) {
-      const check = verifyCreditBalance(userId, creditAction);
+      const check = await verifyCreditBalance(userId, creditAction);
       if (!check.hasSufficient) {
         return Response.json({
           error: 'INSUFFICIENT_CREDITS',
@@ -164,7 +165,11 @@ export async function POST(request: Request) {
       }
     }
 
-    const graph = normalizeGraph(getAllNodesFromDb(projectId), getAllConnectionsFromDb(projectId));
+    const [rawNodes, rawEdges] = await Promise.all([
+      getAllNodesFromDb(projectId),
+      getAllConnectionsFromDb(projectId)
+    ]);
+    const graph = normalizeGraph(rawNodes as CanvasNode[], rawEdges as Connection[]);
     const wantsStream = request.headers.get('accept')?.includes('text/event-stream') || body?.stream === true;
 
     if (wantsStream) {
@@ -175,10 +180,10 @@ export async function POST(request: Request) {
             for await (const event of researchGraphStream(query, mode, graph, projectId)) {
               if (event.type === 'done') {
                 const session = buildSessionFromResearchResult(query, mode, graph, event.result);
-                saveResearchSession(session, projectId);
+                await saveResearchSession(session, projectId);
                 let creditsRemaining: number | undefined;
                 if (userId) {
-                  const deduction = deductCredits(userId, creditAction, `${mode === 'deep' ? 'Deep' : 'Quick'} research: "${query.slice(0, 50)}..."`);
+                  const deduction = (await deductCredits(userId, creditAction, `${mode === 'deep' ? 'Deep' : 'Quick'} research: "${query.slice(0, 50)}..."`)) as { success: boolean; cost: number; balance: number; error?: string };
                   creditsRemaining = deduction.balance;
                 }
                 controller.enqueue(encoder.encode(`event: done\ndata: ${JSON.stringify({ session, result: event.result, creditsRemaining })}\n\n`));
@@ -206,11 +211,11 @@ export async function POST(request: Request) {
 
     const resultPayload = await researchGraph(query, mode, graph, projectId);
     const session = buildSessionFromResearchResult(query, mode, graph, resultPayload);
-    saveResearchSession(session, projectId);
+    await saveResearchSession(session, projectId);
 
     let creditsRemaining: number | undefined;
     if (userId) {
-      const deduction = deductCredits(userId, creditAction, `${mode === 'deep' ? 'Deep' : 'Quick'} research: "${query.slice(0, 50)}..."`);
+      const deduction = (await deductCredits(userId, creditAction, `${mode === 'deep' ? 'Deep' : 'Quick'} research: "${query.slice(0, 50)}..."`)) as { success: boolean; cost: number; balance: number; error?: string };
       creditsRemaining = deduction.balance;
     }
 

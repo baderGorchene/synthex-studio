@@ -13,7 +13,7 @@ export async function GET() {
       );
     }
 
-    const transactions = getCreditTransactions(auth.user.id, 50);
+    const transactions = await getCreditTransactions(auth.user.id, 50);
     const tier = auth.user.subscriptionTier as keyof typeof TIER_CREDIT_QUOTAS;
     const monthlyQuota = TIER_CREDIT_QUOTAS[tier] ?? 100;
 
