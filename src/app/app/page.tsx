@@ -1708,13 +1708,13 @@ export default function SynthexWorkspace() {
 
             <button
               className="topbar-search-btn"
-              title="Search knowledge (⌘K / Ctrl+K)"
+              title="Search knowledge (Ctrl+K / ⌘K)"
               aria-label="Search knowledge"
               onClick={() => setModal('search')}
             >
               <Search size={13} />
               <span className="search-text">Search...</span>
-              <kbd className="topbar-kbd">⌘K</kbd>
+              <kbd className="topbar-kbd">Ctrl+K</kbd>
             </button>
 
             <span className={`save-indicator ${saveState}`} title={saveState === 'saving' ? 'Saving changes' : saveState === 'error' ? 'Save issue' : 'All changes saved locally'}>
@@ -1726,10 +1726,10 @@ export default function SynthexWorkspace() {
 
             <div className="topbar-divider" />
 
-            <button className="icon-button history-action" title="Undo (⌘Z / Ctrl+Z)" aria-label="Undo" disabled={!undoReady} onClick={undo}>
+            <button className="icon-button history-action" title="Undo (Ctrl+Z / ⌘Z)" aria-label="Undo" disabled={!undoReady} onClick={undo}>
               <Undo2 size={15} />
             </button>
-            <button className="icon-button history-action" title="Redo (⌘Shift+Z / Ctrl+Y)" aria-label="Redo" disabled={!redoReady} onClick={redo}>
+            <button className="icon-button history-action" title="Redo (Ctrl+Y / ⌘Shift+Z)" aria-label="Redo" disabled={!redoReady} onClick={redo}>
               <Redo2 size={15} />
             </button>
             <button
@@ -2190,8 +2190,8 @@ export default function SynthexWorkspace() {
                               {activeResearchIntent?.mode === 'deep'
                                 ? '20 Credits'
                                 : activeResearchIntent?.mode === 'quick'
-                                ? '5 Credits'
-                                : '1 Credit'}
+                                  ? '5 Credits'
+                                  : '1 Credit'}
                             </span>
                           </button>
 
