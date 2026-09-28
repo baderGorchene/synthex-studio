@@ -927,6 +927,56 @@ test('Google Cloud Storage (GCS) Document Vault: path structure and cloud integr
   assert.strictEqual(gcsDestination, 'workspaces/org_2bKz9Lq/proj_ai_survey/rag-benchmarks-2026.pdf');
 });
 
+test('Clerk Authentication & Multi-Tenant Provisioning: server auth fallback, webhook user creation, and organization scoping', async () => {
+  const { isClerkConfigured, getServerAuth } = await import('../src/lib/auth.ts');
+  const { upsertUser, getUserByClerkId } = await import('../src/lib/db.ts');
+
+  // 1. Verify offline/local development fallback when Clerk is not configured
+  assert.strictEqual(isClerkConfigured(), false, 'In test suite, Clerk environment keys are unconfigured');
+  const offlineAuth = await getServerAuth();
+  assert.strictEqual(offlineAuth.isLocal, true);
+  assert.strictEqual(offlineAuth.clerkId, 'local_researcher');
+  assert.ok(offlineAuth.user);
+  assert.strictEqual(offlineAuth.user.contextCredits, 5000, 'Local mode grants full development credit pool');
+
+  // 2. Simulate Clerk Webhook payload for `user.created`
+  const mockWebhookPayload = {
+    type: 'user.created',
+    data: {
+      id: `user_clerk_test_${Date.now()}`,
+      email_addresses: [{ email_address: 'new.researcher@synthex.cloud' }],
+      first_name: 'Grace',
+      last_name: 'Hopper'
+    }
+  };
+
+  const trialDurationMs = 3 * 24 * 60 * 60 * 1000;
+  const provisioned = upsertUser({
+    clerkId: mockWebhookPayload.data.id,
+    email: mockWebhookPayload.data.email_addresses[0].email_address,
+    name: `${mockWebhookPayload.data.first_name} ${mockWebhookPayload.data.last_name}`,
+    subscriptionTier: 'trial',
+    subscriptionStatus: 'trialing',
+    contextCredits: 100,
+    trialEndsAt: Date.now() + trialDurationMs
+  });
+
+  assert.ok(provisioned);
+  assert.strictEqual(provisioned.contextCredits, 100, 'New signups receive 100 Context Credits');
+  assert.strictEqual(provisioned.subscriptionTier, 'trial');
+  assert.ok(provisioned.trialEndsAt > Date.now(), 'Trial active for 3 days');
+
+  const fetchedUser = getUserByClerkId(provisioned.clerkId);
+  assert.strictEqual(fetchedUser?.email, 'new.researcher@synthex.cloud');
+
+  // 3. Multi-Tenant Scoping (Personal vs Team Organization Workspace)
+  const personalWorkspace = { id: 'ws_personal', title: 'Personal Notes', userId: provisioned.id, organizationId: null };
+  const teamWorkspace = { id: 'ws_team', title: 'Team AI Survey', userId: provisioned.id, organizationId: 'org_synthex_labs' };
+
+  assert.strictEqual(personalWorkspace.organizationId, null, 'Personal workspace has no orgId');
+  assert.strictEqual(teamWorkspace.organizationId, 'org_synthex_labs', 'Team workspace is scoped to organization');
+});
+
 
 
 

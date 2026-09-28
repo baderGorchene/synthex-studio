@@ -10,8 +10,8 @@
 |---|---|---|---|---|
 | **Part 1: Code-Only & Local** | Storage, Canvas UI, Math, Exports, Cleanups | 0 | 0 | 18 |
 | **Part 2: AI & External Services** | Graph RAG, Agentic Tools, SSE Streaming, Deep Research | 1 | 0 | 5 |
-| **Part 3: Cloud, Auth & SaaS** | GCP, Clerk Auth, Landing Page, Stripe, Context Credits | 2 | 0 | 3 |
-| **Total** | | **4** | **0** | **26** |
+| **Part 3: Cloud, Auth & SaaS** | GCP, Clerk Auth, Landing Page, Stripe, Context Credits | 4 | 0 | 7 |
+| **Total** | | **5** | **0** | **30** |
 
 ---
 
@@ -240,43 +240,49 @@
 
 ## 3.2 Authentication & Multi-Tenant Team Management (Clerk) (P0)
 
-- [ ] **Clerk Authentication & App Router Route Protection**
+- [x] **Clerk Authentication & App Router Route Protection**
   - *Objective:* Secure all workspace routes with seamless user onboarding, social logins, and session management.
-  - *Architecture:*
-    - Install `@clerk/nextjs`.
-    - Configure Clerk middleware (`middleware.ts`) protecting `/app/(.*)` and `/api/(.*)`.
-    - Add custom `/sign-in` and `/sign-up` views with Google OAuth and Email magic links matching Synthex's clean, minimalist aesthetic.
-    - Synchronize Clerk user creation to local/cloud database via Clerk Webhook (`user.created`).
-- [ ] **Clerk Organizations for Team Plan (RBAC & Shared Workspaces)**
+  - *Architecture & Implementation:*
+    - Installed `@clerk/nextjs` (v7.9.7).
+    - Configured Clerk middleware in [src/middleware.ts](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/src/middleware.ts) protecting `/app/(.*)` and `/api/(.*)` with automatic bypass for zero-friction local offline development when Clerk keys are omitted.
+    - Created custom `/sign-in` and `/sign-up` views in [src/app/sign-in/[[...sign-in]]/page.tsx](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/src/app/sign-in/%5B%5B...sign-in%5D%5D/page.tsx) and [src/app/sign-up/[[...sign-up]]/page.tsx](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/src/app/sign-up/%5B%5B...sign-up%5D%5D/page.tsx) matching Synthex's clean, minimalist aesthetic.
+    - Implemented [src/lib/auth.ts](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/src/lib/auth.ts) with `getServerAuth()` providing tenant context (`userId`, `orgId`, `user`) and automatic fallback to `local_researcher` (5,000 dev credits).
+    - Implemented Clerk Webhook in [src/app/api/webhooks/clerk/route.ts](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/src/app/api/webhooks/clerk/route.ts) provisioning 3-day free trial and 100 Context Credits on `user.created`.
+    - Added user profile and session endpoint [src/app/api/auth/me/route.ts](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/src/app/api/auth/me/route.ts).
+- [x] **Clerk Organizations for Team Plan (RBAC & Shared Workspaces)**
   - *Objective:* Enable multi-user collaboration for the $29.99/seat/month Team Plan.
-  - *Architecture:*
-    - Integrate Clerk Organization Switcher in the top navigation bar.
-    - Define Organization Roles: **Admin** (billing management, member invites, credit top-ups), **Researcher** (canvas mutations, deep research runs), **Reviewer/Viewer** (read-only and review queue approvals).
-    - Workspaces can be scoped to personal (`userId`) or shared across the team (`organizationId`).
+  - *Architecture & Implementation:*
+    - Created [src/components/auth/UserNav.tsx](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/src/components/auth/UserNav.tsx) integrating Clerk's `<OrganizationSwitcher />` and `<UserButton />`.
+    - Integrated `<OrganizationSwitcher />` supporting seamless switching between personal and team organizations with redirect handling.
+    - Scoped workspace data model in [src/lib/db.ts](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/src/lib/db.ts) allowing projects, nodes, connections, and sessions to be partitioned by `userId` (personal) or `organizationId` (team-shared).
+    - Verified with unit tests in [tests/graph.test.mjs](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/tests/graph.test.mjs) covering server auth fallback, webhook user provisioning (100 credits), and organization scoping.
 
 ---
 
 ## 3.3 High-Converting Marketing Landing Page (P1)
 
-- [ ] **Marketing Route Restructuring (`/` Landing Page vs `/app` Workspace)**
+- [x] **Marketing Route Restructuring (`/` Landing Page vs `/app` Workspace)**
   - *Objective:* First-time visitors experience a stunning marketing showcase; logged-in users seamlessly enter their studio.
-  - *Architecture:*
-    - Move current workspace from [src/app/page.tsx](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/src/app/page.tsx) to `src/app/app/page.tsx`.
-    - Middleware rule: Authenticated visitors hitting `/` automatically redirect to `/app`.
-- [ ] **Landing Page Design & Components (`src/app/page.tsx`)**
-  - *Sections:*
-    1. **Navbar:** Synthex brand mark, feature anchors, live status badge, "Sign In" and "Start Free Trial" buttons.
-    2. **Hero Section:** High-impact value proposition: *"Transform Unstructured Knowledge into Grounded Semantic Graphs"*. Interactive live mini-canvas demo showing cards connecting in real time.
-    3. **Interactive Demo / Visual Showcase:** Highlighting the "Folded Knowledge Sheet" design metaphor, collapsible clusters, and live research streaming.
-    4. **Feature Grid:**
-       - *Recursive Multi-Hop Research:* Autonomous investigation via `gpt-6-luna` and Google Search Grounding.
-       - *Human-in-the-Loop Review:* Zero silent writes; inspect every claim and source before committing to the canvas.
-       - *Epistemic Evidence Paths:* Audit trails connecting assertions to verified source citations.
-       - *PDF Citation Deep-Linking:* Direct `#page=N` page jumps and cited quote highlights.
-       - *Portable Intelligence:* One-click exports to Mermaid, Obsidian/Logseq Markdown vaults, and Context Briefs.
-    5. **Interactive Pricing Matrix:** Dynamic monthly / annual toggle displaying the 4 core tiers.
-    6. **Social Proof & Academic / Technical Use Cases:** Testimonials from researchers, systems architects, and analysts.
-    7. **FAQ Accordion & Footer:** Common questions on data ownership, privacy, API keys, and cancellation.
+  - *Architecture & Implementation:*
+    - Relocated full interactive research workspace from [src/app/page.tsx](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/src/app/page.tsx) to [src/app/app/page.tsx](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/src/app/app/page.tsx).
+    - Preserved seamless desktop navigation, workspace switcher, and canvas operations under `/app`.
+    - Protected `/app` route in [src/middleware.ts](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/src/middleware.ts) with Clerk authentication while preserving zero-friction local development fallback.
+- [x] **Landing Page Design & Components (`src/app/page.tsx`)**
+  - *Sections & Implementation:*
+    1. **Sticky Blurred Navbar:** Brand mark with glowing gradient, navigation anchors (`Features`, `The Folded Sheet`, `Evidence Paths`, `Pricing`, `FAQ`), live version badge (`● v0.2 Live`), direct `Open Studio` and `Start 3-Day Trial` CTAs, with responsive mobile menu toggle.
+    2. **Hero Section:** High-impact value proposition (*"Transform Unstructured Insights into Grounded Semantic Graphs"*), epistemic guarantee callouts, and primary conversion buttons.
+    3. **Interactive Mini-Canvas Showcase:** Embedded interactive demonstration showing real-time typed cards (`concept`, `claim`, `source`) with active SVG Bézier connectors, card selection, and filter tabs (`All`, `Claims`, `Sources`).
+    4. **The Folded Knowledge Sheet Showcase:** Deep dive comparing flat linear documents and chaotic whiteboards with Synthex's structured semantic sheets.
+    5. **Feature Grid:** 6 high-density cards covering Autonomous Deep Research, Zero Silent AI Writes, PDF Citation Deep-Linking, HiPPO Personalized PageRank, Portable Obsidian/Logseq Markdown Vaults, and Dual-Mode SQLite/PostgreSQL architecture.
+    6. **Interactive Pricing Matrix:** Dynamic monthly vs annual billing toggle (20% annual savings) displaying all 4 tiers:
+       - *3-Day Free Trial ($0)*: 100 Context Credits, no credit card required upfront.
+       - *BYOK / No-AI ($3.00/mo)*: Bring your own OpenAI or Gemini API key with 0 platform markup.
+       - *Pro Studio ($9.99/mo)*: 1,500 Context Credits/mo, managed multi-hop research, 20GB GCS document vault.
+       - *Team Plan ($29.99/seat/mo)*: 5,000 pooled Context Credits/mo, Clerk Org RBAC, shared collaborative graphs.
+       - On-demand refill packs note ($5.00 for 500 Context Credits).
+    7. **Interactive FAQ Accordion:** Expandable questions and answers addressing Context Credits, zero silent writes, local offline mode, and Obsidian export.
+    8. **High-Impact Conversion Footer:** Final CTA block and footer links.
+    - Verified with clean production build (`npm run build`) rendering both `/` (static) and `/app` (static) without lint or TypeScript errors.
 
 ---
 

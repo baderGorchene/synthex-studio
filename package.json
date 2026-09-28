@@ -11,6 +11,7 @@
     "test": "node --experimental-strip-types --test tests/graph.test.mjs"
   },
   "dependencies": {
+    "@clerk/nextjs": "^7.9.7",
     "@google-cloud/storage": "^8.2.0",
     "@types/marked": "^5.0.2",
     "better-sqlite3": "^13.0.3",
