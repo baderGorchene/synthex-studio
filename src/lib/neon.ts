@@ -40,12 +40,16 @@ function getSql() {
 }
 
 let schemaInitializationPromise: Promise<void> | null = null;
+let isInitializingSchema = false;
 
 export async function ensureNeonSchema(): Promise<void> {
   if (!isNeonConfigured()) return;
+  if (isInitializingSchema) return;
   if (!schemaInitializationPromise) {
     schemaInitializationPromise = (async () => {
-      const sql = getSql();
+      isInitializingSchema = true;
+      try {
+        const sql = getSql();
 
       // 1. Create tables if not exists
       await sql`
@@ -200,11 +204,15 @@ export async function ensureNeonSchema(): Promise<void> {
       if (nodeCount === 0) {
         await neonBulkSaveCanvas(SEED_NODES, SEED_CONNECTIONS, 'default');
       }
-    })().catch(err => {
-      schemaInitializationPromise = null;
-      console.error('Neon schema initialization failed:', err);
-      throw err;
-    });
+    } finally {
+      isInitializingSchema = false;
+    }
+  })().catch(err => {
+    schemaInitializationPromise = null;
+    isInitializingSchema = false;
+    console.error('Neon schema initialization failed:', err);
+    throw err;
+  });
   }
 
   return schemaInitializationPromise;
