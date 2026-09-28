@@ -10,7 +10,8 @@
 |---|---|---|---|---|
 | **Part 1: Code-Only & Local** | Storage, Canvas UI, Math, Exports, Cleanups | 0 | 0 | 18 |
 | **Part 2: AI & External Services** | Graph RAG, Agentic Tools, SSE Streaming, Deep Research | 1 | 0 | 5 |
-| **Total** | | **1** | **0** | **23** |
+| **Part 3: Cloud, Auth & SaaS** | GCP, Clerk Auth, Landing Page, Stripe, Context Credits | 5 | 0 | 0 |
+| **Total** | | **7** | **0** | **23** |
 
 ---
 
@@ -206,3 +207,132 @@
   - *Third-Party Dependency:* Zotero Web API (requires Zotero user API key and OAuth).
   - *Solution:* Bi-directional sync with personal Zotero web library collections.
 
+---
+
+# PART 3: Commercialization, Cloud Platform & SaaS Scaling
+> *Enterprise cloud infrastructure, Clerk authentication, marketing landing page, Stripe billing with 3-day free trial, multi-tenant team plan, and abstract Context Credits economic engine.*
+
+## 3.1 Google Cloud Platform (GCP) & Multi-Tenant Data Architecture (P0)
+
+- [ ] **Dual-Mode Database Architecture (Local SQLite + Cloud SQL PostgreSQL)**
+  - *Objective:* Maintain zero-friction local development on SQLite while enabling multi-tenant PostgreSQL with `pgvector` in production.
+  - *Architecture:*
+    - Abstract DB operations in [src/lib/db.ts](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/src/lib/db.ts) behind a unified interface (`DatabaseProvider`).
+    - When `DATABASE_URL` is set, connect via PostgreSQL driver (`pg` / `postgres`) on Cloud SQL; otherwise fallback to local `canvas.db` SQLite.
+    - Schema updates: Add `userId` (TEXT NOT NULL) and `organizationId` (TEXT NULL) to `projects`, `nodes`, `connections`, and `research_sessions` with tenant-isolated indexing.
+    - Create `users` table: `id`, `clerkId`, `email`, `stripeCustomerId`, `subscriptionTier`, `contextCredits`, `trialEndsAt`, `createdAt`.
+    - Create `credit_transactions` table: `id`, `userId`, `amount`, `action` (`chat`, `quick_research`, `deep_research`, `pdf_extract`, `refill`), `metadata`, `createdAt`.
+- [ ] **Google Cloud Storage (GCS) Document Vault**
+  - *Objective:* Replace local disk `public/uploads` with enterprise durable object storage for research papers and attachments.
+  - *Architecture:*
+    - Configure `@google-cloud/storage` in [src/lib/storage-gcs.ts](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/src/lib/storage-gcs.ts).
+    - Generate short-lived signed URLs for secure direct-to-bucket client uploads and authenticated paper previews.
+    - Path structure: `gs://[BUCKET]/workspaces/{organizationId || userId}/{projectId}/{fileId}.pdf`.
+    - Set up GCS lifecycle policies (standard tier for active workspaces, coldline for archived projects).
+- [ ] **Google Cloud Run Production Deployment**
+  - *Objective:* Auto-scaling containerized Next.js deployment scaling down to 0 during idle periods to minimize operational costs.
+  - *Architecture:*
+    - Create optimized multi-stage `Dockerfile` with standalone Next.js output (`output: 'standalone'`).
+    - Configure Cloud Run memory (2GB), CPU (2 vCPU), min instances (0), max instances (10), and concurrency (80 req/container).
+    - Integrate Google Secret Manager for secure runtime injection of `CLERK_SECRET_KEY`, `STRIPE_SECRET_KEY`, `OPENAI_API_KEY`, and `GEMINI_API_KEY`.
+
+---
+
+## 3.2 Authentication & Multi-Tenant Team Management (Clerk) (P0)
+
+- [ ] **Clerk Authentication & App Router Route Protection**
+  - *Objective:* Secure all workspace routes with seamless user onboarding, social logins, and session management.
+  - *Architecture:*
+    - Install `@clerk/nextjs`.
+    - Configure Clerk middleware (`middleware.ts`) protecting `/app/(.*)` and `/api/(.*)`.
+    - Add custom `/sign-in` and `/sign-up` views with Google OAuth and Email magic links matching Synthex's clean, minimalist aesthetic.
+    - Synchronize Clerk user creation to local/cloud database via Clerk Webhook (`user.created`).
+- [ ] **Clerk Organizations for Team Plan (RBAC & Shared Workspaces)**
+  - *Objective:* Enable multi-user collaboration for the $29.99/seat/month Team Plan.
+  - *Architecture:*
+    - Integrate Clerk Organization Switcher in the top navigation bar.
+    - Define Organization Roles: **Admin** (billing management, member invites, credit top-ups), **Researcher** (canvas mutations, deep research runs), **Reviewer/Viewer** (read-only and review queue approvals).
+    - Workspaces can be scoped to personal (`userId`) or shared across the team (`organizationId`).
+
+---
+
+## 3.3 High-Converting Marketing Landing Page (P1)
+
+- [ ] **Marketing Route Restructuring (`/` Landing Page vs `/app` Workspace)**
+  - *Objective:* First-time visitors experience a stunning marketing showcase; logged-in users seamlessly enter their studio.
+  - *Architecture:*
+    - Move current workspace from [src/app/page.tsx](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/src/app/page.tsx) to `src/app/app/page.tsx`.
+    - Middleware rule: Authenticated visitors hitting `/` automatically redirect to `/app`.
+- [ ] **Landing Page Design & Components (`src/app/page.tsx`)**
+  - *Sections:*
+    1. **Navbar:** Synthex brand mark, feature anchors, live status badge, "Sign In" and "Start Free Trial" buttons.
+    2. **Hero Section:** High-impact value proposition: *"Transform Unstructured Knowledge into Grounded Semantic Graphs"*. Interactive live mini-canvas demo showing cards connecting in real time.
+    3. **Interactive Demo / Visual Showcase:** Highlighting the "Folded Knowledge Sheet" design metaphor, collapsible clusters, and live research streaming.
+    4. **Feature Grid:**
+       - *Recursive Multi-Hop Research:* Autonomous investigation via `gpt-6-luna` and Google Search Grounding.
+       - *Human-in-the-Loop Review:* Zero silent writes; inspect every claim and source before committing to the canvas.
+       - *Epistemic Evidence Paths:* Audit trails connecting assertions to verified source citations.
+       - *PDF Citation Deep-Linking:* Direct `#page=N` page jumps and cited quote highlights.
+       - *Portable Intelligence:* One-click exports to Mermaid, Obsidian/Logseq Markdown vaults, and Context Briefs.
+    5. **Interactive Pricing Matrix:** Dynamic monthly / annual toggle displaying the 4 core tiers.
+    6. **Social Proof & Academic / Technical Use Cases:** Testimonials from researchers, systems architects, and analysts.
+    7. **FAQ Accordion & Footer:** Common questions on data ownership, privacy, API keys, and cancellation.
+
+---
+
+## 3.4 Stripe Monetization, Subscriptions & 3-Day Free Trial (P1)
+
+- [ ] **Stripe Checkout & Billing Integration**
+  - *Objective:* Seamless payment flow supporting subscriptions, per-seat billing, and one-click credit refills.
+  - *Architecture:*
+    - Install `stripe` SDK and configure Stripe Client in [src/lib/stripe.ts](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/src/lib/stripe.ts).
+    - Create `POST /api/billing/checkout` generating Stripe Checkout sessions with pre-populated customer emails.
+    - Create `POST /api/billing/portal` launching the Stripe Customer Portal for self-service subscription upgrades, payment method changes, and tax invoices.
+    - Idempotent Stripe Webhook handler (`/api/webhooks/stripe`):
+      - `customer.subscription.created`: Provision tier and allocate monthly credits.
+      - `invoice.payment_succeeded`: Monthly credit replenishment and invoice record.
+      - `customer.subscription.updated`: Handle seat count changes for Team Plans.
+      - `customer.subscription.deleted`: Gracefully downgrade to Free/BYOK tier.
+- [ ] **Subscription Tier Definitions & Rules**
+  1. **3-Day Free Trial (No Credit Card Upfront)**
+     - Triggered automatically upon Clerk signup.
+     - Allocates **100 Context Credits** to explore the studio.
+     - Topbar shows subtle countdown pill (`2 days left in trial`).
+     - At end of Day 3 or when credits hit 0, prompts user to select a subscription plan.
+  2. **BYOK / No-AI Tier ($3.00 / month)**
+     - Cloud storage, multi-device sync, unlimited workspaces, GCS vault, and PDF citation deep-linking.
+     - 0 platform AI credits included; user enters their own OpenAI or Gemini API key in settings.
+     - Perfect for developers and researchers with existing API access.
+  3. **Pro Tier ($9.99 / month)**
+     - 1 User.
+     - **1,500 Context Credits / month** (auto-refreshed each billing cycle).
+     - Full access to managed multi-hop research (`gpt-6-luna` + Google Search Grounding), priority model queue, and 20 GB GCS vault.
+  4. **Team Plan ($29.99 / seat / month)**
+     - Multi-seat collaboration with Clerk Organization RBAC.
+     - **5,000 Pooled Context Credits / month** shared across team members.
+     - Shared collaborative workspaces, centralized review queue, and unified team billing.
+  5. **Pay-as-You-Go Credit Refill Packs**
+     - $5.00 for 500 Context Credits.
+     - Instant replenishment without altering monthly subscription billing.
+
+---
+
+## 3.5 Context Credits Economic Engine & Metering UI (P1)
+
+- [ ] **Context Credits Ledger & Deduction Middleware**
+  - *Objective:* Abstract away raw dollar/token figures into a clean, predictable research currency.
+  - *Architecture:*
+    - Deduction engine in [src/lib/credits.ts](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/src/lib/credits.ts):
+      - `deductCredits(userId: string, amount: number, action: string)`: Atomic transaction verifying and decrementing credit balance.
+    - **Consumption Rates:**
+      - **Graph Chat Question:** 1 Context Credit
+      - **Quick Web-Grounded Research:** 5 Context Credits
+      - **Deep Multi-Hop Research:** 20 Context Credits (multi-axis decomposition, 3 web hops, synthesis)
+      - **Document AI / PDF Layout Extraction:** 2 Context Credits per page
+    - Protect `/api/ai/chat` and `/api/research` routes with credit pre-check; return HTTP 402 with credit refill modal trigger when balance is insufficient.
+- [ ] **Context Credits User Experience & Metering Components**
+  - *UI Components:*
+    - **Top Navigation Meter:** Compact pill displaying `⚡ 1,240 Context Credits` with an animated fill bar and click-to-expand breakdown drawer.
+    - **Chat Composer Cost Badge:** Subtle indicator in the chat compose box displaying action cost (e.g. `1 credit` or `20 credits for Deep Research`).
+    - **Refill Modal:** Sleek modal allowing users to top up 500 credits for $5 with 1-click Stripe Checkout or upgrade plan.
+    - **Credits History View:** Transparency log in workspace settings showing historical deductions per session.
