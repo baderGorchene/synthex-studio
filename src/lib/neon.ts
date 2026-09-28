@@ -24,13 +24,13 @@ import { addNode, addRelationship, normalizeGraph } from './graph.ts';
 import type { CreditTransaction, ResearchProject, UserRecord } from './db.ts';
 
 export function isNeonConfigured(): boolean {
-  return Boolean(process.env.DATABASE_URL || process.env.POSTGRES_URL);
+  return Boolean(process.env.DATABASE_URL || process.env.POSTGRES_URL || process.env.STORAGE_URL);
 }
 
 function getDatabaseUrl(): string {
-  const url = process.env.DATABASE_URL || process.env.POSTGRES_URL;
+  const url = process.env.DATABASE_URL || process.env.POSTGRES_URL || process.env.STORAGE_URL;
   if (!url) {
-    throw new Error('Neon database connection string (DATABASE_URL or POSTGRES_URL) is not set.');
+    throw new Error('Neon database connection string (DATABASE_URL, POSTGRES_URL, or STORAGE_URL) is not set.');
   }
   return url;
 }
