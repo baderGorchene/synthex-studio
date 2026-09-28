@@ -5798,6 +5798,31 @@ button:not(.tool-button):not(.icon-button):not(.group-fold):not(.assistant-trigg
   box-shadow: 0 2px 6px -1px rgba(79, 70, 229, 0.4);
 }
 
+/* Chat Compose Context Credits Cost Pill */
+.chat-cost-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+  border-radius: 9999px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #475569;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+
+.chat-cost-pill:hover {
+  background: #e0e7ff;
+  border-color: #c7d2fe;
+  color: #4338ca;
+}
+
+
 
 
 

@@ -10,8 +10,8 @@
 |---|---|---|---|---|
 | **Part 1: Code-Only & Local** | Storage, Canvas UI, Math, Exports, Cleanups | 0 | 0 | 18 |
 | **Part 2: AI & External Services** | Graph RAG, Agentic Tools, SSE Streaming, Deep Research | 1 | 0 | 5 |
-| **Part 3: Cloud, Auth & SaaS** | GCP, Clerk Auth, Landing Page, Stripe, Context Credits | 2 | 0 | 9 |
-| **Total** | | **3** | **0** | **32** |
+| **Part 3: Cloud, Auth & SaaS** | GCP, Clerk Auth, Landing Page, Stripe, Context Credits | 0 | 0 | 11 |
+| **Total** | | **1** | **0** | **34** |
 
 ---
 
@@ -327,20 +327,35 @@
 
 ## 3.5 Context Credits Economic Engine & Metering UI (P1)
 
-- [ ] **Context Credits Ledger & Deduction Middleware**
+- [x] **Context Credits Ledger & Deduction Middleware**
   - *Objective:* Abstract away raw dollar/token figures into a clean, predictable research currency.
-  - *Architecture:*
-    - Deduction engine in [src/lib/credits.ts](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/src/lib/credits.ts):
-      - `deductCredits(userId: string, amount: number, action: string)`: Atomic transaction verifying and decrementing credit balance.
-    - **Consumption Rates:**
-      - **Graph Chat Question:** 1 Context Credit
-      - **Quick Web-Grounded Research:** 5 Context Credits
-      - **Deep Multi-Hop Research:** 20 Context Credits (multi-axis decomposition, 3 web hops, synthesis)
-      - **Document AI / PDF Layout Extraction:** 2 Context Credits per page
-    - Protect `/api/ai/chat` and `/api/research` routes with credit pre-check; return HTTP 402 with credit refill modal trigger when balance is insufficient.
-- [ ] **Context Credits User Experience & Metering Components**
-  - *UI Components:*
-    - **Top Navigation Meter:** Compact pill displaying `⚡ 1,240 Context Credits` with an animated fill bar and click-to-expand breakdown drawer.
-    - **Chat Composer Cost Badge:** Subtle indicator in the chat compose box displaying action cost (e.g. `1 credit` or `20 credits for Deep Research`).
-    - **Refill Modal:** Sleek modal allowing users to top up 500 credits for $5 with 1-click Stripe Checkout or upgrade plan.
-    - **Credits History View:** Transparency log in workspace settings showing historical deductions per session.
+  - *Architecture & Implementation:*
+    - Created Context Credits engine in [src/lib/credits.ts](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/src/lib/credits.ts) with canonical consumption rates:
+      - **Graph Chat Question:** 1 Context Credit (`chat`)
+      - **Quick Web-Grounded Research:** 5 Context Credits (`quick_research`)
+      - **Deep Multi-Hop Research:** 20 Context Credits (`deep_research`)
+      - **Document AI / PDF Layout Extraction:** 2 Context Credits per page (`pdf_extract`)
+    - Added pre-checks via `verifyCreditBalance()` and atomic transaction deductions via `deductCredits()`.
+    - Protected both [`POST /api/ai/chat`](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/src/app/api/ai/chat/route.ts) and [`POST /api/research`](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/src/app/api/research/route.ts) with balance pre-checks returning HTTP 402 with structured error payloads (`{ error: 'INSUFFICIENT_CREDITS', requiredCredits, currentBalance }`) when balances are insufficient.
+    - Updated responses and SSE stream loops (`credits` and `done` events) to stream real-time `creditsRemaining` back to the client.
+    - Created [`GET /api/credits/history`](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/src/app/api/credits/history/route.ts) returning current balance, monthly plan quota, and the recent transaction ledger.
+- [x] **Context Credits User Experience & Metering Components**
+  - *UI Components & Implementation:*
+    - **Top Navigation Meter Pill (`UserNav.tsx`):**
+      - Compact topbar pill displaying `⚡ {contextCredits} Credits` with an animated fill bar representing percentage consumed within tier limits.
+      - Integrated seamlessly with Clerk and zero-config local development mode (`Local Mode · 5,000 Credits`).
+      - Clicking opens the interactive Context Credits & Refill Manager.
+    - **Chat Composer Cost Badge (`src/app/app/page.tsx`):**
+      - Dynamic cost indicator displayed directly inside the chat compose bar before the send button:
+        - `1 Credit` for standard Graph Chat
+        - `5 Credits` when staged for Quick Research
+        - `20 Credits` when staged for Deep Multi-Hop Research
+      - Clicking the badge opens the Credit Manager.
+    - **Interactive Credits & Refill Modal (`CreditsModal.tsx`):**
+      - Sleek modal with real-time balance progress bar and tier badge.
+      - **Refill Tab:** 1-click $5.00 for 500 Credits Refill Pack (invoking Stripe Checkout session) and plan upgrade cards for Pro ($9.99/mo) and Team ($29.99/seat/mo).
+      - **Consumption Ledger Tab:** Live transparency log showing timestamps, action descriptions, credit amounts (+/-), and ending balances.
+      - Transparent consumption rates reference matrix.
+    - **Seamless 402 Overdraft Handling:**
+      - If an AI chat or research request fails with HTTP 402, the chat assistant immediately displays a friendly insufficient credits notice and pops open the `CreditsModal` for instant resolution.
+    - Verified with unit tests in [tests/graph.test.mjs](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/tests/graph.test.mjs) (`Context Credits Economic Engine: consumption rates, balance pre-checks, overdraft protection, and transaction ledger`). **26/26 tests passing.**

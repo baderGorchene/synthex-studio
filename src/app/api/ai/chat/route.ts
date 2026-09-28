@@ -1,6 +1,8 @@
 import { askGraph, askGraphStream } from '@/lib/ai-service';
 import { getAllConnectionsFromDb, getAllNodesFromDb, projectExistsInDb } from '@/lib/db';
 import { normalizeGraph } from '@/lib/graph';
+import { getServerAuth } from '@/lib/auth';
+import { verifyCreditBalance, deductCredits } from '@/lib/credits';
 
 export async function POST(request: Request) {
   try {
@@ -14,8 +16,23 @@ export async function POST(request: Request) {
     const selectedNodeId = typeof body.selectedNodeId === 'string' ? body.selectedNodeId.slice(0, 200) : undefined;
     const projectId = typeof body.projectId === 'string' ? body.projectId : 'default';
     if (projectId.length > 80 || !projectExistsInDb(projectId)) return Response.json({ error: 'Project not found.' }, { status: 404 });
-    const graph = normalizeGraph(getAllNodesFromDb(projectId), getAllConnectionsFromDb(projectId));
 
+    // Check Context Credits balance
+    const auth = await getServerAuth();
+    const userId = auth.user?.id || auth.clerkId;
+    if (userId) {
+      const check = verifyCreditBalance(userId, 'chat');
+      if (!check.hasSufficient) {
+        return Response.json({
+          error: 'INSUFFICIENT_CREDITS',
+          message: check.error || 'Insufficient Context Credits. Please top up to continue.',
+          requiredCredits: check.cost,
+          currentBalance: check.currentBalance
+        }, { status: 402 });
+      }
+    }
+
+    const graph = normalizeGraph(getAllNodesFromDb(projectId), getAllConnectionsFromDb(projectId));
     const wantsStream = request.headers.get('accept')?.includes('text/event-stream') || body?.stream === true;
 
     if (wantsStream) {
@@ -25,6 +42,10 @@ export async function POST(request: Request) {
           try {
             for await (const event of askGraphStream(question, graph, selectedNodeId, projectId)) {
               controller.enqueue(encoder.encode(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`));
+            }
+            if (userId) {
+              const deduction = deductCredits(userId, 'chat', `Asked: "${question.slice(0, 50)}..."`);
+              controller.enqueue(encoder.encode(`event: credits\ndata: ${JSON.stringify({ creditsRemaining: deduction.balance })}\n\n`));
             }
             controller.close();
           } catch (err) {
@@ -45,7 +66,13 @@ export async function POST(request: Request) {
     }
 
     const result = await askGraph(question, graph, selectedNodeId, projectId);
-    return Response.json(result);
+    let creditsRemaining: number | undefined;
+    if (userId) {
+      const deduction = deductCredits(userId, 'chat', `Asked: "${question.slice(0, 50)}..."`);
+      creditsRemaining = deduction.balance;
+    }
+
+    return Response.json({ ...result, creditsRemaining });
   } catch (error) {
     if (error instanceof Error && error.message === 'AI_NOT_CONFIGURED') {
       return Response.json({ error: 'Add OPENAI_API_KEY or GEMINI_API_KEY to the server environment to enable AI.' }, { status: 503 });

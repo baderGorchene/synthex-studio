@@ -8,6 +8,8 @@ import {
   projectExistsInDb
 } from '@/lib/db';
 import { normalizeGraph } from '@/lib/graph';
+import { getServerAuth } from '@/lib/auth';
+import { verifyCreditBalance, deductCredits } from '@/lib/credits';
 import type { CanvasNode, Connection, ResearchChange, ResearchMode, ResearchSession } from '@/types/canvas';
 
 const nodeTypes = new Set(['concept', 'note', 'claim', 'question', 'hypothesis', 'ai_insight']);
@@ -146,6 +148,22 @@ export async function POST(request: Request) {
     if (projectId.length > 80 || !projectExistsInDb(projectId)) return Response.json({ error: 'Project not found.' }, { status: 404 });
     if (body?.mode !== 'quick' && body?.mode !== 'deep') return Response.json({ error: 'Choose quick or deep research.' }, { status: 400 });
 
+    // Check Context Credits balance
+    const auth = await getServerAuth();
+    const userId = auth.user?.id || auth.clerkId;
+    const creditAction = mode === 'deep' ? 'deep_research' : 'quick_research';
+    if (userId) {
+      const check = verifyCreditBalance(userId, creditAction);
+      if (!check.hasSufficient) {
+        return Response.json({
+          error: 'INSUFFICIENT_CREDITS',
+          message: check.error || `Insufficient Context Credits for ${mode} research. Please top up to continue.`,
+          requiredCredits: check.cost,
+          currentBalance: check.currentBalance
+        }, { status: 402 });
+      }
+    }
+
     const graph = normalizeGraph(getAllNodesFromDb(projectId), getAllConnectionsFromDb(projectId));
     const wantsStream = request.headers.get('accept')?.includes('text/event-stream') || body?.stream === true;
 
@@ -158,7 +176,12 @@ export async function POST(request: Request) {
               if (event.type === 'done') {
                 const session = buildSessionFromResearchResult(query, mode, graph, event.result);
                 saveResearchSession(session, projectId);
-                controller.enqueue(encoder.encode(`event: done\ndata: ${JSON.stringify({ session, result: event.result })}\n\n`));
+                let creditsRemaining: number | undefined;
+                if (userId) {
+                  const deduction = deductCredits(userId, creditAction, `${mode === 'deep' ? 'Deep' : 'Quick'} research: "${query.slice(0, 50)}..."`);
+                  creditsRemaining = deduction.balance;
+                }
+                controller.enqueue(encoder.encode(`event: done\ndata: ${JSON.stringify({ session, result: event.result, creditsRemaining })}\n\n`));
               } else {
                 controller.enqueue(encoder.encode(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`));
               }
@@ -184,7 +207,14 @@ export async function POST(request: Request) {
     const resultPayload = await researchGraph(query, mode, graph, projectId);
     const session = buildSessionFromResearchResult(query, mode, graph, resultPayload);
     saveResearchSession(session, projectId);
-    return Response.json({ session }, { status: 201 });
+
+    let creditsRemaining: number | undefined;
+    if (userId) {
+      const deduction = deductCredits(userId, creditAction, `${mode === 'deep' ? 'Deep' : 'Quick'} research: "${query.slice(0, 50)}..."`);
+      creditsRemaining = deduction.balance;
+    }
+
+    return Response.json({ session, creditsRemaining }, { status: 201 });
   } catch (error) {
     if (error instanceof Error && error.message === 'AI_NOT_CONFIGURED') {
       return Response.json({ error: 'Add OPENAI_API_KEY or GEMINI_API_KEY to the server environment to enable research.' }, { status: 503 });

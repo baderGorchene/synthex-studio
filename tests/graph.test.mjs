@@ -1083,6 +1083,77 @@ test('Stripe Monetization & Subscriptions: tier definitions, checkout sessions, 
   assert.strictEqual(canceledUser?.stripeSubscriptionId, null);
 });
 
+test('Context Credits Economic Engine: consumption rates, balance pre-checks, overdraft protection, and transaction ledger', async () => {
+  const {
+    CREDIT_RATES,
+    TIER_CREDIT_QUOTAS,
+    getActionCost,
+    verifyCreditBalance,
+    deductCredits,
+    formatCredits
+  } = await import('../src/lib/credits.ts');
+  const { upsertUser } = await import('../src/lib/db.ts');
+
+  // 1. Verify canonical consumption rates
+  assert.strictEqual(CREDIT_RATES.chat, 1, 'Graph chat costs 1 credit');
+  assert.strictEqual(CREDIT_RATES.quick_research, 5, 'Quick research costs 5 credits');
+  assert.strictEqual(CREDIT_RATES.deep_research, 20, 'Deep research costs 20 credits');
+  assert.strictEqual(CREDIT_RATES.pdf_extract, 2, 'PDF extraction costs 2 credits per page');
+
+  // Verify quotas
+  assert.strictEqual(TIER_CREDIT_QUOTAS.trial, 100);
+  assert.strictEqual(TIER_CREDIT_QUOTAS.pro, 1500);
+  assert.strictEqual(TIER_CREDIT_QUOTAS.team, 5000);
+
+  // 2. Dynamic cost calculation with multipliers
+  assert.strictEqual(getActionCost('chat'), 1);
+  assert.strictEqual(getActionCost('quick_research'), 5);
+  assert.strictEqual(getActionCost('deep_research'), 20);
+  assert.strictEqual(getActionCost('pdf_extract', 15), 30, '15 PDF pages cost 30 credits');
+
+  // Format helper
+  assert.strictEqual(formatCredits(1500), '1,500');
+  assert.strictEqual(formatCredits(50), '50');
+
+  // 3. User provisioning with 25 credits
+  const user = upsertUser({
+    clerkId: `clerk_meter_${Date.now()}`,
+    email: 'metering.user@synthex.ai',
+    subscriptionTier: 'trial',
+    contextCredits: 25
+  });
+
+  // 4. Pre-check: sufficient for chat (1 credit)
+  const chatCheck = verifyCreditBalance(user.id, 'chat');
+  assert.strictEqual(chatCheck.hasSufficient, true);
+  assert.strictEqual(chatCheck.cost, 1);
+  assert.strictEqual(chatCheck.currentBalance, 25);
+
+  // 5. Pre-check: sufficient for deep research (20 credits)
+  const deepCheck = verifyCreditBalance(user.id, 'deep_research');
+  assert.strictEqual(deepCheck.hasSufficient, true);
+  assert.strictEqual(deepCheck.cost, 20);
+
+  // 6. Pre-check: insufficient for 20 pages PDF extraction (40 credits)
+  const pdfOverdraftCheck = verifyCreditBalance(user.id, 'pdf_extract', 20);
+  assert.strictEqual(pdfOverdraftCheck.hasSufficient, false);
+  assert.strictEqual(pdfOverdraftCheck.cost, 40);
+  assert.ok(pdfOverdraftCheck.error?.includes('requires 40 credits'));
+
+  // 7. Atomic deduction: execute deep research (20 credits)
+  const deduction = deductCredits(user.id, 'deep_research', 'Investigated HippoRAG benchmarks');
+  assert.strictEqual(deduction.success, true);
+  assert.strictEqual(deduction.cost, 20);
+  assert.strictEqual(deduction.balance, 5, 'Balance reduced from 25 to 5 credits');
+
+  // 8. Overdraft prevention on subsequent 20-credit operation
+  const failedDeduction = deductCredits(user.id, 'deep_research', 'Another deep run');
+  assert.strictEqual(failedDeduction.success, false);
+  assert.strictEqual(failedDeduction.balance, 5, 'Balance protected at 5 credits');
+  assert.ok(failedDeduction.error?.includes('Insufficient Context Credits'));
+});
+
+
 
 
 

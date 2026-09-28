@@ -26,6 +26,7 @@ import type { ChatToolCall } from '@/types/chat-tools';
 import { computeOrganizedLayout } from '@/lib/graph-organizer';
 import { auditGraphTopology } from '@/lib/graph-analyst';
 import { UserNav } from '@/components/auth/UserNav';
+import { CreditsModal } from '@/components/auth/CreditsModal';
 
 type Viewport = { zoom: number; pan: Coordinates };
 type Tool = 'select' | 'connect' | 'hand';
@@ -40,7 +41,7 @@ type ChatLine = {
   isStreaming?: boolean;
   researchProgress?: ResearchLiveProgress;
 };
-type Modal = 'research' | 'chat' | 'project' | 'search' | null;
+type Modal = 'research' | 'chat' | 'project' | 'search' | 'credits' | null;
 
 const blankGraph = (): KnowledgeGraph => normalizeGraph([], []);
 const newId = () => globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -304,7 +305,7 @@ export default function SynthexWorkspace() {
           });
         }
       })
-      .catch(() => {});
+      .catch(() => { });
     return () => { cancelled = true; };
   }, [announce]);
 
@@ -335,7 +336,7 @@ export default function SynthexWorkspace() {
               nodes: Object.values(graph.nodesById),
               relationships: Object.values(graph.edgesById)
             })
-          }).catch(() => {});
+          }).catch(() => { });
         }
       } catch (error) {
         setSaveState('error');
@@ -573,7 +574,7 @@ export default function SynthexWorkspace() {
               const gw = Math.max(340, currentGroup.width || 560);
               const gh = Math.max(240, currentGroup.height || 360);
               if (centerX < currentGroup.x - 70 || centerX > currentGroup.x + gw + 70 ||
-                  centerY < currentGroup.y - 70 || centerY > currentGroup.y + gh + 70) {
+                centerY < currentGroup.y - 70 || centerY > currentGroup.y + gh + 70) {
                 updates.sectionId = undefined;
               }
             }
@@ -708,7 +709,7 @@ export default function SynthexWorkspace() {
       const usedFallback = data.session.trail?.some(t => t.includes('Fallback Triggered'));
       if (usedFallback) {
         announce('Note: OpenAI was unavailable; research generated via Gemini fallback.');
-        fetch('/api/ai/status', { cache: 'no-store' }).then(r => r.json()).then(setAiStatus).catch(() => {});
+        fetch('/api/ai/status', { cache: 'no-store' }).then(r => r.json()).then(setAiStatus).catch(() => { });
       } else {
         announce('Research proposals are ready for review.');
       }
@@ -763,6 +764,23 @@ export default function SynthexWorkspace() {
 
       if (!response.ok) {
         const errBody = await response.json().catch(() => ({}));
+        if (response.status === 402) {
+          setThinkingStep(null);
+          setChatLines(current => {
+            const lastIdx = current.length - 1;
+            if (lastIdx < 0) return current;
+            const updated = [...current];
+            updated[lastIdx] = {
+              role: 'assistant',
+              text: `⚠️ **Insufficient Context Credits**\n\n${errBody.message || 'You need additional Context Credits for this research run.'}`,
+              isStreaming: false
+            };
+            return updated;
+          });
+          announce('Insufficient Context Credits. Please top up your balance.');
+          setModal('credits');
+          return;
+        }
         throw new Error(errorText(errBody, 'Research request failed.'));
       }
 
@@ -897,6 +915,9 @@ export default function SynthexWorkspace() {
                     };
                     return updated;
                   });
+                  if (typeof eventData.creditsRemaining === 'number') {
+                    setUserAuth(prev => prev ? { ...prev, contextCredits: eventData.creditsRemaining } : { contextCredits: eventData.creditsRemaining });
+                  }
                   await reloadHistory();
                   announce(`Research ready! ${session.changes.length} cards staged for review.`);
                 } else if (eventType === 'error') {
@@ -978,6 +999,22 @@ export default function SynthexWorkspace() {
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
+        if (response.status === 402) {
+          setThinkingStep(null);
+          setChatLines(current => {
+            const lastIdx = current.length - 1;
+            if (lastIdx < 0) return current;
+            const updated = [...current];
+            updated[lastIdx] = {
+              role: 'assistant',
+              text: `⚠️ **Insufficient Context Credits**\n\n${errorData.message || 'You need at least 1 Context Credit to ask the assistant.'}`,
+              isStreaming: false
+            };
+            return updated;
+          });
+          setModal('credits');
+          return;
+        }
         throw new Error(errorData.error || `HTTP ${response.status}`);
       }
 
@@ -985,6 +1022,9 @@ export default function SynthexWorkspace() {
       if (!contentType.includes('text/event-stream') || !response.body) {
         const data = await response.json();
         setThinkingStep(null);
+        if (typeof data.creditsRemaining === 'number') {
+          setUserAuth(prev => prev ? { ...prev, contextCredits: data.creditsRemaining } : { contextCredits: data.creditsRemaining });
+        }
         setChatLines(current => {
           const lastIdx = current.length - 1;
           if (lastIdx < 0) return current;
@@ -1074,8 +1114,10 @@ export default function SynthexWorkspace() {
 
                   if (eventData.usedFallback) {
                     announce('OpenAI was unavailable; response provided via Gemini fallback.');
-                    fetch('/api/ai/status', { cache: 'no-store' }).then(r => r.json()).then(setAiStatus).catch(() => {});
+                    fetch('/api/ai/status', { cache: 'no-store' }).then(r => r.json()).then(setAiStatus).catch(() => { });
                   }
+                } else if (eventType === 'credits' && typeof eventData.creditsRemaining === 'number') {
+                  setUserAuth(prev => prev ? { ...prev, contextCredits: eventData.creditsRemaining } : { contextCredits: eventData.creditsRemaining });
                 } else if (eventType === 'error') {
                   throw new Error(eventData.error || 'Chat stream failed.');
                 }
@@ -1254,7 +1296,7 @@ export default function SynthexWorkspace() {
           action: 'create',
           title: `Research review applied (${decisions.filter(d => d.status === 'accepted').length} accepted)`
         })
-      }).catch(() => {});
+      }).catch(() => { });
       announce('Review saved. Accepted changes are now in the graph.');
     } catch (error) { announce(error instanceof Error ? error.message : 'Could not save this review.'); }
   }
@@ -1274,7 +1316,7 @@ export default function SynthexWorkspace() {
             action: 'create',
             label: `Pre-import snapshot: ${file.name.replace(/\.[^/.]+$/, '')}`
           })
-        }).catch(() => {});
+        }).catch(() => { });
         updateGraph(() => imported);
         fetch('/api/revisions', {
           method: 'POST',
@@ -1286,7 +1328,7 @@ export default function SynthexWorkspace() {
             nodes: Object.values(imported.nodesById),
             relationships: Object.values(imported.edgesById)
           })
-        }).catch(() => {});
+        }).catch(() => { });
         setCanvasFitKey(value => value + 1);
         setSelectedIds([]); setSection('canvas'); setExportMenu(false);
         announce('Graph imported. Saving changes…');
@@ -1680,32 +1722,7 @@ export default function SynthexWorkspace() {
               <span className="save-label">{saveState === 'saving' ? 'Saving' : saveState === 'error' ? 'Issue' : 'Saved'}</span>
             </span>
 
-            {/* AI Engine & Fallback Status Badge */}
-            <div
-              className={`topbar-ai-badge ${aiStatus?.configured ? 'is-configured' : 'is-unconfigured'} ${aiStatus?.usingFallback ? 'is-fallback-active' : ''}`}
-              title={
-                !aiStatus?.configured
-                  ? 'No AI provider configured. Add OPENAI_API_KEY to .env.local.'
-                  : `${aiStatus.activeProvider} · ${aiStatus.activeModel} (Reasoning: ${aiStatus.reasoningEffort || 'medium'})\n` +
-                    `Embeddings: ${aiStatus.embeddingModel}\n` +
-                    (aiStatus.fallbackConfigured
-                      ? `Fallback: ${aiStatus.fallbackProvider} (${aiStatus.fallbackModel}) ready`
-                      : 'Fallback: Gemini standby')
-              }
-            >
-              <span className="ai-status-pulse" />
-              <Sparkles size={12} className="ai-badge-icon" />
-              <span className="ai-model-name">
-                {aiStatus?.configured
-                  ? `${aiStatus.activeModel} (${aiStatus.reasoningEffort || 'med'})`
-                  : 'AI Offline'}
-              </span>
-              {aiStatus?.configured && (
-                <span className={`ai-fallback-pill ${aiStatus.usingFallback ? 'is-active' : aiStatus.fallbackConfigured ? 'is-ready' : 'is-standby'}`}>
-                  {aiStatus.usingFallback ? 'Fallback Active' : aiStatus.fallbackConfigured ? 'Fallback: Gemini' : 'Fallback: Standby'}
-                </span>
-              )}
-            </div>
+
 
             <div className="topbar-divider" />
 
@@ -1767,14 +1784,10 @@ export default function SynthexWorkspace() {
               <span>Ask AI</span>
             </button>
 
-            <button className="primary-button top-research" title="Run web research (R)" onClick={() => setModal('research')}>
-              <Sparkles size={14} />
-              <span>Research</span>
-            </button>
-
             <UserNav
               contextCredits={userAuth?.contextCredits}
               subscriptionTier={userAuth?.subscriptionTier}
+              onOpenCreditsModal={() => setModal('credits')}
             />
 
             <button className="icon-button mobile-menu" aria-label="Search knowledge" onClick={() => setModal('search')}>
@@ -2154,17 +2167,33 @@ export default function SynthexWorkspace() {
                             placeholder={
                               activeResearchIntent
                                 ? (activeResearchIntent.mode === 'deep'
-                                    ? 'Enter deep research inquiry and press Enter…'
-                                    : 'Enter quick research inquiry and press Enter…')
+                                  ? 'Enter deep research inquiry and press Enter…'
+                                  : 'Enter quick research inquiry and press Enter…')
                                 : selectedNode
-                                ? `Ask about "${selectedNode.title.slice(0, 24)}"…`
-                                : 'Ask a question or select a tool…'
+                                  ? `Ask about "${selectedNode.title.slice(0, 24)}"…`
+                                  : 'Ask a question or select a tool…'
                             }
                             value={chatInput}
                             onChange={event => setChatInput(event.target.value)}
                             maxLength={2000}
                             disabled={!aiConfigured || chatBusy}
                           />
+
+                          <button
+                            type="button"
+                            onClick={() => setModal('credits')}
+                            className="chat-cost-pill"
+                            title="Context Credits required for this action · Click to view balance and refill"
+                          >
+                            <Zap size={10} className="fill-indigo-500 text-indigo-500 shrink-0" />
+                            <span>
+                              {activeResearchIntent?.mode === 'deep'
+                                ? '20 Credits'
+                                : activeResearchIntent?.mode === 'quick'
+                                ? '5 Credits'
+                                : '1 Credit'}
+                            </span>
+                          </button>
 
                           <button
                             type="submit"
@@ -2233,8 +2262,8 @@ export default function SynthexWorkspace() {
                   {aiStatus.usingFallback
                     ? 'Fallback Active'
                     : aiStatus.fallbackConfigured
-                    ? `Fallback: ${aiStatus.fallbackProvider} ready`
-                    : 'Fallback: Gemini standby'}
+                      ? `Fallback: ${aiStatus.fallbackProvider} ready`
+                      : 'Fallback: Gemini standby'}
                 </span>
               </div>
             )}
@@ -2266,6 +2295,16 @@ export default function SynthexWorkspace() {
           <div className="search-bottom"><span><Search size={13} /> {plural(nodes.length, 'record')} indexed in this workspace</span><span>Press <kbd>Ctrl/⌘ K</kbd> to search</span></div>
         </section>
       </div>}
+
+      <CreditsModal
+        isOpen={modal === 'credits'}
+        onClose={() => setModal(null)}
+        currentBalance={userAuth?.contextCredits}
+        subscriptionTier={userAuth?.subscriptionTier}
+        onRefillSuccess={(newBalance) => {
+          setUserAuth(prev => prev ? { ...prev, contextCredits: newBalance } : { contextCredits: newBalance });
+        }}
+      />
 
       {activeSession && <div className="modal-scrim" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) closeSession(); }}>
         <section className="work-modal review-modal" role="dialog" aria-modal="true" aria-labelledby="review-title">
