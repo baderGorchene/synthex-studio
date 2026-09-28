@@ -34,8 +34,21 @@
 }
 
 * { box-sizing: border-box; }
-html, body { width: 100%; height: 100%; margin: 0; }
-body { color: var(--ink); background: var(--canvas); font-family: var(--font-ui); font-size: 13.5px; line-height: 1.5; -webkit-font-smoothing: antialiased; }
+html {
+  min-height: 100%;
+  overflow-y: auto;
+  scroll-behavior: smooth;
+}
+body {
+  min-height: 100%;
+  margin: 0;
+  color: var(--ink);
+  background: var(--canvas);
+  font-family: var(--font-ui);
+  font-size: 13.5px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
 button, input, textarea, select { font: inherit; }
 button { color: inherit; }
 h1, h2, h3 { font-family: var(--font-ui); color: var(--ink); }
@@ -2287,6 +2300,58 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
 
+/* Marketing page scroll and motion; workspace routes keep their fixed canvas. */
+html:has(.marketing-landing-page) {
+  height: auto;
+  min-height: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+body:has(.marketing-landing-page) {
+  height: auto !important;
+  min-height: 100dvh;
+  overflow-x: hidden;
+  overflow-y: auto !important;
+}
+.marketing-landing-page section[id] { scroll-margin-top: 5rem; }
+.marketing-landing-page .landing-hero > div:first-child > * {
+  animation: landing-copy-arrive 560ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.marketing-landing-page .landing-hero > div:first-child > *:nth-child(2) { animation-delay: 70ms; }
+.marketing-landing-page .landing-hero > div:first-child > *:nth-child(3) { animation-delay: 130ms; }
+.marketing-landing-page .landing-hero > div:first-child > *:nth-child(4) { animation-delay: 190ms; }
+.marketing-landing-page .landing-canvas-preview {
+  view-timeline-name: --canvas-sheet;
+  view-timeline-axis: block;
+}
+.marketing-landing-page .landing-sheet-frame {
+  animation: landing-sheet-unfold linear both;
+  animation-timeline: --canvas-sheet;
+  animation-range: entry 0% entry 38%;
+}
+.marketing-landing-page a,
+.marketing-landing-page button { transition: color 150ms ease, background-color 150ms ease, border-color 150ms ease, box-shadow 180ms ease, transform 180ms cubic-bezier(0.16, 1, 0.3, 1); }
+.marketing-landing-page a:active,
+.marketing-landing-page button:active { transform: scale(0.98); }
+.marketing-landing-page [id="features"] .grid > div,
+.marketing-landing-page [id="metaphor"] .grid > div,
+.marketing-landing-page [id="pricing"] .grid > div {
+  transition: transform 180ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 180ms ease, border-color 180ms ease;
+}
+.marketing-landing-page [id="features"] .grid > div:hover,
+.marketing-landing-page [id="metaphor"] .grid > div:hover,
+.marketing-landing-page [id="pricing"] .grid > div:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 12px 30px rgba(40, 75, 99, 0.09);
+}
+@keyframes landing-copy-arrive {
+  from { opacity: 0; transform: translateY(12px); filter: blur(3px); }
+  to { opacity: 1; transform: translateY(0); filter: blur(0); }
+}
+@keyframes landing-sheet-unfold {
+  from { opacity: 0.72; transform: translateY(14px) scale(0.99); clip-path: inset(0 0 12%); }
+  to { opacity: 1; transform: translateY(0) scale(1); clip-path: inset(0); }
+}
 /* Readable typography scale across workspace surfaces */
 button:not(.tool-button):not(.icon-button):not(.group-fold):not(.assistant-trigger):not(.drawer-tab) { font-size: 12px; }
 .workspace-caption, .sidebar-nav-heading, .local-storage-note, .save-indicator { font-size: 11px; }
