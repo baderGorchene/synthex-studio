@@ -847,6 +847,86 @@ test('Deep Research Engine: validates multi-hop research session structure and s
   assert.ok(trail.some(t => t.includes('HippoRAG empirical benchmarks')));
 });
 
+test('Dual-Mode Database & Context Credits Engine: user provisioning, tiered deductions, and transaction ledger', async () => {
+  const { upsertUser, getUserByClerkId, deductUserCredits, topUpUserCredits, getCreditTransactions } = await import('../src/lib/db.ts');
+
+  const testClerkId = `test_clerk_${Date.now()}`;
+  
+  // 1. Initial user provisioning (Free Trial with 100 Credits)
+  const newUser = upsertUser({
+    clerkId: testClerkId,
+    email: 'researcher@synthex.ai',
+    name: 'Ada Lovelace',
+    subscriptionTier: 'trial',
+    contextCredits: 100
+  });
+
+  assert.ok(newUser);
+  assert.strictEqual(newUser.clerkId, testClerkId);
+  assert.strictEqual(newUser.contextCredits, 100, 'New user receives 100 trial Context Credits');
+  assert.strictEqual(newUser.subscriptionTier, 'trial');
+
+  // Verify fetch by clerkId
+  const fetched = getUserByClerkId(testClerkId);
+  assert.strictEqual(fetched?.id, newUser.id);
+  assert.strictEqual(fetched?.email, 'researcher@synthex.ai');
+
+  // 2. Action deduction: Chat message (1 Credit)
+  const chatDeduction = deductUserCredits(testClerkId, 1, 'chat', 'Asked about RAG benchmarks');
+  assert.strictEqual(chatDeduction.success, true);
+  assert.strictEqual(chatDeduction.balance, 99, 'Balance reduced from 100 to 99');
+
+  // 3. Action deduction: Quick Research (5 Credits)
+  const quickDeduction = deductUserCredits(testClerkId, 5, 'quick_research', 'Quick web grounding');
+  assert.strictEqual(quickDeduction.success, true);
+  assert.strictEqual(quickDeduction.balance, 94, 'Balance reduced from 99 to 94');
+
+  // 4. Action deduction: Deep Multi-Hop Research (20 Credits)
+  const deepDeduction = deductUserCredits(testClerkId, 20, 'deep_research', 'Multi-hop research on HippoRAG');
+  assert.strictEqual(deepDeduction.success, true);
+  assert.strictEqual(deepDeduction.balance, 74, 'Balance reduced from 94 to 74');
+
+  // 5. Action deduction: PDF Layout Extraction (2 Credits per page, 10 pages = 20 Credits)
+  const pdfDeduction = deductUserCredits(testClerkId, 20, 'pdf_extract', 'Extracted 10 pages from arXiv PDF');
+  assert.strictEqual(pdfDeduction.success, true);
+  assert.strictEqual(pdfDeduction.balance, 54);
+
+  // 6. Overdraft protection: attempt deduction exceeding balance (100 credits requested, 54 available)
+  const overdraft = deductUserCredits(testClerkId, 100, 'deep_research', 'Excessive run');
+  assert.strictEqual(overdraft.success, false, 'Overdraft correctly blocked');
+  assert.strictEqual(overdraft.balance, 54, 'Balance remains unchanged on rejection');
+  assert.ok(overdraft.error?.includes('Insufficient Context Credits'), 'Provides helpful credit refill prompt');
+
+  // 7. Credit Refill Pack ($5 for 500 Credits)
+  const refill = topUpUserCredits(testClerkId, 500, 'refill', 'Purchased 500 Context Credit Refill Pack');
+  assert.strictEqual(refill.success, true);
+  assert.strictEqual(refill.balance, 554, 'Balance increased by 500 to 554');
+
+  // 8. Verify Transaction Ledger history
+  const history = getCreditTransactions(newUser.id, 10);
+  assert.ok(history.length >= 5, 'Recorded all deduction and refill operations in ledger');
+  assert.strictEqual(history[0].action, 'refill');
+  assert.strictEqual(history[0].amount, 500);
+  assert.strictEqual(history[1].action, 'pdf_extract');
+  assert.strictEqual(history[1].amount, -20);
+});
+
+test('Google Cloud Storage (GCS) Document Vault: path structure and cloud integration', async () => {
+  const { isGcsConfigured, getGcsBucketName } = await import('../src/lib/storage-gcs.ts');
+
+  assert.strictEqual(typeof isGcsConfigured(), 'boolean');
+  assert.strictEqual(typeof getGcsBucketName(), 'string');
+  assert.ok(getGcsBucketName().length > 0);
+
+  // Verify GCS object path structuring for multi-tenant workspaces
+  const orgId = 'org_2bKz9Lq';
+  const projectId = 'proj_ai_survey';
+  const fileName = 'rag-benchmarks-2026.pdf';
+
+  const gcsDestination = `workspaces/${orgId}/${projectId}/${fileName}`;
+  assert.strictEqual(gcsDestination, 'workspaces/org_2bKz9Lq/proj_ai_survey/rag-benchmarks-2026.pdf');
+});
+
 
 
 

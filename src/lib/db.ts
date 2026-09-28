@@ -75,7 +75,9 @@ function ensureSchemaColumns(db: Database.Database) {
     { name: 'fileName', type: 'TEXT' },
     { name: 'fileSize', type: 'INTEGER' },
     { name: 'fileType', type: 'TEXT' },
-    { name: 'pageCount', type: 'INTEGER' }
+    { name: 'pageCount', type: 'INTEGER' },
+    { name: 'userId', type: 'TEXT' },
+    { name: 'organizationId', type: 'TEXT' }
   ];
   for (const col of nodeColumns) {
     try {
@@ -92,7 +94,9 @@ function ensureSchemaColumns(db: Database.Database) {
     { name: 'color', type: 'TEXT' },
     { name: 'animated', type: 'INTEGER' },
     { name: 'metadata', type: 'TEXT' },
-    { name: 'projectId', type: "TEXT NOT NULL DEFAULT 'default'" }
+    { name: 'projectId', type: "TEXT NOT NULL DEFAULT 'default'" },
+    { name: 'userId', type: 'TEXT' },
+    { name: 'organizationId', type: 'TEXT' }
   ];
   for (const col of connColumns) {
     try {
@@ -115,10 +119,17 @@ function ensureSchemaColumns(db: Database.Database) {
       createdAt INTEGER NOT NULL
     )
   `);
-  try {
-    db.exec("ALTER TABLE research_sessions ADD COLUMN projectId TEXT NOT NULL DEFAULT 'default'");
-  } catch {
-    // Column already exists.
+  const sessionColumns = [
+    { name: 'projectId', type: "TEXT NOT NULL DEFAULT 'default'" },
+    { name: 'userId', type: 'TEXT' },
+    { name: 'organizationId', type: 'TEXT' }
+  ];
+  for (const col of sessionColumns) {
+    try {
+      db.exec(`ALTER TABLE research_sessions ADD COLUMN ${col.name} ${col.type}`);
+    } catch {
+      // Column already exists.
+    }
   }
 
   migrateProjectScopedIds(db);
@@ -129,6 +140,20 @@ function ensureSchemaColumns(db: Database.Database) {
       title TEXT NOT NULL,
       createdAt INTEGER NOT NULL
     );
+  `);
+  const projectColumns = [
+    { name: 'userId', type: 'TEXT' },
+    { name: 'organizationId', type: 'TEXT' }
+  ];
+  for (const col of projectColumns) {
+    try {
+      db.exec(`ALTER TABLE projects ADD COLUMN ${col.name} ${col.type}`);
+    } catch {
+      // Column already exists
+    }
+  }
+
+  db.exec(`
     CREATE INDEX IF NOT EXISTS nodes_project_idx ON nodes(projectId);
     CREATE INDEX IF NOT EXISTS connections_project_idx ON connections(projectId);
     CREATE INDEX IF NOT EXISTS research_project_idx ON research_sessions(projectId, createdAt);
@@ -144,6 +169,34 @@ function ensureSchemaColumns(db: Database.Database) {
       createdAt INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS graph_revisions_project_idx ON graph_revisions(projectId, createdAt DESC);
+
+    -- Multi-tenant user identity & billing accounts
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      clerkId TEXT UNIQUE NOT NULL,
+      email TEXT,
+      name TEXT,
+      stripeCustomerId TEXT UNIQUE,
+      subscriptionTier TEXT NOT NULL DEFAULT 'trial',
+      subscriptionStatus TEXT NOT NULL DEFAULT 'active',
+      contextCredits INTEGER NOT NULL DEFAULT 100,
+      trialEndsAt INTEGER,
+      createdAt INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS users_clerk_idx ON users(clerkId);
+    CREATE INDEX IF NOT EXISTS users_stripe_idx ON users(stripeCustomerId);
+
+    -- Context credits deduction & refill ledger
+    CREATE TABLE IF NOT EXISTS credit_transactions (
+      id TEXT PRIMARY KEY,
+      userId TEXT NOT NULL,
+      amount INTEGER NOT NULL,
+      action TEXT NOT NULL,
+      balanceAfter INTEGER NOT NULL,
+      metadata TEXT,
+      createdAt INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS credit_tx_user_idx ON credit_transactions(userId, createdAt DESC);
   `);
 }
 
@@ -1006,5 +1059,162 @@ export function deleteDatabaseBackup(fileName: string): boolean {
   }
 
   return deleted;
+}
+
+// ============================================================================
+// Multi-Tenant Users & Context Credits Ledger
+// ============================================================================
+
+export interface UserRecord {
+  id: string;
+  clerkId: string;
+  email: string | null;
+  name: string | null;
+  stripeCustomerId: string | null;
+  subscriptionTier: 'trial' | 'byok' | 'pro' | 'team';
+  subscriptionStatus: 'active' | 'past_due' | 'canceled' | 'trialing';
+  contextCredits: number;
+  trialEndsAt: number | null;
+  createdAt: number;
+}
+
+export interface CreditTransaction {
+  id: string;
+  userId: string;
+  amount: number;
+  action: 'chat' | 'quick_research' | 'deep_research' | 'pdf_extract' | 'refill' | 'bonus' | string;
+  balanceAfter: number;
+  metadata?: string | null;
+  createdAt: number;
+}
+
+export function getUserByClerkId(clerkId: string): UserRecord | null {
+  const db = getDatabase();
+  const row = db.prepare('SELECT * FROM users WHERE clerkId = ?').get(clerkId) as UserRecord | undefined;
+  return row || null;
+}
+
+export function upsertUser(user: Partial<UserRecord> & { clerkId: string }): UserRecord {
+  const db = getDatabase();
+  const existing = getUserByClerkId(user.clerkId);
+  const now = Date.now();
+
+  if (existing) {
+    const next: UserRecord = {
+      ...existing,
+      ...user,
+      id: existing.id,
+      clerkId: user.clerkId,
+      createdAt: existing.createdAt
+    };
+    db.prepare(`
+      UPDATE users SET
+        email = ?, name = ?, stripeCustomerId = ?, subscriptionTier = ?,
+        subscriptionStatus = ?, contextCredits = ?, trialEndsAt = ?
+      WHERE clerkId = ?
+    `).run(
+      next.email, next.name, next.stripeCustomerId, next.subscriptionTier,
+      next.subscriptionStatus, next.contextCredits, next.trialEndsAt,
+      next.clerkId
+    );
+    return next;
+  }
+
+  const id = `usr-${globalThis.crypto?.randomUUID?.() || Math.random().toString(36).slice(2, 10)}`;
+  const trialEnds = user.trialEndsAt || (now + 3 * 24 * 60 * 60 * 1000); // 3 days trial
+  const newUser: UserRecord = {
+    id,
+    clerkId: user.clerkId,
+    email: user.email || null,
+    name: user.name || null,
+    stripeCustomerId: user.stripeCustomerId || null,
+    subscriptionTier: user.subscriptionTier || 'trial',
+    subscriptionStatus: user.subscriptionStatus || 'trialing',
+    contextCredits: typeof user.contextCredits === 'number' ? user.contextCredits : 100,
+    trialEndsAt: trialEnds,
+    createdAt: now
+  };
+
+  db.prepare(`
+    INSERT INTO users (id, clerkId, email, name, stripeCustomerId, subscriptionTier, subscriptionStatus, contextCredits, trialEndsAt, createdAt)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    newUser.id, newUser.clerkId, newUser.email, newUser.name, newUser.stripeCustomerId,
+    newUser.subscriptionTier, newUser.subscriptionStatus, newUser.contextCredits, newUser.trialEndsAt, newUser.createdAt
+  );
+
+  return newUser;
+}
+
+export function deductUserCredits(
+  clerkId: string,
+  amount: number,
+  action: CreditTransaction['action'],
+  metadata?: string
+): { success: boolean; balance: number; error?: string } {
+  const db = getDatabase();
+  const user = getUserByClerkId(clerkId);
+  if (!user) {
+    return { success: false, balance: 0, error: 'User account not found.' };
+  }
+
+  if (user.contextCredits < amount) {
+    return {
+      success: false,
+      balance: user.contextCredits,
+      error: `Insufficient Context Credits (${user.contextCredits} available, ${amount} required). Please refill your credits.`
+    };
+  }
+
+  const nextBalance = user.contextCredits - amount;
+  const txId = `ctx-${globalThis.crypto?.randomUUID?.() || Math.random().toString(36).slice(2, 10)}`;
+  const now = Date.now();
+
+  const runTx = db.transaction(() => {
+    db.prepare('UPDATE users SET contextCredits = ? WHERE id = ?').run(nextBalance, user.id);
+    db.prepare(`
+      INSERT INTO credit_transactions (id, userId, amount, action, balanceAfter, metadata, createdAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(txId, user.id, -amount, action, nextBalance, metadata || null, now);
+  });
+
+  runTx();
+
+  return { success: true, balance: nextBalance };
+}
+
+export function topUpUserCredits(
+  clerkId: string,
+  amount: number,
+  action: CreditTransaction['action'] = 'refill',
+  metadata?: string
+): { success: boolean; balance: number } {
+  const db = getDatabase();
+  let user = getUserByClerkId(clerkId);
+  if (!user) {
+    user = upsertUser({ clerkId });
+  }
+
+  const nextBalance = user.contextCredits + amount;
+  const txId = `ctx-${globalThis.crypto?.randomUUID?.() || Math.random().toString(36).slice(2, 10)}`;
+  const now = Date.now();
+
+  const runTx = db.transaction(() => {
+    db.prepare('UPDATE users SET contextCredits = ? WHERE id = ?').run(nextBalance, user.id);
+    db.prepare(`
+      INSERT INTO credit_transactions (id, userId, amount, action, balanceAfter, metadata, createdAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(txId, user.id, amount, action, nextBalance, metadata || null, now);
+  });
+
+  runTx();
+
+  return { success: true, balance: nextBalance };
+}
+
+export function getCreditTransactions(userId: string, limit = 50): CreditTransaction[] {
+  const db = getDatabase();
+  return db.prepare('SELECT * FROM credit_transactions WHERE userId = ? ORDER BY createdAt DESC LIMIT ?')
+    .all(userId, limit) as CreditTransaction[];
 }
 

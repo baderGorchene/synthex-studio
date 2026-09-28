@@ -1,0 +1,53 @@
+# ==============================================================================
+# Google Cloud Build & Cloud Run CI/CD Pipeline for Synthex Studio
+# ==============================================================================
+
+steps:
+  # 1. Build the multi-stage Next.js production image
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/synthex-studio:$COMMIT_SHA'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/synthex-studio:latest'
+      - '.'
+
+  # 2. Push image to Google Container / Artifact Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - 'gcr.io/$PROJECT_ID/synthex-studio:$COMMIT_SHA'
+
+  # 3. Deploy to Google Cloud Run (Fully Managed, Auto-Scaling to 0)
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'synthex-studio'
+      - '--image'
+      - 'gcr.io/$PROJECT_ID/synthex-studio:$COMMIT_SHA'
+      - '--region'
+      - 'us-central1'
+      - '--platform'
+      - 'managed'
+      - '--allow-unauthenticated'
+      - '--memory'
+      - '2Gi'
+      - '--cpu'
+      - '2'
+      - '--min-instances'
+      - '0'
+      - '--max-instances'
+      - '10'
+      - '--concurrency'
+      - '80'
+      - '--set-env-vars'
+      - 'NODE_ENV=production'
+
+images:
+  - 'gcr.io/$PROJECT_ID/synthex-studio:$COMMIT_SHA'
+  - 'gcr.io/$PROJECT_ID/synthex-studio:latest'
+
+timeout: '1200s'

@@ -36,27 +36,47 @@ export async function POST(request: Request) {
     // Unique filename: timestamp + random suffix + safe extension
     const uniqueSuffix = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const fileName = `${baseSlug}-${uniqueSuffix}${safeExt}`;
+    const fileType = safeExt.replace('.', '') || file.type.split('/')[1] || 'bin';
 
-    // Target upload folder in public/uploads/{projectId}
+    const arrayBuffer = await file.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+
+    // 1. If Google Cloud Storage (GCS) is configured, upload to cloud vault
+    const { isGcsConfigured, uploadBufferToGcs } = await import('@/lib/storage-gcs');
+    if (isGcsConfigured()) {
+      try {
+        const gcsDestination = `workspaces/${projectId}/${fileName}`;
+        const gcsResult = await uploadBufferToGcs(buffer, gcsDestination, file.type || 'application/octet-stream');
+        return NextResponse.json({
+          url: gcsResult.url,
+          fileName: rawName,
+          fileSize: file.size,
+          fileType,
+          mimeType: file.type,
+          storage: 'gcs',
+          gcsPath: gcsResult.gcsPath
+        });
+      } catch (gcsErr) {
+        console.warn('GCS upload attempt failed, falling back to local storage:', gcsErr);
+      }
+    }
+
+    // 2. Local disk fallback (public/uploads/{projectId})
     const uploadsDir = path.join(process.cwd(), 'public', 'uploads', projectId);
     await fs.mkdir(uploadsDir, { recursive: true });
 
     const targetFilePath = path.join(uploadsDir, fileName);
+    await fs.writeFile(targetFilePath, buffer);
 
-    // Write file to disk
-    const arrayBuffer = await file.arrayBuffer();
-    await fs.writeFile(targetFilePath, Buffer.from(arrayBuffer));
-
-    // Return the publicly accessible relative URL
     const relativeUrl = `/uploads/${projectId}/${fileName}`;
-    const fileType = safeExt.replace('.', '') || file.type.split('/')[1] || 'bin';
 
     return NextResponse.json({
       url: relativeUrl,
       fileName: rawName,
       fileSize: file.size,
       fileType,
-      mimeType: file.type
+      mimeType: file.type,
+      storage: 'local'
     });
   } catch (error) {
     console.error('File upload error:', error);

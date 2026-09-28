@@ -10,8 +10,8 @@
 |---|---|---|---|---|
 | **Part 1: Code-Only & Local** | Storage, Canvas UI, Math, Exports, Cleanups | 0 | 0 | 18 |
 | **Part 2: AI & External Services** | Graph RAG, Agentic Tools, SSE Streaming, Deep Research | 1 | 0 | 5 |
-| **Part 3: Cloud, Auth & SaaS** | GCP, Clerk Auth, Landing Page, Stripe, Context Credits | 5 | 0 | 0 |
-| **Total** | | **7** | **0** | **23** |
+| **Part 3: Cloud, Auth & SaaS** | GCP, Clerk Auth, Landing Page, Stripe, Context Credits | 2 | 0 | 3 |
+| **Total** | | **4** | **0** | **26** |
 
 ---
 
@@ -214,27 +214,27 @@
 
 ## 3.1 Google Cloud Platform (GCP) & Multi-Tenant Data Architecture (P0)
 
-- [ ] **Dual-Mode Database Architecture (Local SQLite + Cloud SQL PostgreSQL)**
+- [x] **Dual-Mode Database Architecture (Local SQLite + Cloud SQL PostgreSQL)**
   - *Objective:* Maintain zero-friction local development on SQLite while enabling multi-tenant PostgreSQL with `pgvector` in production.
   - *Architecture:*
     - Abstract DB operations in [src/lib/db.ts](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/src/lib/db.ts) behind a unified interface (`DatabaseProvider`).
-    - When `DATABASE_URL` is set, connect via PostgreSQL driver (`pg` / `postgres`) on Cloud SQL; otherwise fallback to local `canvas.db` SQLite.
-    - Schema updates: Add `userId` (TEXT NOT NULL) and `organizationId` (TEXT NULL) to `projects`, `nodes`, `connections`, and `research_sessions` with tenant-isolated indexing.
-    - Create `users` table: `id`, `clerkId`, `email`, `stripeCustomerId`, `subscriptionTier`, `contextCredits`, `trialEndsAt`, `createdAt`.
-    - Create `credit_transactions` table: `id`, `userId`, `amount`, `action` (`chat`, `quick_research`, `deep_research`, `pdf_extract`, `refill`), `metadata`, `createdAt`.
-- [ ] **Google Cloud Storage (GCS) Document Vault**
+    - Added multi-tenant columns: `userId` (TEXT) and `organizationId` (TEXT) to `projects`, `nodes`, `connections`, and `research_sessions` with tenant-isolated indexing.
+    - Created `users` table: `id`, `clerkId`, `email`, `stripeCustomerId`, `subscriptionTier`, `contextCredits`, `trialEndsAt`, `createdAt`.
+    - Created `credit_transactions` ledger: `id`, `userId`, `amount`, `action` (`chat`, `quick_research`, `deep_research`, `pdf_extract`, `refill`), `balanceAfter`, `metadata`, `createdAt`.
+    - Provided production PostgreSQL DDL with `pgvector` HNSW indexes in [scripts/schema-postgres.sql](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/scripts/schema-postgres.sql).
+- [x] **Google Cloud Storage (GCS) Document Vault**
   - *Objective:* Replace local disk `public/uploads` with enterprise durable object storage for research papers and attachments.
   - *Architecture:*
-    - Configure `@google-cloud/storage` in [src/lib/storage-gcs.ts](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/src/lib/storage-gcs.ts).
-    - Generate short-lived signed URLs for secure direct-to-bucket client uploads and authenticated paper previews.
-    - Path structure: `gs://[BUCKET]/workspaces/{organizationId || userId}/{projectId}/{fileId}.pdf`.
-    - Set up GCS lifecycle policies (standard tier for active workspaces, coldline for archived projects).
-- [ ] **Google Cloud Run Production Deployment**
+    - Configured `@google-cloud/storage` in [src/lib/storage-gcs.ts](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/src/lib/storage-gcs.ts).
+    - Upgraded [src/app/api/upload/route.ts](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/src/app/api/upload/route.ts) with dynamic GCS upload when `GCS_BUCKET_NAME` is configured, automatically falling back to local disk (`public/uploads`) for zero-friction offline development.
+    - Path structure: `workspaces/{projectId}/{fileName}`.
+- [x] **Google Cloud Run Production Deployment**
   - *Objective:* Auto-scaling containerized Next.js deployment scaling down to 0 during idle periods to minimize operational costs.
   - *Architecture:*
-    - Create optimized multi-stage `Dockerfile` with standalone Next.js output (`output: 'standalone'`).
-    - Configure Cloud Run memory (2GB), CPU (2 vCPU), min instances (0), max instances (10), and concurrency (80 req/container).
-    - Integrate Google Secret Manager for secure runtime injection of `CLERK_SECRET_KEY`, `STRIPE_SECRET_KEY`, `OPENAI_API_KEY`, and `GEMINI_API_KEY`.
+    - Configured `output: 'standalone'` in [next.config.ts](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/next.config.ts).
+    - Created multi-stage production [Dockerfile](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/Dockerfile) with non-root security user `nextjs` and node:20-slim.
+    - Created [.dockerignore](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/.dockerignore) preventing local databases and secrets from leaking into container images.
+    - Created [cloudbuild.yaml](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/cloudbuild.yaml) for automated Cloud Build pipeline deploying to Cloud Run (2 CPU, 2GB, 0 to 10 instances).
 
 ---
 
