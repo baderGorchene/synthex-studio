@@ -2310,9 +2310,10 @@ html:has(.marketing-landing-page) {
 body:has(.marketing-landing-page) {
   height: auto !important;
   min-height: 100dvh;
-  overflow-x: hidden;
-  overflow-y: auto !important;
+  overflow-x: clip;
+  overflow-y: visible !important;
 }
+.marketing-landing-page { overflow-x: clip; overflow-y: visible; }
 .marketing-landing-page section[id] { scroll-margin-top: 5rem; }
 .marketing-landing-page .landing-hero > div:first-child > * {
   animation: landing-copy-arrive 560ms cubic-bezier(0.16, 1, 0.3, 1) both;
@@ -2333,13 +2334,9 @@ body:has(.marketing-landing-page) {
 .marketing-landing-page button { transition: color 150ms ease, background-color 150ms ease, border-color 150ms ease, box-shadow 180ms ease, transform 180ms cubic-bezier(0.16, 1, 0.3, 1); }
 .marketing-landing-page a:active,
 .marketing-landing-page button:active { transform: scale(0.98); }
-.marketing-landing-page [id="features"] .grid > div,
-.marketing-landing-page [id="metaphor"] .grid > div,
 .marketing-landing-page [id="pricing"] .grid > div {
   transition: transform 180ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 180ms ease, border-color 180ms ease;
 }
-.marketing-landing-page [id="features"] .grid > div:hover,
-.marketing-landing-page [id="metaphor"] .grid > div:hover,
 .marketing-landing-page [id="pricing"] .grid > div:hover {
   transform: translateY(-3px);
   box-shadow: 0 12px 30px rgba(40, 75, 99, 0.09);
@@ -2351,6 +2348,122 @@ body:has(.marketing-landing-page) {
 @keyframes landing-sheet-unfold {
   from { opacity: 0.72; transform: translateY(14px) scale(0.99); clip-path: inset(0 0 12%); }
   to { opacity: 1; transform: translateY(0) scale(1); clip-path: inset(0); }
+}
+
+/* Editorial hierarchy for the research landing page. */
+.marketing-landing-page h1,
+.marketing-landing-page h2 {
+  font-family: Georgia, "Times New Roman", serif;
+  font-weight: 500;
+}
+.marketing-landing-page h1 {
+  max-width: 20ch;
+  font-size: clamp(3rem, 5.5vw, 4.85rem);
+  line-height: 1.02;
+  letter-spacing: -0.047em;
+}
+.marketing-landing-page h2 {
+  max-width: 20ch;
+  font-size: clamp(2rem, 3.5vw, 3.25rem);
+  line-height: 1.08;
+  letter-spacing: -0.035em;
+}
+.marketing-landing-page .landing-hero-copy { max-width: 100%; margin-inline: 0; }
+.marketing-landing-page .landing-trust-line {
+  color: #3c6e71;
+  letter-spacing: 0.025em;
+}
+.marketing-landing-page .landing-hero-copy > p { max-width: 62ch; line-height: 1.75; }
+.marketing-landing-page .landing-hero-actions { align-items: flex-start; }
+.marketing-landing-page .landing-trial-details { max-width: 60ch; }
+.marketing-landing-page .landing-canvas-preview { box-shadow: 0 18px 54px rgba(40, 75, 99, 0.08); }
+.marketing-landing-page .landing-sheet-frame { background-color: #fbfcfa; }
+.marketing-landing-page .landing-sheet-frame [role="button"] {
+  text-align: left;
+  transition: transform 180ms cubic-bezier(0.16, 1, 0.3, 1), border-color 150ms ease, box-shadow 180ms ease;
+}
+.marketing-landing-page .landing-sheet-frame [role="button"]:focus-visible {
+  outline: 2px solid #3c6e71;
+  outline-offset: 3px;
+}
+.marketing-landing-page .landing-proof { max-width: 68rem; margin-inline: auto; }
+.marketing-landing-page .landing-proof > p {
+  margin-bottom: 1.4rem;
+  color: #284b63;
+  font-size: 0.7rem;
+  letter-spacing: 0.13em;
+}
+.marketing-landing-page .landing-proof-item { min-height: 3rem; border-bottom: 1px solid #d9d9d9; }
+.marketing-landing-page .landing-proof-item svg { flex: 0 0 auto; }
+.marketing-landing-page #metaphor > div > div:first-child,
+.marketing-landing-page #features > div > div:first-child,
+.marketing-landing-page #pricing > div > div:first-child,
+.marketing-landing-page #faq > div > div:first-child {
+  margin-inline: 0;
+  text-align: left;
+}
+.marketing-landing-page #metaphor > div > div:first-child > p,
+.marketing-landing-page #features > div > div:first-child > p,
+.marketing-landing-page #pricing > div > div:first-child > p { max-width: 62ch; }
+.marketing-landing-page #metaphor .grid { gap: 0; }
+.marketing-landing-page #metaphor .grid > div {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 1.5rem 2rem;
+}
+.marketing-landing-page #metaphor .grid > div + div { border-left: 1px solid #d9d9d9; }
+.marketing-landing-page #metaphor .grid > div:first-child { padding-left: 0; }
+.marketing-landing-page #metaphor .grid > div:last-child { padding-right: 0; }
+.marketing-landing-page #features .grid { column-gap: 2rem; row-gap: 0; }
+.marketing-landing-page #features .grid > div {
+  border: 0;
+  border-bottom: 1px solid #d9d9d9;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 1.5rem 0;
+}
+.marketing-landing-page #features .grid > div:hover { transform: none; box-shadow: none; }
+.marketing-landing-page #features .grid > div > div:first-child {
+  width: 2rem;
+  height: 2rem;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+}
+.marketing-landing-page #pricing .grid > div { transition: transform 180ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 180ms ease; }
+.marketing-landing-page #pricing .grid > div span.text-3xl { font-family: Georgia, "Times New Roman", serif; font-variant-numeric: lining-nums; }
+.marketing-landing-page #faq .space-y-3 > div { transition: border-color 150ms ease, box-shadow 180ms ease; }
+.marketing-landing-page #faq .space-y-3 > div:focus-within { border-color: #3c6e71; box-shadow: 0 0 0 2px rgba(60, 110, 113, 0.08); }
+.marketing-landing-page .landing-faq-answer { animation: landing-answer-in 180ms cubic-bezier(0.16, 1, 0.3, 1) both; }
+.marketing-landing-page a:focus-visible,
+.marketing-landing-page button:focus-visible { outline-color: #3c6e71; outline-offset: 3px; }
+@keyframes landing-answer-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes landing-edge-trace {
+  from { stroke-dashoffset: 20; opacity: 0.25; }
+  to { stroke-dashoffset: 0; opacity: 0.85; }
+}
+@supports (animation-timeline: view()) {
+  .marketing-landing-page .landing-edge-flow {
+    animation: landing-edge-trace linear both;
+    animation-timeline: --canvas-sheet;
+    animation-range: entry 0% entry 70%;
+  }
+}
+@media (max-width: 767px) {
+  .marketing-landing-page h1 { max-width: 13ch; font-size: clamp(2.45rem, 9vw, 3.35rem); }
+  .marketing-landing-page h2 { font-size: clamp(1.9rem, 8vw, 2.65rem); }
+  .marketing-landing-page #metaphor .grid { gap: 0; }
+  .marketing-landing-page #metaphor .grid > div,
+  .marketing-landing-page #metaphor .grid > div:first-child,
+  .marketing-landing-page #metaphor .grid > div:last-child { padding: 1.5rem 0; }
+  .marketing-landing-page #metaphor .grid > div + div { border-left: 0; border-top: 1px solid #d9d9d9; }
+  .marketing-landing-page #features .grid { column-gap: 1.25rem; }
 }
 /* Readable typography scale across workspace surfaces */
 button:not(.tool-button):not(.icon-button):not(.group-fold):not(.assistant-trigger):not(.drawer-tab) { font-size: 12px; }

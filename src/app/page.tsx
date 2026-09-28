@@ -90,7 +90,7 @@ export default function MarketingLandingPage() {
   ];
 
   return (
-    <div className="marketing-landing-page min-h-screen bg-white text-[#353535] selection:bg-[#3c6e71] selection:text-white font-sans antialiased overflow-x-hidden">
+    <div className="marketing-landing-page min-h-screen bg-white text-[#353535] selection:bg-[#3c6e71] selection:text-white font-sans antialiased overflow-x-clip">
       {/* Background Decorative Gradients & Grid */}
       <div className="fixed inset-0 pointer-events-none z-0">
         <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[1100px] h-[600px] bg-gradient-to-b from-[#3c6e71]/[0.08] via-[#284b63]/[0.04] to-transparent blur-3xl opacity-70" />
@@ -163,6 +163,7 @@ export default function MarketingLandingPage() {
             onClick={() => setMobileMenuOpen(v => !v)}
             className="md:hidden p-2 rounded-lg text-[#64706f] hover:text-[#284b63] hover:bg-[#f7f8f7]"
             aria-label="Toggle menu"
+            aria-expanded={mobileMenuOpen}
           >
             {mobileMenuOpen ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
           </button>
@@ -186,15 +187,15 @@ export default function MarketingLandingPage() {
 
       {/* HERO SECTION */}
       <section className="landing-hero relative z-10 pt-16 pb-20 sm:pt-24 sm:pb-28 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="text-center max-w-3xl mx-auto space-y-6">
+        <div className="landing-hero-copy text-left max-w-3xl mr-auto space-y-6">
           {/* Eyebrow Pill */}
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#3c6e71]/10 border border-[#3c6e71]/30 text-[#3c6e71] text-xs font-semibold backdrop-blur-md animate-fade-in shadow-sm">
-            <span className="flex h-1.5 w-1.5 rounded-full bg-[#3c6e71] animate-ping" />
+          <div className="landing-trust-line inline-flex items-center gap-2 text-[#3c6e71] text-xs font-semibold">
+            <span className="flex h-1.5 w-1.5 rounded-full bg-[#3c6e71]" />
             <span>Desktop-First · Strict Epistemic Provenance · Zero Silent Writes</span>
           </div>
 
           {/* Primary Headline */}
-          <h1 className="text-4xl sm:text-6xl font-extrabold tracking-tight text-[#353535] leading-[1.12]">
+          <h1 className="landing-hero-title text-4xl sm:text-6xl font-extrabold tracking-tight text-[#353535] leading-[1.12]">
             Transform Unstructured Insights into{' '}
             <span className="text-[#284b63]">
               Grounded Semantic Graphs
@@ -202,13 +203,13 @@ export default function MarketingLandingPage() {
           </h1>
 
           {/* Subtitle */}
-          <p className="text-base sm:text-lg text-[#4f5d5b] leading-relaxed font-normal max-w-2xl mx-auto">
+          <p className="text-base sm:text-lg text-[#4f5d5b] leading-relaxed font-normal max-w-2xl">
             Stop losing critical dependencies across flat documents and infinite whiteboards.
             Synthex synthesizes papers, web sources, and assertions into an auditable knowledge graph — with every claim verified against ground truth.
           </p>
 
           {/* CTA Buttons */}
-          <div className="pt-2 flex flex-col sm:flex-row items-center justify-center gap-4">
+          <div className="landing-hero-actions pt-2 flex flex-col sm:flex-row items-center justify-start gap-4">
             <Link
               href="/sign-up"
               className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-xl bg-[#3c6e71] hover:bg-[#284b63] text-white font-semibold text-sm shadow-xl shadow-[#284b63]/15 hover:shadow-[#284b63]/15 transition-all group"
@@ -227,7 +228,7 @@ export default function MarketingLandingPage() {
           </div>
 
           {/* Trial Value Callout */}
-          <div className="flex items-center justify-center gap-5 text-xs text-[#64706f] pt-1">
+          <div className="landing-trial-details flex flex-wrap items-center justify-start gap-x-4 gap-y-2 text-xs text-[#64706f] pt-1">
             <span className="flex items-center gap-1.5"><Check size={14} className="text-[#3c6e71]" /> 100 Free Context Credits</span>
             <span>·</span>
             <span className="flex items-center gap-1.5"><Check size={14} className="text-[#3c6e71]" /> No credit card required</span>
@@ -237,7 +238,7 @@ export default function MarketingLandingPage() {
         </div>
 
         {/* INTERACTIVE MINI-CANVAS SHOWCASE */}
-        <div className="landing-canvas-preview mt-14 relative rounded-2xl border border-[#d9d9d9] bg-white backdrop-blur-2xl shadow-2xl p-4 sm:p-6 overflow-hidden">
+        <div id="evidence" className="landing-canvas-preview mt-12 relative rounded-2xl border border-[#d9d9d9] bg-white shadow-lg p-4 sm:p-6 overflow-hidden">
           {/* Top Bar of the Mock Canvas */}
           <div className="flex flex-wrap items-center justify-between pb-4 mb-4 border-b border-[#d9d9d9] gap-3">
             <div className="flex items-center gap-2">
@@ -278,11 +279,11 @@ export default function MarketingLandingPage() {
             <svg className="absolute inset-0 w-full h-full pointer-events-none z-0">
               <defs>
                 <linearGradient id="edgeGrad1" x1="0%" y1="0%" x2="100%" y2="0%">
-                  <stop offset="0%" stopColor="#818cf8" stopOpacity="0.8" />
-                  <stop offset="100%" stopColor="#34d399" stopOpacity="0.8" />
+                  <stop offset="0%" stopColor="#284b63" stopOpacity="0.8" />
+                  <stop offset="100%" stopColor="#3c6e71" stopOpacity="0.8" />
                 </linearGradient>
                 <linearGradient id="edgeGrad2" x1="0%" y1="0%" x2="100%" y2="0%">
-                  <stop offset="0%" stopColor="#34d399" stopOpacity="0.8" />
+                  <stop offset="0%" stopColor="#3c6e71" stopOpacity="0.8" />
                   <stop offset="100%" stopColor="#fbbf24" stopOpacity="0.8" />
                 </linearGradient>
               </defs>
@@ -293,7 +294,7 @@ export default function MarketingLandingPage() {
                 stroke="url(#edgeGrad1)"
                 strokeWidth="2"
                 strokeDasharray="4 4"
-                className="animate-pulse"
+                className="landing-edge-flow"
               />
               {/* Connector from Concept to Claim 2 */}
               <path
@@ -323,6 +324,16 @@ export default function MarketingLandingPage() {
                   <div
                     key={node.id}
                     onClick={() => setSelectedDemoNode(node.id)}
+                    onKeyDown={event => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        setSelectedDemoNode(node.id);
+                      }
+                    }}
+                    role="button"
+                    tabIndex={0}
+                    aria-pressed={isSelected}
+                    aria-label={`Inspect ${node.title}`}
                     className={`cursor-pointer w-64 p-4 rounded-xl border transition-all duration-200 select-none bg-white shadow-lg ${
                       isSelected
                         ? 'border-[#3c6e71] ring-2 ring-[#3c6e71]/25 -translate-y-1 shadow-[#284b63]/10'
@@ -370,24 +381,24 @@ export default function MarketingLandingPage() {
         </div>
 
         {/* LOGO & TRUST PROOF BANNER */}
-        <div className="mt-16 pt-10 border-t border-[#d9d9d9] text-center">
+        <div className="landing-proof mt-16 pt-10 border-t border-[#d9d9d9] text-left">
           <p className="text-xs uppercase tracking-widest text-[#64706f] font-semibold mb-6">
             Architected for Rigorous Research & Technical Synthesis
           </p>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-6 max-w-4xl mx-auto text-[#64706f] text-xs font-medium">
-            <div className="flex items-center justify-center gap-2 p-3 rounded-lg bg-white border border-[#d9d9d9]">
+          <div className="landing-proof-list grid grid-cols-2 sm:grid-cols-4 gap-6 max-w-4xl text-[#64706f] text-xs font-medium">
+            <div className="landing-proof-item flex items-center gap-2 py-3">
               <CheckCircle2 size={15} className="text-[#3c6e71]" />
               <span>Grounded Google Search</span>
             </div>
-            <div className="flex items-center justify-center gap-2 p-3 rounded-lg bg-white border border-[#d9d9d9]">
+            <div className="landing-proof-item flex items-center gap-2 py-3">
               <Cpu size={15} className="text-[#3c6e71]" />
               <span>GPT-6 & Gemini Multi-Hop</span>
             </div>
-            <div className="flex items-center justify-center gap-2 p-3 rounded-lg bg-white border border-[#d9d9d9]">
+            <div className="landing-proof-item flex items-center gap-2 py-3">
               <Database size={15} className="text-[#284b63]" />
               <span>Local SQLite + Cloud SQL</span>
             </div>
-            <div className="flex items-center justify-center gap-2 p-3 rounded-lg bg-white border border-[#d9d9d9]">
+            <div className="landing-proof-item flex items-center gap-2 py-3">
               <Share2 size={15} className="text-[#8a5a00]" />
               <span>Obsidian & Logseq Vaults</span>
             </div>
@@ -545,6 +556,7 @@ export default function MarketingLandingPage() {
                 onClick={() => setBillingCycle(b => (b === 'monthly' ? 'annual' : 'monthly'))}
                 className="w-12 h-6 rounded-full bg-[#f7f8f7] border border-[#d9d9d9] p-0.5 transition-colors relative"
                 aria-label="Toggle annual billing"
+                aria-pressed={billingCycle === 'annual'}
               >
                 <div className={`w-5 h-5 rounded-full bg-[#3c6e71] transition-transform ${billingCycle === 'annual' ? 'translate-x-6' : 'translate-x-0'}`} />
               </button>
@@ -653,7 +665,7 @@ export default function MarketingLandingPage() {
 
               <Link
                 href="/sign-up"
-                className="w-full py-2.5 text-center text-xs font-semibold text-[#353535] bg-[#3c6e71] hover:bg-[#3c6e71] rounded-xl transition-all shadow-md shadow-[#284b63]/15"
+                className="w-full py-2.5 text-center text-xs font-semibold text-white bg-[#3c6e71] hover:bg-[#284b63] rounded-xl transition-all shadow-md shadow-[#284b63]/15"
               >
                 Get Pro Studio
               </Link>
@@ -720,16 +732,16 @@ export default function MarketingLandingPage() {
                   <button
                     type="button"
                     onClick={() => setActiveFaq(isOpen ? null : idx)}
+                    aria-expanded={isOpen}
+                    aria-controls={`faq-answer-${idx}`}
                     className="w-full px-5 py-4 text-left flex items-center justify-between text-sm font-semibold text-[#353535] hover:text-[#284b63] transition-colors"
                   >
                     <span>{faq.q}</span>
                     {isOpen ? <ChevronUp size={16} className="text-[#64706f] shrink-0" /> : <ChevronDown size={16} className="text-[#64706f] shrink-0" />}
                   </button>
-                  {isOpen && (
-                    <div className="px-5 pb-5 pt-1 text-xs sm:text-sm text-[#4f5d5b] leading-relaxed border-t border-[#d9d9d9]">
-                      {faq.a}
-                    </div>
-                  )}
+                  <div id={`faq-answer-${idx}`} hidden={!isOpen} className="landing-faq-answer px-5 pb-5 pt-1 text-xs sm:text-sm text-[#4f5d5b] leading-relaxed border-t border-[#d9d9d9]">
+                    {faq.a}
+                  </div>
                 </div>
               );
             })}
