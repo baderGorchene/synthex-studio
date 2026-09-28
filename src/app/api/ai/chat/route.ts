@@ -1,4 +1,4 @@
-import { askGraph } from '@/lib/ai-service';
+import { askGraph, askGraphStream } from '@/lib/ai-service';
 import { getAllConnectionsFromDb, getAllNodesFromDb, projectExistsInDb } from '@/lib/db';
 import { normalizeGraph } from '@/lib/graph';
 
@@ -15,6 +15,35 @@ export async function POST(request: Request) {
     const projectId = typeof body.projectId === 'string' ? body.projectId : 'default';
     if (projectId.length > 80 || !projectExistsInDb(projectId)) return Response.json({ error: 'Project not found.' }, { status: 404 });
     const graph = normalizeGraph(getAllNodesFromDb(projectId), getAllConnectionsFromDb(projectId));
+
+    const wantsStream = request.headers.get('accept')?.includes('text/event-stream') || body?.stream === true;
+
+    if (wantsStream) {
+      const encoder = new TextEncoder();
+      const stream = new ReadableStream({
+        async start(controller) {
+          try {
+            for await (const event of askGraphStream(question, graph, selectedNodeId, projectId)) {
+              controller.enqueue(encoder.encode(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`));
+            }
+            controller.close();
+          } catch (err) {
+            const errorMsg = err instanceof Error ? err.message : 'The graph assistant could not answer.';
+            controller.enqueue(encoder.encode(`event: error\ndata: ${JSON.stringify({ error: errorMsg })}\n\n`));
+            controller.close();
+          }
+        }
+      });
+
+      return new Response(stream, {
+        headers: {
+          'Content-Type': 'text/event-stream; charset=utf-8',
+          'Cache-Control': 'no-cache, no-transform',
+          'Connection': 'keep-alive'
+        }
+      });
+    }
+
     const result = await askGraph(question, graph, selectedNodeId, projectId);
     return Response.json(result);
   } catch (error) {
@@ -25,3 +54,4 @@ export async function POST(request: Request) {
     return Response.json({ error: 'The graph assistant could not answer. Try again.' }, { status: 502 });
   }
 }
+

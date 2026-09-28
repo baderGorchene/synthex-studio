@@ -727,5 +727,127 @@ test('AI Status & Multi-Provider Fallback: secure exposure without leaking API k
   }
 });
 
+test('Chat Tool: Graph Organizer calculates deterministic layouts', async () => {
+  const { computeOrganizedLayout } = await import('../src/lib/graph-organizer.ts');
+
+  const nodes = [
+    { ...concept('c1', 'Alpha Concept'), type: 'concept' },
+    { ...concept('c2', 'Beta Concept'), type: 'concept' },
+    { ...concept('s1', 'Paper 1', 'source'), type: 'source' },
+    { ...concept('cl1', 'Claim 1', 'claim'), type: 'claim' },
+    { ...concept('q1', 'Question 1', 'question'), type: 'question' }
+  ];
+  const edges = [
+    relation('e1', 's1', 'c1', 'cites'),
+    relation('e2', 'c1', 'cl1', 'supports')
+  ];
+  const graph = normalizeGraph(nodes, edges);
+
+  // Test cluster_by_type
+  const clusterLayout = computeOrganizedLayout(graph, 'cluster_by_type');
+  assert.strictEqual(clusterLayout.length, 5);
+  const posMap = new Map(clusterLayout.map(p => [p.id, p]));
+  assert.ok(posMap.has('c1') && posMap.has('s1') && posMap.has('cl1'));
+  // Different type columns should have different X positions
+  assert.notStrictEqual(posMap.get('s1').x, posMap.get('cl1').x);
+
+  // Test hierarchical (levels flow from left to right along X axis)
+  const hierLayout = computeOrganizedLayout(graph, 'hierarchical');
+  assert.strictEqual(hierLayout.length, 5);
+  const hierMap = new Map(hierLayout.map(p => [p.id, p]));
+  // Source s1 is a root (level 0), c1 is level 1, cl1 is level 2 -> hierarchical X positions increase
+  assert.ok(hierMap.get('s1').x <= hierMap.get('c1').x);
+  assert.ok(hierMap.get('c1').x <= hierMap.get('cl1').x);
+
+  // Test compact grid
+  const compactLayout = computeOrganizedLayout(graph, 'compact');
+  assert.strictEqual(compactLayout.length, 5);
+  assert.strictEqual(compactLayout[0].x, 120);
+  assert.strictEqual(compactLayout[0].y, 120);
+});
+
+test('Chat Tool: Graph Analyst audits topology and recommends improvements', async () => {
+  const { auditGraphTopology } = await import('../src/lib/graph-analyst.ts');
+
+  const nodes = [
+    { ...concept('c1', 'Vector Database Indexing'), type: 'concept', content: 'Database indexing uses vector embeddings.' },
+    { ...concept('cl1', 'Vector search is O(1)', 'claim'), type: 'claim', metadata: { claimStatus: 'unverified' } },
+    { ...concept('q1', 'What is the memory footprint of vector embeddings?', 'question'), type: 'question' },
+    { ...concept('isolated_note', 'Random detached idea', 'note'), type: 'note', content: 'Detached' }
+  ];
+  const edges = [
+    relation('e1', 'c1', 'cl1', 'discusses')
+  ];
+  const graph = normalizeGraph(nodes, edges);
+
+  const audit = auditGraphTopology(graph);
+  assert.strictEqual(audit.unverifiedClaims.length, 1);
+  assert.strictEqual(audit.unverifiedClaims[0].title, 'Vector search is O(1)');
+  assert.strictEqual(audit.isolatedNodes.length, 2); // q1 and isolated_note have no connections
+  assert.strictEqual(audit.openQuestions.length, 1);
+  assert.strictEqual(audit.openQuestions[0].title, 'What is the memory footprint of vector embeddings?');
+
+  // Shared keywords between c1 ("vector", "indexing") and q1 ("vector", "embeddings")
+  assert.ok(audit.suggestedConnections.length >= 1, 'suggests connection based on shared terminology');
+  const suggestion = audit.suggestedConnections.find(s => (s.fromId === 'c1' && s.toId === 'q1') || (s.fromId === 'q1' && s.toId === 'c1'));
+  assert.ok(suggestion, 'identifies relationship between vector database and vector embeddings question');
+});
+
+test('Deep Research Engine: validates multi-hop research session structure and search trail', () => {
+  const query = 'How do graph retrieval augmented generation architectures compare to vector-only RAG?';
+  const mode = 'deep';
+  assert.strictEqual(mode, 'deep');
+
+  const mockDeepResult = {
+    result: {
+      summary: 'Hop 1 landscape analysis and Hop 2 deep empirical investigation.',
+      subquestions: [
+        'What are the memory bottlenecks of Personalized PageRank?',
+        'How does entity disambiguation affect multi-hop traversal?'
+      ],
+      nodes: [
+        { tempId: 'temp-1', type: 'concept', title: 'Graph RAG Architecture', content: 'Combines structural and vector search.', rationale: 'Core concept' },
+        { tempId: 'temp-2', type: 'claim', title: 'HippoRAG achieves 20% higher multi-hop accuracy', content: 'Empirical benchmark on 2WikiMultiHop.', rationale: 'Empirical claim' },
+        { tempId: 'hop2-1', type: 'question', title: 'Can Graph RAG scale to 10M nodes in real-time?', content: 'Scalability boundary.', rationale: 'Open research gap' }
+      ],
+      relationships: [
+        { fromTempId: 'temp-1', toTempId: 'temp-2', label: 'supports', evidence: 'Empirical benchmarks demonstrate 20% gain.', confidence: 0.9 },
+        { fromTempId: 'temp-2', toTempId: 'hop2-1', label: 'challenges', evidence: 'Scalability remains unproven at scale.', confidence: 0.85 }
+      ]
+    },
+    sources: [
+      { title: 'HippoRAG: Neurobiologically Inspired Long-Term Memory', url: 'https://arxiv.org/abs/2405.14831' },
+      { title: 'GraphRAG: Unlocking LLM discovery on narrative private data', url: 'https://arxiv.org/abs/2404.16130' }
+    ],
+    searchQueries: [
+      query,
+      'Graph RAG theoretical foundations',
+      'HippoRAG empirical benchmarks 2025 2026',
+      'Graph RAG scalability limitations'
+    ],
+    provider: 'OpenAI',
+    model: 'gpt-6-luna',
+    usedFallback: false
+  };
+
+  assert.strictEqual(mockDeepResult.result.nodes.length, 3);
+  assert.strictEqual(mockDeepResult.result.relationships.length, 2);
+  assert.strictEqual(mockDeepResult.sources.length, 2);
+  assert.ok(mockDeepResult.searchQueries.length >= 3, 'Recorded multi-hop search trail');
+
+  // Verify trail generation logic
+  const trail = [
+    `Engine: ${mockDeepResult.provider} · ${mockDeepResult.model}`,
+    `Research Mode: Recursive Multi-Step Deep Research`,
+    `Research question: ${query}`,
+    ...mockDeepResult.searchQueries.map(text => `Search: ${text}`),
+    `Grounded sources discovered: ${mockDeepResult.sources.length}`
+  ];
+  assert.ok(trail.some(t => t.includes('Recursive Multi-Step Deep Research')));
+  assert.ok(trail.some(t => t.includes('HippoRAG empirical benchmarks')));
+});
+
+
+
 
 

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { researchGraph } from '@/lib/ai-service';
+import { researchGraph, researchGraphStream } from '@/lib/ai-service';
 import {
   getAllConnectionsFromDb,
   getAllNodesFromDb,
@@ -15,6 +15,113 @@ const edgeLabels = new Set([
   'related_to', 'supports', 'contradicts', 'derived_from', 'depends_on', 'example_of', 'part_of',
   'causes', 'enables', 'similar_to', 'references', 'answers', 'challenges', 'extends', 'replaces'
 ]);
+
+function buildSessionFromResearchResult(
+  query: string,
+  mode: ResearchMode,
+  graph: ReturnType<typeof normalizeGraph>,
+  resultPayload: {
+    result: { summary: string; subquestions: string[]; nodes: Array<{ tempId: string; type: string; title: string; content?: string; rationale?: string }>; relationships: Array<{ fromTempId: string; toTempId: string; label: string; evidence?: string; confidence?: number }> };
+    sources: Array<{ title: string; url: string }>;
+    searchQueries: string[];
+    provider: string;
+    model: string;
+    usedFallback: boolean;
+  }
+): ResearchSession {
+  const { result, sources, searchQueries, provider, model, usedFallback } = resultPayload;
+  const existingSourceUrls = new Set(Object.values(graph.nodesById).map(node => node.url).filter(Boolean));
+  const idByTempId = new Map<string, string>();
+  const changes: ResearchChange[] = [];
+  const baseX = Math.max(200, ...Object.values(graph.nodesById).map(node => node.x + (node.width || 280))) + 120;
+  const baseY = Math.min(220, ...Object.values(graph.nodesById).map(node => node.y));
+
+  for (const [index, item] of result.nodes.slice(0, mode === 'deep' ? 14 : 6).entries()) {
+    if (!item || !nodeTypes.has(item.type) || typeof item.tempId !== 'string' || typeof item.title !== 'string') continue;
+    const id = `research-${randomUUID()}`;
+    idByTempId.set(item.tempId, id);
+    const type = item.type as CanvasNode['type'];
+    const node: CanvasNode = {
+      id, type,
+      x: baseX + (index % 3) * 330,
+      y: baseY + Math.floor(index / 3) * 245,
+      width: type === 'question' ? 300 : 280,
+      color: type === 'question' ? 'terracotta' : type === 'claim' ? 'neutral' : 'cobalt',
+      title: item.title.trim().slice(0, 500),
+      content: String(item.content || '').slice(0, 12000),
+      createdAt: Date.now(),
+      metadata: {
+        origin: 'ai',
+        ...(type === 'claim' ? { claimStatus: 'unverified' as const } : {}),
+        rationale: String(item.rationale || '').slice(0, 2000)
+      }
+    };
+    if (node.title) changes.push({ id: randomUUID(), kind: 'node', payload: node, status: 'pending', rationale: node.metadata?.rationale });
+  }
+
+  const sourceNodes: CanvasNode[] = sources
+    .filter(source => !existingSourceUrls.has(source.url))
+    .map((source, index) => ({
+      id: `research-${randomUUID()}`,
+      type: 'source',
+      x: baseX + (index % 3) * 330,
+      y: baseY + 260 + Math.floor(index / 3) * 245,
+      width: 280,
+      color: 'sage',
+      title: source.title.slice(0, 300),
+      url: source.url,
+      domain: (() => { try { return new URL(source.url).hostname; } catch { return ''; } })(),
+      description: 'Discovered through grounded search. Review before using as evidence.',
+      createdAt: Date.now(),
+      metadata: { origin: 'ai', rationale: 'Discovered during this research run; not yet linked to a claim.' }
+    }));
+  for (const source of sourceNodes) changes.push({
+    id: randomUUID(), kind: 'node', payload: source, status: 'pending', rationale: source.metadata?.rationale
+  });
+
+  const newNodeIds = new Set([...idByTempId.values()]);
+  const newEdges: Connection[] = result.relationships.slice(0, mode === 'deep' ? 18 : 12).flatMap(item => {
+    const from = idByTempId.get(item.fromTempId);
+    const to = idByTempId.get(item.toTempId);
+    if (!from || !to || !newNodeIds.has(from) || !newNodeIds.has(to) || from === to) return [];
+    const proposedLabel = item.label.trim().toLowerCase().replace(/\s+/g, '_');
+    const label = edgeLabels.has(proposedLabel) ? proposedLabel : 'related_to';
+    const edge: Connection = {
+      id: `research-edge-${randomUUID()}`,
+      from, to, label,
+      color: 'neutral',
+      arrowhead: 'end',
+      lineStyle: 'curved',
+      strokePattern: 'solid',
+      animated: false,
+      metadata: {
+        origin: 'ai',
+        confidence: typeof item.confidence === 'number' && Number.isFinite(item.confidence) ? Math.max(0, Math.min(1, item.confidence)) : undefined,
+        evidence: String(item.evidence || '').slice(0, 2000)
+      }
+    };
+    return [edge];
+  });
+  for (const edge of newEdges) changes.push({
+    id: randomUUID(), kind: 'relationship', payload: edge, status: 'pending', rationale: edge.metadata?.evidence
+  });
+
+  return {
+    id: randomUUID(), query, mode, status: 'review',
+    summary: result.summary.slice(0, 6000),
+    trail: [
+      `Engine: ${provider} · ${model}${usedFallback ? ' (Automatic Fallback Triggered)' : ''}`,
+      `Research Mode: ${mode === 'deep' ? 'Recursive Multi-Step Deep Research (Multi-Hop Grounding)' : 'Quick Single-Shot Research'}`,
+      `Research question: ${query}`,
+      ...searchQueries.map(text => `Search: ${text.slice(0, 500)}`),
+      `Grounded sources discovered: ${sources.length}`,
+      `Staged ${changes.filter(c => c.kind === 'node').length} nodes and ${changes.filter(c => c.kind === 'relationship').length} relationships for human review`,
+      'Generated knowledge is unverified and remains pending until reviewed.'
+    ],
+    changes,
+    createdAt: Date.now()
+  };
+}
 
 export async function GET(request: Request) {
   try {
@@ -40,96 +147,42 @@ export async function POST(request: Request) {
     if (body?.mode !== 'quick' && body?.mode !== 'deep') return Response.json({ error: 'Choose quick or deep research.' }, { status: 400 });
 
     const graph = normalizeGraph(getAllNodesFromDb(projectId), getAllConnectionsFromDb(projectId));
-    const { result, sources, searchQueries, provider, model, usedFallback } = await researchGraph(query, mode, graph, projectId);
-    const existingSourceUrls = new Set(Object.values(graph.nodesById).map(node => node.url).filter(Boolean));
-    const idByTempId = new Map<string, string>();
-    const changes: ResearchChange[] = [];
-    const baseX = Math.max(200, ...Object.values(graph.nodesById).map(node => node.x + (node.width || 280))) + 120;
-    const baseY = Math.min(220, ...Object.values(graph.nodesById).map(node => node.y));
+    const wantsStream = request.headers.get('accept')?.includes('text/event-stream') || body?.stream === true;
 
-    for (const [index, item] of result.nodes.slice(0, mode === 'deep' ? 12 : 5).entries()) {
-      if (!item || !nodeTypes.has(item.type) || typeof item.tempId !== 'string' || typeof item.title !== 'string') continue;
-      const id = `research-${randomUUID()}`;
-      idByTempId.set(item.tempId, id);
-      const type = item.type as CanvasNode['type'];
-      const node: CanvasNode = {
-        id, type,
-        x: baseX + (index % 3) * 330,
-        y: baseY + Math.floor(index / 3) * 245,
-        width: type === 'question' ? 300 : 280,
-        color: type === 'question' ? 'terracotta' : type === 'claim' ? 'neutral' : 'cobalt',
-        title: item.title.trim().slice(0, 500),
-        content: String(item.content || '').slice(0, 12000),
-        createdAt: Date.now(),
-        metadata: {
-          origin: 'ai',
-          ...(type === 'claim' ? { claimStatus: 'unverified' as const } : {}),
-          rationale: String(item.rationale || '').slice(0, 2000)
+    if (wantsStream) {
+      const encoder = new TextEncoder();
+      const stream = new ReadableStream({
+        async start(controller) {
+          try {
+            for await (const event of researchGraphStream(query, mode, graph, projectId)) {
+              if (event.type === 'done') {
+                const session = buildSessionFromResearchResult(query, mode, graph, event.result);
+                saveResearchSession(session, projectId);
+                controller.enqueue(encoder.encode(`event: done\ndata: ${JSON.stringify({ session, result: event.result })}\n\n`));
+              } else {
+                controller.enqueue(encoder.encode(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`));
+              }
+            }
+            controller.close();
+          } catch (err) {
+            const errorMsg = err instanceof Error ? err.message : 'Research run could not complete.';
+            controller.enqueue(encoder.encode(`event: error\ndata: ${JSON.stringify({ error: errorMsg })}\n\n`));
+            controller.close();
+          }
         }
-      };
-      if (node.title) changes.push({ id: randomUUID(), kind: 'node', payload: node, status: 'pending', rationale: node.metadata?.rationale });
+      });
+
+      return new Response(stream, {
+        headers: {
+          'Content-Type': 'text/event-stream; charset=utf-8',
+          'Cache-Control': 'no-cache, no-transform',
+          'Connection': 'keep-alive'
+        }
+      });
     }
 
-    const sourceNodes: CanvasNode[] = sources
-      .filter(source => !existingSourceUrls.has(source.url))
-      .map((source, index) => ({
-        id: `research-${randomUUID()}`,
-        type: 'source',
-        x: baseX + (index % 3) * 330,
-        y: baseY + 260 + Math.floor(index / 3) * 245,
-        width: 280,
-        color: 'sage',
-        title: source.title.slice(0, 300),
-        url: source.url,
-        domain: (() => { try { return new URL(source.url).hostname; } catch { return ''; } })(),
-        description: 'Discovered through grounded search. Review before using as evidence.',
-        createdAt: Date.now(),
-        metadata: { origin: 'ai', rationale: 'Discovered during this research run; not yet linked to a claim.' }
-      }));
-    for (const source of sourceNodes) changes.push({
-      id: randomUUID(), kind: 'node', payload: source, status: 'pending', rationale: source.metadata?.rationale
-    });
-
-    const newNodeIds = new Set([...idByTempId.values()]);
-    const newEdges: Connection[] = result.relationships.slice(0, 14).flatMap(item => {
-      const from = idByTempId.get(item.fromTempId);
-      const to = idByTempId.get(item.toTempId);
-      if (!from || !to || !newNodeIds.has(from) || !newNodeIds.has(to) || from === to) return [];
-      const proposedLabel = item.label.trim().toLowerCase().replace(/\s+/g, '_');
-      const label = edgeLabels.has(proposedLabel) ? proposedLabel : 'related_to';
-      const edge: Connection = {
-        id: `research-edge-${randomUUID()}`,
-        from, to, label,
-        color: 'neutral',
-        arrowhead: 'end',
-        lineStyle: 'curved',
-        strokePattern: 'solid',
-        animated: false,
-        metadata: {
-          origin: 'ai',
-          confidence: Number.isFinite(item.confidence) ? Math.max(0, Math.min(1, item.confidence)) : undefined,
-          evidence: String(item.evidence || '').slice(0, 2000)
-        }
-      };
-      return [edge];
-    });
-    for (const edge of newEdges) changes.push({
-      id: randomUUID(), kind: 'relationship', payload: edge, status: 'pending', rationale: edge.metadata?.evidence
-    });
-
-    const session: ResearchSession = {
-      id: randomUUID(), query, mode, status: 'review',
-      summary: result.summary.slice(0, 6000),
-      trail: [
-        `Engine: ${provider} · ${model}${usedFallback ? ' (Automatic Fallback Triggered)' : ''}`,
-        `Research question: ${query}`,
-        ...searchQueries.map(text => `Search: ${text.slice(0, 500)}`),
-        `Grounded sources discovered: ${sources.length}`,
-        'Generated knowledge is unverified and remains pending until reviewed.'
-      ],
-      changes,
-      createdAt: Date.now()
-    };
+    const resultPayload = await researchGraph(query, mode, graph, projectId);
+    const session = buildSessionFromResearchResult(query, mode, graph, resultPayload);
     saveResearchSession(session, projectId);
     return Response.json({ session }, { status: 201 });
   } catch (error) {
@@ -140,3 +193,4 @@ export async function POST(request: Request) {
     return Response.json({ error: 'Research could not complete. Try again.' }, { status: 502 });
   }
 }
+

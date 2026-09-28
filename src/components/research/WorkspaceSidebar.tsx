@@ -1,6 +1,6 @@
 'use client';
 
-import { BookOpen, FileText, GitBranch, GripVertical, Hand, Images, Layers2, MousePointer2, Plus, Quote, Scan } from 'lucide-react';
+import { BookOpen, FileText, GitBranch, Grid3X3, GripVertical, Hand, Images, Layers2, LayoutGrid, MousePointer2, Network, Plus, Quote, Scan } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import type { CanvasNodeType } from '@/types/canvas';
 
@@ -26,6 +26,7 @@ export interface CanvasToolDockProps {
   onSelectTool?: (tool: CanvasTool) => void;
   onFit?: () => void;
   onAddRecord?: (type: CanvasNodeType) => void;
+  onOrganizeLayout?: (strategy: 'cluster_by_type' | 'hierarchical' | 'compact') => void;
   // Optional legacy props for backward compatibility
   projects?: ResearchProject[];
   projectId?: string;
@@ -44,9 +45,12 @@ export function CanvasToolDock({
   onSelectTool,
   onFit,
   onAddRecord,
+  onOrganizeLayout,
 }: CanvasToolDockProps) {
   const [addMenuOpen, setAddMenuOpen] = useState(false);
+  const [organizeMenuOpen, setOrganizeMenuOpen] = useState(false);
   const addMenuRef = useRef<HTMLDivElement>(null);
+  const organizeMenuRef = useRef<HTMLDivElement>(null);
   const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
   const dragOrigin = useRef<{ x: number; y: number; left: number; top: number } | null>(null);
 
@@ -60,6 +64,17 @@ export function CanvasToolDock({
     window.addEventListener('pointerdown', closeOutside, true);
     return () => window.removeEventListener('pointerdown', closeOutside, true);
   }, [addMenuOpen]);
+
+  useEffect(() => {
+    if (!organizeMenuOpen) return;
+    const closeOutside = (event: PointerEvent) => {
+      if (organizeMenuRef.current && !organizeMenuRef.current.contains(event.target as Node)) {
+        setOrganizeMenuOpen(false);
+      }
+    };
+    window.addEventListener('pointerdown', closeOutside, true);
+    return () => window.removeEventListener('pointerdown', closeOutside, true);
+  }, [organizeMenuOpen]);
 
   useEffect(() => {
     const move = (event: PointerEvent) => {
@@ -178,6 +193,68 @@ export function CanvasToolDock({
                   <kbd className="record-shortcut-badge">{shortcut}</kbd>
                 </button>
               ))}
+            </div>
+          )}
+        </div>
+
+        <div className="dock-organize-record" ref={organizeMenuRef}>
+          <button
+            className={`sidebar-tool-button dock-organize-btn ${organizeMenuOpen ? 'active' : ''}`}
+            aria-label="Organize canvas layout"
+            aria-expanded={organizeMenuOpen}
+            aria-haspopup="menu"
+            onClick={() => setOrganizeMenuOpen(value => !value)}
+            title="Organize layout"
+          >
+            <LayoutGrid size={16} />
+            <span className="tool-tooltip">Organize layout</span>
+          </button>
+
+          {organizeMenuOpen && (
+            <div className="dock-organize-menu" role="menu" aria-label="Organize canvas layout">
+              <span className="popover-heading">Organize Canvas</span>
+              <button
+                className="organize-menu-item"
+                role="menuitem"
+                onClick={() => {
+                  onOrganizeLayout?.('cluster_by_type');
+                  setOrganizeMenuOpen(false);
+                }}
+              >
+                <span className="organize-item-icon cluster"><Layers2 size={14} /></span>
+                <div className="organize-item-text">
+                  <strong>Semantic Categories</strong>
+                  <small>Sources → Concepts → Claims → Questions</small>
+                </div>
+              </button>
+              <button
+                className="organize-menu-item"
+                role="menuitem"
+                onClick={() => {
+                  onOrganizeLayout?.('hierarchical');
+                  setOrganizeMenuOpen(false);
+                }}
+              >
+                <span className="organize-item-icon hierarchy"><Network size={14} /></span>
+                <div className="organize-item-text">
+                  <strong>Hierarchical Flow</strong>
+                  <small>Topological DAG from sources to conclusions</small>
+                </div>
+              </button>
+              <button
+                className="organize-menu-item"
+                role="menuitem"
+                onClick={() => {
+                  onOrganizeLayout?.('compact');
+                  setOrganizeMenuOpen(false);
+                }}
+              >
+                <span className="organize-item-icon grid"><Grid3X3 size={14} /></span>
+                <div className="organize-item-text">
+                  <strong>Compact Grid</strong>
+                  <small>Dense, balanced matrix arrangement</small>
+                </div>
+              </button>
             </div>
           )}
         </div>

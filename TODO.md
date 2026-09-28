@@ -9,8 +9,8 @@
 | Section | Focus | Pending | In Progress | Completed |
 |---|---|---|---|---|
 | **Part 1: Code-Only & Local** | Storage, Canvas UI, Math, Exports, Cleanups | 0 | 0 | 18 |
-| **Part 2: AI & External Services** | Graph RAG, Multi-Provider Fallback, SSE | 2 | 0 | 1 |
-| **Total** | | **2** | **0** | **19** |
+| **Part 2: AI & External Services** | Graph RAG, Agentic Tools, SSE Streaming, Deep Research | 1 | 0 | 5 |
+| **Total** | | **1** | **0** | **23** |
 
 ---
 
@@ -160,13 +160,49 @@
     - **Dual-Provider Engine with Automatic Fallback:** Upgraded [src/lib/ai-service.ts](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/src/lib/ai-service.ts) to prioritize OpenAI `gpt-6-luna` with medium reasoning (`reasoning_effort: 'medium'`) and automatic fallback to Google Gemini (`gemini-3.8-flash`).
     - **Strict API Key Security:** User's API keys reside exclusively in `.env.local` (git-ignored). `/api/ai/status` exposes provider state, active model name, reasoning level, and fallback readiness without exposing secrets.
     - **Live UI Visibility:** Added real-time provider and fallback badges in the workspace topbar, AI Chat drawer, and Research modal. Assistant responses display provenance indicators (`via gpt-6-luna`).
-    - **Unit Tests:** Added comprehensive test suite in [tests/graph.test.mjs](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/tests/graph.test.mjs) (18/18 tests passing).
-- [ ] **Server-Sent Events (SSE) Streaming for AI Responses**
-  - *Third-Party Dependency:* Google Gemini Streaming REST API.
-  - *Solution:* Stream response tokens in `/api/ai/chat` and `/api/research` for real-time progress indicators instead of blocking HTTP requests.
-- [ ] **Recursive Multi-Step Research Runs ("Deep Research" Mode)**
-  - *Third-Party Dependency:* Google Search Grounding Tool + Gemini LLM (`gemini-3.8-flash`).
-  - *Solution:* Autonomous multi-hop search execution: generate initial findings, formulate follow-up search queries on unresolved questions, and synthesize cross-source claims.
+- [x] **Agentic Chat Tools (Research, Deep Research, Topology Audit & Canvas Organization)**
+  - *Addressed Requirement:* Transformed AI Graph Assistant chat from passive Q&A into an active copilot equipped with actionable tools and 1-click execution cards adhering to Synthex Principle #2 (Human-in-the-Loop review, zero silent writes).
+  - *Implemented Tools:*
+    - **`research` & `deep_research`**: Chat dynamically triggers quick or multi-step deep web-grounded research sessions, formulating synthesized queries.
+    - **`recommend_improvements`**: Topological & epistemic audit engine ([src/lib/graph-analyst.ts](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/src/lib/graph-analyst.ts)) auditing unverified claims, isolated cards, open questions, and recommending candidate connections based on shared terminology.
+    - **`organize_layout`**: Spatial reorganization engine ([src/lib/graph-organizer.ts](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/src/lib/graph-organizer.ts)) supporting topological semantic clustering (`cluster_by_type`), hierarchical DAG ordering, and compact grid packing with animated card realignment.
+    - **`propose_nodes`**: Proposes adding new typed cards (concepts, claims, hypotheses) and relationships directly from conversation.
+  - *Interactive UI & Architecture:*
+    - Created [src/components/research/ChatToolCard.tsx](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/src/components/research/ChatToolCard.tsx) with actionable preview cards (`[Run Deep Research]`, `[Apply Layout]`, `[Add Cards to Canvas]`, `[Connect Nodes]`) and undo support.
+    - Added quick-trigger action chips in the chat drawer (`Deep Research`, `Organize Layout`, `Audit & Recommend`).
+    - Compatible with `gpt-6-luna` (medium reasoning) via structured JSON schema and automatic fallback to Gemini.
+    - Verified with unit tests in [tests/graph.test.mjs](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/tests/graph.test.mjs) (20/20 tests passing).
+- [x] **Server-Sent Events (SSE) Streaming for AI Responses & Live Thinking Progress**
+  - *Addressed Requirement:* Eliminated blocking HTTP requests for `/api/ai/chat` by implementing native SSE streaming (`ReadableStream`), displaying word-by-word streaming responses with a blinking cursor, and live animated thinking indicators (`chat-thinking-card`).
+  - *Implemented Architecture:*
+    - Created `askGraphStream` in [src/lib/ai-service.ts](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/src/lib/ai-service.ts) streaming `status`, `thinking`, `delta`, `tool`, and `done` events.
+    - Updated [src/app/api/ai/chat/route.ts](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/src/app/api/ai/chat/route.ts) with `ReadableStream` yielding `text/event-stream` SSE payloads.
+    - Added high-contrast assistant responses (slate-900 `#0f172a` text on pristine `#ffffff` card with elevated shadow) and muted right-aligned user messages in [src/app/globals.css](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/src/app/globals.css).
+    - **Draggable Canvas Dock Organization & Focused Chat Research:** Moved canvas organization algorithms (`Semantic Categories`, `Hierarchical DAG`, `Compact Grid`) directly onto the draggable canvas tool dock ([WorkspaceSidebar.tsx](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/src/components/research/WorkspaceSidebar.tsx)) with a dedicated popover menu. Removed layout organization from the chat assistant and chat tools menu, keeping the chat assistant strictly focused on research tools (`research`, `deep_research`, `recommend_improvements`, and `propose_nodes`).
+    - **Refined Typography & Slim Tool Cards:** Replaced raw text wrapping with [MarkdownView](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/src/components/research/MarkdownView.tsx) to render full GFM headers (`###`), bold highlights (`**14**`), lists, and code blocks. Redesigned [ChatToolCard](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/src/components/research/ChatToolCard.tsx) to eliminate bulky nested cards, replacing redundant block buttons with sleek confirmation strips (`✓ Applied to canvas · 14 cards positioned`) and micro re-apply buttons.
+- [x] **Recursive Multi-Step Research Runs ("Deep Research" Mode)**
+  - *Addressed Requirement:* Upgraded Deep Research from single-shot query execution into an autonomous, recursive multi-hop investigation pipeline leveraging OpenAI's multi-step planning and Google Gemini's Google Search Grounding.
+  - *Implemented Architecture:*
+    - **OpenAI Multi-Hop Planner (`gpt-6-luna` / Deep Research):**
+      - **Hop 1 (Axis Decomposition):** Deconstructs the research inquiry into three specialized investigative axes: (1) Core theoretical foundations & architectural mechanics, (2) Empirical benchmarks, recent real-world breakthroughs (2025-2026), and (3) Limitations, edge cases, and counterarguments. Formulates preliminary testable hypotheses.
+      - **Hop 2 (Deep Synthesis & Epistemic Cross-Linking):** Recursively explores the decomposed axes, formulating 10-14 rich nodes (`concept`, `claim`, `hypothesis`, `question`), 12-18 directional semantic relationships (`supports`, `contradicts`, `depends_on`, `answers`, `derived_from`, `extends`), and grounded academic citations.
+    - **Google Gemini Multi-Hop Grounding (`gemini-3.8-flash` with Google Search Grounding):**
+      - **Hop 1 (Broad Exploration):** Issues broad search-grounded queries via `google_search` tools to explore the landscape, retrieve initial citations, and isolate 3-4 specific sub-questions.
+      - **Hop 2 (Targeted Facet Deep-Dive):** Issues targeted follow-up search queries directly on the unresolved sub-questions to collect empirical data, statistics, and opposing viewpoints.
+      - **Hop 3 (Deduplication & Cross-Source Synthesis):** Merges web sources across both hops (deduplicating URLs), combines all executed search queries into the audit trail, and synthesizes 10-14 nodes with rich cross-hop links.
+    - **Audit Trail & Provenance Logging:** Captures all executed search queries across hops in `ResearchSession.trail`, displayed in the Research Activity History drawer.
+    - **Verified with Unit Tests:** Added `Deep Research Engine: validates multi-hop research session structure and search trail` to [tests/graph.test.mjs](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/tests/graph.test.mjs) (21/21 tests passing).
+- [x] **User-Prompted Research & Streaming Live Intermediate Steps / Results in Chat**
+  - *Addressed Requirement:* Solved auto-guess research execution by having research tools wait for explicit user query, and streaming live intermediate progress and grounded sources directly inside the chat interface.
+  - *Implemented Architecture:*
+    - **Interactive Intent Staging:** Selecting "Deep Web Research" or "Quick Research" from the tools popover or welcome chips no longer auto-fires on arbitrary canvas cards. Instead, it mounts an active research banner (`.active-research-banner`) above the chat composer, updates the input placeholder, and automatically focuses the input field to await the user's specific inquiry.
+    - **Server-Sent Events (SSE) Streaming Endpoint:** Updated `POST /api/research` to stream events (`step`, `query`, `source`, `hop`, `done`, `error`) via `text/event-stream` when requested, while retaining standard JSON response for backwards compatibility.
+    - **Live Research Card (`LiveResearchCard.tsx`):**
+      - Displays real-time step progression with animated spinners for active steps and green checkmarks for completed steps.
+      - Displays live search queries formulated across investigative axes.
+      - Streams discovered grounded sources in real time with domain tags, titles, and direct external links.
+      - Upon completion, displays synthesized summary and a 1-click **"Open Review Queue"** button to review and stage proposals without silent writes (Synthex Principle #2).
 - [ ] **Cloud Zotero Library Synchronization**
   - *Third-Party Dependency:* Zotero Web API (requires Zotero user API key and OAuth).
   - *Solution:* Bi-directional sync with personal Zotero web library collections.
+

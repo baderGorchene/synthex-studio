@@ -5,7 +5,7 @@ import {
   ArrowDownToLine, ArrowRight, BookOpenText, Check, ChevronDown, CircleHelp, Clock3,
   Compass, FileClock, FileJson2, Files, FileText, FolderArchive, FolderKanban, GitBranch,
   History, Image as ImageIcon, Layers2, LoaderCircle, MessageCircle, Network, Plus, Redo2,
-  Search, Send, Shapes, SlidersHorizontal, Sparkles, Trash2, Undo2, Upload, X
+  Search, Send, Shapes, SlidersHorizontal, Sparkles, Trash2, Undo2, Upload, Wrench, X, Zap
 } from 'lucide-react';
 import { GraphCanvas, membersOf } from '@/components/research/GraphCanvas';
 import { KnowledgeViews } from '@/components/research/KnowledgeViews';
@@ -19,6 +19,12 @@ import { generateStandaloneSvg, exportGraphToPng } from '@/lib/canvas-export';
 import type { CanvasNode, CanvasNodeType, Connection, Coordinates, GraphRevisionSummary, ResearchChange, ResearchSession } from '@/types/canvas';
 import { ELEMENT_PALETTE } from '@/types/canvas';
 import type { AIStatus } from '@/lib/ai-service';
+import { ChatToolCard } from '@/components/research/ChatToolCard';
+import { MarkdownView } from '@/components/research/MarkdownView';
+import { LiveResearchCard, type ResearchLiveProgress } from '@/components/research/LiveResearchCard';
+import type { ChatToolCall } from '@/types/chat-tools';
+import { computeOrganizedLayout } from '@/lib/graph-organizer';
+import { auditGraphTopology } from '@/lib/graph-analyst';
 
 type Viewport = { zoom: number; pan: Coordinates };
 type Tool = 'select' | 'connect' | 'hand';
@@ -29,6 +35,9 @@ type ChatLine = {
   provider?: 'OpenAI' | 'Gemini';
   model?: string;
   usedFallback?: boolean;
+  toolCall?: ChatToolCall | null;
+  isStreaming?: boolean;
+  researchProgress?: ResearchLiveProgress;
 };
 type Modal = 'research' | 'chat' | 'project' | 'search' | null;
 
@@ -85,6 +94,9 @@ export default function SynthexWorkspace() {
   const projectMenuRef = useRef<HTMLDivElement>(null);
   const exportMenuRef = useRef<HTMLDivElement>(null);
   const addRecordMenuRef = useRef<HTMLDivElement>(null);
+  const [showToolsMenu, setShowToolsMenu] = useState(false);
+  const [thinkingStep, setThinkingStep] = useState<string | null>(null);
+  const toolsMenuRef = useRef<HTMLDivElement>(null);
   const [notice, setNotice] = useState('');
 
   const navigateTo = useCallback((targetSection: WorkspaceSection) => {
@@ -96,7 +108,7 @@ export default function SynthexWorkspace() {
   }, []);
 
   useEffect(() => {
-    if (!navMenuOpen && !projectMenuOpen && !exportMenu && !addRecordMenuOpen) return;
+    if (!navMenuOpen && !projectMenuOpen && !exportMenu && !addRecordMenuOpen && !showToolsMenu) return;
     const handlePointerDown = (event: PointerEvent) => {
       const target = event.target as Node;
       if (navMenuOpen && navMenuRef.current && !navMenuRef.current.contains(target)) {
@@ -111,16 +123,21 @@ export default function SynthexWorkspace() {
       if (addRecordMenuOpen && addRecordMenuRef.current && !addRecordMenuRef.current.contains(target)) {
         setAddRecordMenuOpen(false);
       }
+      if (showToolsMenu && toolsMenuRef.current && !toolsMenuRef.current.contains(target)) {
+        setShowToolsMenu(false);
+      }
     };
     window.addEventListener('pointerdown', handlePointerDown, true);
     return () => window.removeEventListener('pointerdown', handlePointerDown, true);
-  }, [navMenuOpen, projectMenuOpen, exportMenu, addRecordMenuOpen]);
+  }, [navMenuOpen, projectMenuOpen, exportMenu, addRecordMenuOpen, showToolsMenu]);
   const [researchQuery, setResearchQuery] = useState('');
   const [researchMode, setResearchMode] = useState<'quick' | 'deep'>('quick');
   const [researching, setResearching] = useState(false);
   const [chatInput, setChatInput] = useState('');
   const [chatBusy, setChatBusy] = useState(false);
   const [chatLines, setChatLines] = useState<ChatLine[]>([]);
+  const [activeResearchIntent, setActiveResearchIntent] = useState<{ mode: 'quick' | 'deep' } | null>(null);
+  const chatInputRef = useRef<HTMLInputElement>(null);
   const [activeSession, setActiveSession] = useState<ResearchSession | null>(null);
   const [reviewDecisions, setReviewDecisions] = useState<Record<string, 'accepted' | 'rejected'>>({});
   const [projectTitleDraft, setProjectTitleDraft] = useState('');
@@ -574,7 +591,7 @@ export default function SynthexWorkspace() {
     announce('Relationship deleted.');
   }, [announce, updateGraph]);
 
-  const connectNodes = useCallback((from: string, to: string) => {
+  const connectNodes = useCallback((from: string, to: string, label?: string) => {
     if (from === to) {
       announce('A record cannot connect to itself.');
       setLinkingFromId(null);
@@ -597,7 +614,7 @@ export default function SynthexWorkspace() {
         id: newId(),
         from,
         to,
-        label: 'related_to',
+        label: label || 'related_to',
         color: 'neutral',
         arrowhead: 'end',
         lineStyle: 'curved',
@@ -637,15 +654,16 @@ export default function SynthexWorkspace() {
     updateGraph(current => updateNode(current, selectedNode.id, fields), false);
   };
 
-  const reloadGraph = async () => {
+  const reloadGraph = useCallback(async () => {
     const data = await readJson<{ nodes: CanvasNode[]; relationships: Connection[] }>(await fetch(`/api/graph?projectId=${encodeURIComponent(projectId)}`, { cache: 'no-store' }));
     setGraph(normalizeGraph(data.nodes, data.relationships));
     setCanvasFitKey(value => value + 1);
-  };
-  const reloadHistory = async () => {
+  }, [projectId]);
+
+  const reloadHistory = useCallback(async () => {
     const data = await readJson<{ sessions: ResearchSession[] }>(await fetch(`/api/research?projectId=${encodeURIComponent(projectId)}`, { cache: 'no-store' }));
     setSessions(data.sessions);
-  };
+  }, [projectId]);
 
   async function createProject(event: FormEvent) {
     event.preventDefault();
@@ -685,41 +703,527 @@ export default function SynthexWorkspace() {
     finally { setResearching(false); }
   }
 
+  const executeStreamingResearch = useCallback(async (query: string, mode: 'quick' | 'deep') => {
+    setResearching(true);
+    setChatBusy(true);
+
+    const initialSteps = mode === 'deep' ? [
+      { id: 'axes', label: 'Decomposing inquiry across analytical axes', status: 'running' as const },
+      { id: 'queries', label: 'Formulating web search queries', status: 'pending' as const },
+      { id: 'hop1', label: 'Hop 1: Exploring foundational literature & landscape', status: 'pending' as const },
+      { id: 'hop2', label: 'Hop 2: Deep-dive investigations & technical details', status: 'pending' as const },
+      { id: 'synthesis', label: 'Synthesizing evidence & staging verified graph cards', status: 'pending' as const }
+    ] : [
+      { id: 'queries', label: 'Formulating grounded search query', status: 'running' as const },
+      { id: 'search', label: 'Searching live web & retrieving citations', status: 'pending' as const },
+      { id: 'synthesis', label: 'Synthesizing findings & staging graph cards', status: 'pending' as const }
+    ];
+
+    setChatLines(current => [
+      ...current,
+      {
+        role: 'assistant',
+        text: `### Grounded ${mode === 'deep' ? 'Deep' : 'Quick'} Research\nInquiry: **"${query}"**\nStreaming live intermediate steps and discovered sources...`,
+        model: aiStatus?.activeModel || (aiStatus?.activeProvider === 'OpenAI' ? 'gpt-6-luna' : 'gemini-3.8-flash'),
+        provider: aiStatus?.activeProvider as 'OpenAI' | 'Gemini' | undefined,
+        isStreaming: true,
+        researchProgress: {
+          mode,
+          query,
+          steps: initialSteps,
+          queries: [],
+          sources: [],
+          isComplete: false
+        }
+      }
+    ]);
+
+    try {
+      const response = await fetch('/api/research', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'text/event-stream'
+        },
+        body: JSON.stringify({ projectId, query, mode, stream: true })
+      });
+
+      if (!response.ok) {
+        const errBody = await response.json().catch(() => ({}));
+        throw new Error(errorText(errBody, 'Research request failed.'));
+      }
+
+      if (!response.body) {
+        throw new Error('ReadableStream not supported by server.');
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i].trim();
+          if (line.startsWith('event:')) {
+            const eventType = line.slice(6).trim();
+            const nextLine = lines[i + 1]?.trim() || '';
+            if (nextLine.startsWith('data:')) {
+              i++;
+              try {
+                const eventData = JSON.parse(nextLine.slice(5).trim());
+
+                if (eventType === 'step') {
+                  const stepText = String(eventData.step || '');
+                  setThinkingStep(stepText);
+                  setChatLines(current => {
+                    const lastIdx = current.length - 1;
+                    if (lastIdx < 0) return current;
+                    const last = current[lastIdx];
+                    if (!last.researchProgress) return current;
+                    const updated = [...current];
+                    const steps = [...last.researchProgress.steps];
+                    const runningIdx = steps.findIndex(s => s.status === 'running');
+                    if (runningIdx !== -1 && runningIdx < steps.length - 1) {
+                      steps[runningIdx] = { ...steps[runningIdx], status: 'done' };
+                      steps[runningIdx + 1] = { ...steps[runningIdx + 1], status: 'running' };
+                    }
+                    updated[lastIdx] = {
+                      ...last,
+                      researchProgress: { ...last.researchProgress, steps }
+                    };
+                    return updated;
+                  });
+                } else if (eventType === 'query' && eventData.query) {
+                  setChatLines(current => {
+                    const lastIdx = current.length - 1;
+                    if (lastIdx < 0) return current;
+                    const last = current[lastIdx];
+                    if (!last.researchProgress) return current;
+                    if (last.researchProgress.queries.includes(eventData.query)) return current;
+                    const updated = [...current];
+                    updated[lastIdx] = {
+                      ...last,
+                      researchProgress: {
+                        ...last.researchProgress,
+                        queries: [...last.researchProgress.queries, eventData.query]
+                      }
+                    };
+                    return updated;
+                  });
+                } else if (eventType === 'source' && eventData.source) {
+                  setChatLines(current => {
+                    const lastIdx = current.length - 1;
+                    if (lastIdx < 0) return current;
+                    const last = current[lastIdx];
+                    if (!last.researchProgress) return current;
+                    if (last.researchProgress.sources.some(s => s.url === eventData.source.url)) return current;
+                    const updated = [...current];
+                    updated[lastIdx] = {
+                      ...last,
+                      researchProgress: {
+                        ...last.researchProgress,
+                        sources: [...last.researchProgress.sources, eventData.source]
+                      }
+                    };
+                    return updated;
+                  });
+                } else if (eventType === 'hop') {
+                  setThinkingStep(eventData.description || `Hop ${eventData.hop}`);
+                  setChatLines(current => {
+                    const lastIdx = current.length - 1;
+                    if (lastIdx < 0) return current;
+                    const last = current[lastIdx];
+                    if (!last.researchProgress) return current;
+                    const updated = [...current];
+                    const steps = last.researchProgress.steps.map(s => {
+                      if (s.id === `hop${eventData.hop}`) return { ...s, status: 'running' as const };
+                      if (eventData.hop === 2 && s.id === 'hop1') return { ...s, status: 'done' as const };
+                      if (eventData.hop >= 1 && (s.id === 'axes' || s.id === 'queries')) return { ...s, status: 'done' as const };
+                      return s;
+                    });
+                    updated[lastIdx] = {
+                      ...last,
+                      researchProgress: { ...last.researchProgress, steps }
+                    };
+                    return updated;
+                  });
+                } else if (eventType === 'done' && eventData.session) {
+                  setThinkingStep(null);
+                  const session: ResearchSession = eventData.session;
+                  setChatLines(current => {
+                    const lastIdx = current.length - 1;
+                    if (lastIdx < 0) return current;
+                    const last = current[lastIdx];
+                    if (!last.researchProgress) return current;
+                    const updated = [...current];
+                    const completedSteps = last.researchProgress.steps.map(s => ({ ...s, status: 'done' as const }));
+                    const nodesCount = session.changes.filter(c => c.kind === 'node').length;
+                    const relsCount = session.changes.filter(c => c.kind === 'relationship').length;
+                    const finalText = `### Research Proposals Ready\n` +
+                      `Completed ${last.researchProgress.mode === 'deep' ? 'deep multi-hop' : 'quick'} research for **"${query}"**.\n\n` +
+                      `Staged **${nodesCount} nodes** and **${relsCount} relationships** for human review across ${last.researchProgress.sources.length} grounded sources.\n\n` +
+                      `> ${session.summary || 'Summary synthesized from web citations and knowledge graph context.'}`;
+
+                    updated[lastIdx] = {
+                      ...last,
+                      text: finalText,
+                      isStreaming: false,
+                      researchProgress: {
+                        ...last.researchProgress,
+                        steps: completedSteps,
+                        session,
+                        isComplete: true
+                      }
+                    };
+                    return updated;
+                  });
+                  await reloadHistory();
+                  announce(`Research ready! ${session.changes.length} cards staged for review.`);
+                } else if (eventType === 'error') {
+                  throw new Error(eventData.error || 'Research failed.');
+                }
+              } catch (pErr) {
+                if (pErr instanceof Error && pErr.message === 'Research failed.') throw pErr;
+              }
+            }
+          }
+        }
+      }
+    } catch (err) {
+      setThinkingStep(null);
+      setChatLines(current => {
+        const lastIdx = current.length - 1;
+        if (lastIdx < 0) return current;
+        const last = current[lastIdx];
+        if (!last.researchProgress) return current;
+        const updated = [...current];
+        updated[lastIdx] = {
+          ...last,
+          text: `### Research Error\n${err instanceof Error ? err.message : 'Research run could not complete.'}`,
+          isStreaming: false,
+          researchProgress: {
+            ...last.researchProgress,
+            isComplete: true
+          }
+        };
+        return updated;
+      });
+      announce(err instanceof Error ? err.message : 'Research run failed.');
+    } finally {
+      setThinkingStep(null);
+      setChatBusy(false);
+      setResearching(false);
+    }
+  }, [projectId, aiStatus, reloadHistory, announce]);
+
   async function sendQuestion(event: FormEvent) {
     event.preventDefault();
     const question = chatInput.trim();
     if (!question || chatBusy) return;
-    setChatInput(''); setChatLines(current => [...current, { role: 'user', text: question }]); setChatBusy(true);
+
+    if (activeResearchIntent) {
+      const mode = activeResearchIntent.mode;
+      setActiveResearchIntent(null);
+      setChatInput('');
+      setChatLines(current => [...current, { role: 'user', text: question }]);
+      await executeStreamingResearch(question, mode);
+      return;
+    }
+
+    setChatInput('');
+    setChatLines(current => [...current, { role: 'user', text: question }]);
+    setChatBusy(true);
+    setThinkingStep('Retrieving knowledge graph context & semantic paths...');
+
+    // Append an initial streaming assistant message
+    setChatLines(current => [
+      ...current,
+      {
+        role: 'assistant',
+        text: '',
+        model: aiStatus?.activeModel || 'gpt-6-luna',
+        isStreaming: true
+      }
+    ]);
+
     try {
-      const data = await readJson<{
-        answer: string;
-        referencedNodeIds: string[];
-        provider?: 'OpenAI' | 'Gemini';
-        model?: string;
-        usedFallback?: boolean;
-      }>(await fetch('/api/ai/chat', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectId, question, selectedNodeId: selectedNode?.id })
-      }));
-      setChatLines(current => [
-        ...current,
-        {
-          role: 'assistant',
-          text: data.answer,
-          referencedNodeIds: data.referencedNodeIds,
-          provider: data.provider,
-          model: data.model,
-          usedFallback: data.usedFallback
+      const response = await fetch('/api/ai/chat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'text/event-stream'
+        },
+        body: JSON.stringify({ projectId, question, selectedNodeId: selectedNode?.id, stream: true })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || `HTTP ${response.status}`);
+      }
+
+      const contentType = response.headers.get('content-type') || '';
+      if (!contentType.includes('text/event-stream') || !response.body) {
+        const data = await response.json();
+        setThinkingStep(null);
+        setChatLines(current => {
+          const lastIdx = current.length - 1;
+          if (lastIdx < 0) return current;
+          const updated = [...current];
+          updated[lastIdx] = {
+            role: 'assistant',
+            text: data.answer || '',
+            referencedNodeIds: data.referencedNodeIds,
+            provider: data.provider,
+            model: data.model,
+            usedFallback: data.usedFallback,
+            toolCall: data.toolCall,
+            isStreaming: false
+          };
+          return updated;
+        });
+        return;
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i].trim();
+          if (line.startsWith('event:')) {
+            const eventType = line.slice(6).trim();
+            const nextLine = lines[i + 1]?.trim() || '';
+            if (nextLine.startsWith('data:')) {
+              i++;
+              try {
+                const eventData = JSON.parse(nextLine.slice(5).trim());
+                if (eventType === 'thinking' || eventType === 'status') {
+                  setThinkingStep(eventData.step || eventData.status || null);
+                } else if (eventType === 'delta' && eventData.text) {
+                  setThinkingStep(null);
+                  setChatLines(current => {
+                    const lastIdx = current.length - 1;
+                    if (lastIdx < 0) return current;
+                    const last = current[lastIdx];
+                    if (last.role !== 'assistant') return current;
+                    const updated = [...current];
+                    updated[lastIdx] = {
+                      ...last,
+                      text: last.text + eventData.text,
+                      isStreaming: true
+                    };
+                    return updated;
+                  });
+                } else if (eventType === 'tool' && eventData.toolCall) {
+                  setChatLines(current => {
+                    const lastIdx = current.length - 1;
+                    if (lastIdx < 0) return current;
+                    const updated = [...current];
+                    updated[lastIdx] = {
+                      ...updated[lastIdx],
+                      toolCall: eventData.toolCall
+                    };
+                    return updated;
+                  });
+                } else if (eventType === 'done') {
+                  setThinkingStep(null);
+                  setChatLines(current => {
+                    const lastIdx = current.length - 1;
+                    if (lastIdx < 0) return current;
+                    const updated = [...current];
+                    updated[lastIdx] = {
+                      ...updated[lastIdx],
+                      text: eventData.text || updated[lastIdx].text,
+                      referencedNodeIds: eventData.referencedNodeIds,
+                      model: eventData.model,
+                      provider: eventData.provider,
+                      usedFallback: eventData.usedFallback,
+                      toolCall: eventData.toolCall || updated[lastIdx].toolCall,
+                      isStreaming: false
+                    };
+                    return updated;
+                  });
+
+                  if (eventData.usedFallback) {
+                    announce('OpenAI was unavailable; response provided via Gemini fallback.');
+                    fetch('/api/ai/status', { cache: 'no-store' }).then(r => r.json()).then(setAiStatus).catch(() => {});
+                  }
+                } else if (eventType === 'error') {
+                  throw new Error(eventData.error || 'Chat stream failed.');
+                }
+              } catch (parseErr) {
+                if (parseErr instanceof Error && parseErr.message === 'Chat stream failed.') {
+                  throw parseErr;
+                }
+              }
+            }
+          }
         }
-      ]);
-      if (data.usedFallback) {
-        announce('OpenAI was unavailable; response provided via Gemini fallback.');
-        fetch('/api/ai/status', { cache: 'no-store' }).then(r => r.json()).then(setAiStatus).catch(() => {});
       }
     } catch (error) {
-      setChatLines(current => [...current, { role: 'assistant', text: error instanceof Error ? error.message : 'The assistant could not answer.' }]);
-    } finally { setChatBusy(false); }
+      setThinkingStep(null);
+      setChatLines(current => {
+        const lastIdx = current.length - 1;
+        if (lastIdx >= 0 && current[lastIdx].role === 'assistant' && !current[lastIdx].text) {
+          const updated = [...current];
+          updated[lastIdx] = {
+            role: 'assistant',
+            text: error instanceof Error ? error.message : 'The assistant could not answer.',
+            isStreaming: false
+          };
+          return updated;
+        }
+        return [...current, { role: 'assistant', text: error instanceof Error ? error.message : 'The assistant could not answer.' }];
+      });
+    } finally {
+      setThinkingStep(null);
+      setChatBusy(false);
+    }
   }
+
+  const handleExecuteResearch = useCallback(async (query: string, mode: 'quick' | 'deep') => {
+    setChatLines(current => [...current, { role: 'user', text: query }]);
+    await executeStreamingResearch(query, mode);
+  }, [executeStreamingResearch]);
+
+  const handleApplyLayout = useCallback((positions: Array<{ id: string; x: number; y: number }>) => {
+    updateGraph(current => {
+      let next = current;
+      for (const pos of positions) {
+        if (next.nodesById[pos.id]) {
+          next = updateNode(next, pos.id, { x: pos.x, y: pos.y });
+        }
+      }
+      return next;
+    });
+    setCanvasFitKey(v => v + 1);
+    announce(`Reorganized ${positions.length} cards across the canvas.`);
+  }, [updateGraph, announce]);
+
+  const handleAddProposedItems = useCallback((
+    proposedNodes: Array<{ title: string; type: string; content?: string }>,
+    proposedEdges: Array<{ fromTitle: string; toTitle: string; label: string }>
+  ) => {
+    updateGraph(current => {
+      let next = current;
+      const titleToId = new Map<string, string>();
+      for (const node of Object.values(current.nodesById)) {
+        titleToId.set(node.title.toLowerCase().trim(), node.id);
+      }
+
+      const maxX = Math.max(100, ...Object.values(current.nodesById).map(n => n.x + (n.width || 280)));
+      const minY = Math.min(120, ...Object.values(current.nodesById).map(n => n.y));
+
+      for (let i = 0; i < proposedNodes.length; i++) {
+        const item = proposedNodes[i];
+        const id = `node-${newId()}`;
+        titleToId.set(item.title.toLowerCase().trim(), id);
+        const newNode: CanvasNode = {
+          id,
+          title: item.title,
+          type: (item.type as CanvasNodeType) || 'concept',
+          content: item.content || '',
+          x: maxX + 100 + (i % 2) * 320,
+          y: minY + Math.floor(i / 2) * 220,
+          width: 280,
+          createdAt: Date.now()
+        };
+        next = addNode(next, newNode);
+      }
+
+      for (const edge of proposedEdges) {
+        const fromId = titleToId.get(edge.fromTitle.toLowerCase().trim());
+        const toId = titleToId.get(edge.toTitle.toLowerCase().trim());
+        if (fromId && toId && fromId !== toId) {
+          const newEdge: Connection = {
+            id: `edge-${newId()}`,
+            from: fromId,
+            to: toId,
+            label: edge.label || 'related_to',
+            lineStyle: 'curved',
+            arrowhead: 'end',
+            strokePattern: 'solid',
+            color: 'neutral',
+            animated: false
+          };
+          next = addRelationship(next, newEdge);
+        }
+      }
+
+      return next;
+    });
+    announce(`Added ${proposedNodes.length} cards and ${proposedEdges.length} connections to graph.`);
+  }, [updateGraph, announce]);
+
+  const handleConnectSuggestedNodes = useCallback((fromId: string, toId: string, label?: string) => {
+    connectNodes(fromId, toId, label);
+  }, [connectNodes]);
+
+  const executeToolDirectly = useCallback(async (toolType: 'deep_research' | 'quick_research' | 'recommend_improvements') => {
+    setShowToolsMenu(false);
+
+    if (toolType === 'recommend_improvements') {
+      setThinkingStep('Auditing graph topology and epistemic links...');
+      setChatBusy(true);
+
+      setTimeout(() => {
+        const audit = auditGraphTopology(graphRef.current);
+        setThinkingStep(null);
+        setChatBusy(false);
+
+        const totalNodes = Object.keys(graphRef.current.nodesById).length;
+        const totalEdges = Object.keys(graphRef.current.edgesById).length;
+
+        const text = `### Knowledge Graph Topology & Epistemic Audit\n` +
+          `Audited **${totalNodes}** records and **${totalEdges}** relationships across this workspace.\n\n` +
+          `- **${audit.unverifiedClaims.length}** unverified assertions requiring source citation.\n` +
+          `- **${audit.isolatedNodes.length}** detached records without relational links.\n` +
+          `- **${audit.openQuestions.length}** open research questions.\n` +
+          `- **${audit.suggestedConnections.length}** thematic candidate links detected.`;
+
+        setChatLines(current => [
+          ...current,
+          {
+            role: 'assistant',
+            text,
+            model: 'Graph Topology Auditor',
+            toolCall: {
+              tool: 'recommend_improvements',
+              parameters: {},
+              analysis: audit
+            }
+          }
+        ]);
+        announce('Graph audit complete. Review recommendations below.');
+      }, 350);
+      return;
+    }
+
+    if (toolType === 'deep_research' || toolType === 'quick_research') {
+      const mode = toolType === 'deep_research' ? 'deep' : 'quick';
+      setActiveResearchIntent({ mode });
+      setTimeout(() => {
+        chatInputRef.current?.focus();
+      }, 50);
+      announce(`Entered ${mode === 'deep' ? 'Deep' : 'Quick'} Research mode. Type your question in the chat input to begin.`);
+      return;
+    }
+  }, [announce]);
 
   async function saveReview(session: ResearchSession, decisions: Array<{ changeId: string; status: 'accepted' | 'rejected' }>) {
     try {
@@ -895,6 +1399,12 @@ export default function SynthexWorkspace() {
           onSelectTool={value => { setTool(value); setLinkingFromId(null); }}
           onFit={() => setCanvasFitKey(value => value + 1)}
           onAddRecord={addRecord}
+          onOrganizeLayout={strategy => {
+            const positions = computeOrganizedLayout(graphRef.current, strategy);
+            handleApplyLayout(positions);
+            const strategyName = strategy === 'cluster_by_type' ? 'Semantic Categories' : strategy === 'hierarchical' ? 'Hierarchical DAG' : 'Compact Grid';
+            announce(`Applied ${strategyName} layout across ${positions.length} cards.`);
+          }}
         />
       )}
 
@@ -1409,92 +1919,246 @@ export default function SynthexWorkspace() {
                     <div className="drawer-chat-pane">
                       <div className="chat-intro-card">
                         <div className="chat-intro-header">
-                          <span className="chat-sparkle-pill"><Sparkles size={12} /> Graph assistant</span>
+                          <span className="chat-sparkle-pill"><Sparkles size={12} /> Graph Assistant</span>
                           {aiStatus?.configured && (
-                            <span className="chat-model-badge" title={`Active model: ${aiStatus.activeModel} (${aiStatus.reasoningEffort || 'medium'} reasoning)`}>
-                              {aiStatus.activeModel} · {aiStatus.reasoningEffort || 'med reasoning'}
+                            <span className={`chat-model-pill ${aiStatus.usingFallback ? 'fallback' : ''}`} title={`Active: ${aiStatus.activeModel}`}>
+                              <span className="model-dot" />
+                              <span>{aiStatus.activeModel}</span>
                             </span>
                           )}
                         </div>
-                        <p>Answers use records in this workspace{selectedNode ? ` with focus on "${selectedNode.title}"` : ''}.</p>
-                        {aiStatus?.configured && (
-                          <div className="chat-fallback-status">
-                            <span className="fallback-dot" />
-                            <span>
-                              {aiStatus.usingFallback
-                                ? `Active: ${aiStatus.activeProvider} (Fallback engaged)`
-                                : `Fallback: ${aiStatus.fallbackConfigured ? `${aiStatus.fallbackProvider} (${aiStatus.fallbackModel}) ready` : 'Gemini standby'}`}
-                            </span>
-                          </div>
-                        )}
+                        <p style={{ margin: '4px 0 0', fontSize: '11px', color: '#64748b' }}>
+                          {selectedNode ? `Grounded in graph context · Focused on "${selectedNode.title.slice(0, 28)}"` : 'Grounded in graph context · Strict epistemic provenance'}
+                        </p>
                       </div>
+
                       {!aiConfigured && (
-                        <div className="configuration-note"><CircleHelp size={14} /> Add <code>OPENAI_API_KEY</code> or <code>GEMINI_API_KEY</code> to enable answers.</div>
+                        <div className="configuration-note"><CircleHelp size={14} /> Add <code>OPENAI_API_KEY</code> or <code>GEMINI_API_KEY</code> to enable AI features.</div>
                       )}
+
                       <div className="chat-transcript" aria-live="polite">
                         {chatLines.length === 0 && (
                           <div className="chat-welcome">
-                            <span className="chat-sparkle"><Sparkles size={16} /></span>
-                            <strong>{selectedNode ? `Ask about "${selectedNode.title}"` : 'Start from what’s already here'}</strong>
-                            <p>{selectedNode ? 'Explore supporting evidence, connections, or critique this record.' : 'Ask how ideas connect, what evidence is missing, or what question to explore next.'}</p>
-                            <div className="suggestion-chips">
-                              {(selectedNode ? [
-                                'What evidence supports this?',
-                                'How does this connect to other ideas?',
-                                'What are potential counterarguments?'
-                              ] : [
-                                'What remains unverified?',
-                                'Summarize the main ideas',
-                                'Find open questions'
-                              ]).map(text => (
-                                <button key={text} onClick={() => setChatInput(text)}>{text}</button>
-                              ))}
+                            <span className="chat-avatar-assistant"><Sparkles size={16} /></span>
+                            <strong style={{ fontSize: '13px', marginTop: '10px' }}>
+                              {selectedNode ? `Focused on "${selectedNode.title}"` : 'Synthex Knowledge Assistant'}
+                            </strong>
+                            <p style={{ fontSize: '11px', color: '#64748b', margin: '4px 0 12px' }}>
+                              {selectedNode
+                                ? 'Ask about supporting evidence, counterarguments, or related graph nodes.'
+                                : 'Ask questions about your research graph, or run web-grounded research across authoritative sources.'}
+                            </p>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', justifyContent: 'center', maxWidth: '320px', margin: '0 auto' }}>
+                              <button
+                                type="button"
+                                className="quiet-button"
+                                style={{ fontSize: '10.5px', padding: '3px 8px' }}
+                                onClick={() => executeToolDirectly('deep_research')}
+                              >
+                                <Sparkles size={11} style={{ color: '#7c3aed' }} /> Deep Web Research
+                              </button>
+                              <button
+                                type="button"
+                                className="quiet-button"
+                                style={{ fontSize: '10.5px', padding: '3px 8px' }}
+                                onClick={() => executeToolDirectly('quick_research')}
+                              >
+                                <Zap size={11} style={{ color: '#059669' }} /> Quick Research
+                              </button>
                             </div>
                           </div>
                         )}
+
                         {chatLines.map((line, index) => (
-                          <div className={`chat-line ${line.role}`} key={`${index}-${line.text.slice(0, 10)}`}>
-                            <span>{line.role === 'assistant' ? <Sparkles size={13} /> : 'You'}</span>
-                            <div>
-                              <p>{line.text}</p>
-                              {line.role === 'assistant' && (
-                                <div className="chat-line-meta" style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '4px' }}>
-                                  {line.model && (
-                                    <span style={{ fontSize: '10px', color: line.usedFallback ? '#b45309' : '#3c6e71', fontWeight: 600 }}>
+                          line.role === 'user' ? (
+                            <div className="chat-line user" key={`${index}-${line.text.slice(0, 10)}`}>
+                              <div className="chat-bubble-user">{line.text}</div>
+                            </div>
+                          ) : (
+                            <div className="chat-line assistant" key={`${index}-${line.text.slice(0, 10)}`}>
+                              <div className="chat-avatar-assistant">
+                                <Sparkles size={14} />
+                              </div>
+                              <div className="chat-bubble-assistant">
+                                <div className="chat-markdown-body">
+                                  <MarkdownView content={line.text} />
+                                  {line.isStreaming && !line.researchProgress && <span className="streaming-cursor" />}
+                                </div>
+
+                                {line.researchProgress && (
+                                  <LiveResearchCard
+                                    progress={line.researchProgress}
+                                    onOpenReview={(session) => {
+                                      setActiveSession(session);
+                                      setReviewDecisions({});
+                                    }}
+                                  />
+                                )}
+
+                                {line.model && !line.isStreaming && !line.researchProgress && (
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '10px', paddingTop: '8px', borderTop: '1px solid #f1f5f9' }}>
+                                    <span style={{ fontSize: '10.5px', color: line.usedFallback ? '#d97706' : '#64748b', fontWeight: 600 }}>
                                       via {line.model}{line.usedFallback ? ' (fallback)' : ''}
                                     </span>
-                                  )}
-                                  {line.referencedNodeIds?.length ? (
-                                    <small className="answer-citations">
-                                      Records: {line.referencedNodeIds.map(id => graph.nodesById[id]?.title || id).join(' · ')}
-                                    </small>
-                                  ) : null}
-                                </div>
-                              )}
+                                    {line.referencedNodeIds && line.referencedNodeIds.length > 0 && (
+                                      <span style={{ fontSize: '10.5px', color: '#94a3b8' }}>
+                                        · {line.referencedNodeIds.length} {line.referencedNodeIds.length === 1 ? 'record' : 'records'} cited
+                                      </span>
+                                    )}
+                                  </div>
+                                )}
+
+                                {line.toolCall && (
+                                  <ChatToolCard
+                                    toolCall={line.toolCall}
+                                    onExecuteResearch={handleExecuteResearch}
+                                    onApplyLayout={handleApplyLayout}
+                                    onAddProposedItems={handleAddProposedItems}
+                                    onConnectNodes={handleConnectSuggestedNodes}
+                                  />
+                                )}
+                              </div>
                             </div>
-                          </div>
+                          )
                         ))}
-                        {chatBusy && (
-                          <div className="chat-line assistant">
-                            <span><Sparkles size={13} /></span>
-                            <p><LoaderCircle size={14} className="spin" /> Looking through the graph…</p>
+
+                        {chatBusy && thinkingStep && (
+                          <div className="chat-thinking-card">
+                            <div className="thinking-icon-ring">
+                              <LoaderCircle size={14} className="spin" />
+                            </div>
+                            <span className="thinking-step-text">{thinkingStep}</span>
                           </div>
                         )}
                       </div>
-                      <form className="chat-compose" onSubmit={sendQuestion}>
-                        <input
-                          aria-label="Ask a question about this graph"
-                          placeholder={selectedNode ? `Ask about "${selectedNode.title.slice(0, 24)}"…` : 'Ask about this graph…'}
-                          value={chatInput}
-                          onChange={event => setChatInput(event.target.value)}
-                          maxLength={2000}
-                          disabled={!aiConfigured || chatBusy}
-                        />
-                        <button className="primary-button" disabled={!chatInput.trim() || !aiConfigured || chatBusy} aria-label="Send question">
-                          <Send size={14} />
-                        </button>
-                      </form>
-                      <div className="chat-footnote">AI responses are suggestions; verify claims against original sources.</div>
+
+                      {/* Compose bar with Tools Icon Menu */}
+                      <div className="chat-compose-wrapper">
+                        {showToolsMenu && (
+                          <div className="chat-tools-popover" ref={toolsMenuRef}>
+                            <div className="popover-header">
+                              <span>Available Graph Tools</span>
+                              <button
+                                type="button"
+                                className="icon-button"
+                                style={{ width: '20px', height: '20px' }}
+                                onClick={() => setShowToolsMenu(false)}
+                                aria-label="Close tools menu"
+                              >
+                                <X size={12} />
+                              </button>
+                            </div>
+                            <div className="tools-menu-grid">
+                              <button
+                                type="button"
+                                className="tool-menu-item"
+                                onClick={() => executeToolDirectly('deep_research')}
+                              >
+                                <div className="tool-item-icon" style={{ background: '#f5f3ff', color: '#7c3aed' }}>
+                                  <Sparkles size={14} />
+                                </div>
+                                <div className="tool-item-content">
+                                  <span className="tool-item-title">Deep Web Research</span>
+                                  <span className="tool-item-subtitle">Multi-step web search & grounding</span>
+                                </div>
+                              </button>
+
+                              <button
+                                type="button"
+                                className="tool-menu-item"
+                                onClick={() => executeToolDirectly('quick_research')}
+                              >
+                                <div className="tool-item-icon" style={{ background: '#ecfdf5', color: '#059669' }}>
+                                  <Zap size={14} />
+                                </div>
+                                <div className="tool-item-content">
+                                  <span className="tool-item-title">Quick Web Research</span>
+                                  <span className="tool-item-subtitle">Fast search on graph concepts</span>
+                                </div>
+                              </button>
+
+                              <button
+                                type="button"
+                                className="tool-menu-item"
+                                onClick={() => executeToolDirectly('recommend_improvements')}
+                              >
+                                <div className="tool-item-icon" style={{ background: '#fffbeb', color: '#d97706' }}>
+                                  <Compass size={14} />
+                                </div>
+                                <div className="tool-item-content">
+                                  <span className="tool-item-title">Audit &amp; Recommend</span>
+                                  <span className="tool-item-subtitle">Detect unverified claims & missing links</span>
+                                </div>
+                              </button>
+
+                            </div>
+                          </div>
+                        )}
+
+                        {activeResearchIntent && (
+                          <div className="active-research-banner">
+                            <div className="active-research-pill">
+                              {activeResearchIntent.mode === 'deep' ? <Sparkles size={12} /> : <Zap size={12} />}
+                              <span>{activeResearchIntent.mode === 'deep' ? 'Deep Research' : 'Quick Research'}</span>
+                            </div>
+                            <span className="active-research-hint">
+                              {activeResearchIntent.mode === 'deep'
+                                ? 'Type inquiry for multi-hop research…'
+                                : 'Type inquiry for quick grounded research…'}
+                            </span>
+                            <button
+                              type="button"
+                              className="active-research-cancel"
+                              onClick={() => setActiveResearchIntent(null)}
+                              title="Cancel research mode"
+                              aria-label="Cancel research mode"
+                            >
+                              <X size={12} />
+                            </button>
+                          </div>
+                        )}
+
+                        <form className="chat-compose-box" onSubmit={sendQuestion}>
+                          <button
+                            type="button"
+                            className={`tools-trigger-btn ${showToolsMenu ? 'active' : ''}`}
+                            onClick={() => setShowToolsMenu(v => !v)}
+                            title="Open available graph tools"
+                            aria-label="Open available tools"
+                          >
+                            <Wrench size={15} />
+                          </button>
+
+                          <input
+                            ref={chatInputRef}
+                            className="chat-input-field"
+                            aria-label="Ask a question or request a tool"
+                            placeholder={
+                              activeResearchIntent
+                                ? (activeResearchIntent.mode === 'deep'
+                                    ? 'Enter deep research inquiry and press Enter…'
+                                    : 'Enter quick research inquiry and press Enter…')
+                                : selectedNode
+                                ? `Ask about "${selectedNode.title.slice(0, 24)}"…`
+                                : 'Ask a question or select a tool…'
+                            }
+                            value={chatInput}
+                            onChange={event => setChatInput(event.target.value)}
+                            maxLength={2000}
+                            disabled={!aiConfigured || chatBusy}
+                          />
+
+                          <button
+                            type="submit"
+                            className="primary-button"
+                            style={{ width: '30px', height: '30px', minWidth: '30px', padding: 0 }}
+                            disabled={!chatInput.trim() || !aiConfigured || chatBusy}
+                            aria-label="Send message"
+                          >
+                            <Send size={13} />
+                          </button>
+                        </form>
+                      </div>
                     </div>
                   )}
                 </div>
