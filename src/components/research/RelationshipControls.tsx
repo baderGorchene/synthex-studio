@@ -236,12 +236,12 @@ export function RelationshipControls({ connection, x, y, onUpdate, onDelete }: {
                   type="button"
                   className={`style-option-btn ${activePattern === 'solid' ? 'active' : ''}`}
                   onClick={() => onUpdate({ strokePattern: 'solid' })}
-                  title="Solid Line"
+                  title="Continuous / Solid Line"
                 >
                   <svg width="24" height="10" viewBox="0 0 24 10" fill="none">
                     <line x1="2" y1="5" x2="22" y2="5" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
                   </svg>
-                  <span className="style-option-caption">Solid</span>
+                  <span className="style-option-caption">Continuous</span>
                 </button>
                 <button
                   type="button"
@@ -303,8 +303,17 @@ export function RelationshipControls({ connection, x, y, onUpdate, onDelete }: {
                   y2="5"
                   stroke="currentColor"
                   strokeWidth="2"
-                  strokeDasharray="5 3"
-                  className={connection.animated ? "relationship-animated" : ""}
+                  strokeDasharray={
+                    activePattern === 'dotted'
+                      ? '0 6'
+                      : activePattern === 'dashed'
+                      ? '5 3'
+                      : connection.animated
+                      ? '16 18'
+                      : undefined
+                  }
+                  strokeLinecap="round"
+                  className={connection.animated ? (activePattern === 'solid' ? 'relationship-animated-continuous' : activePattern === 'dotted' ? 'relationship-animated-dotted' : 'relationship-animated-dashed') : ''}
                 />
               </svg>
             </label>

@@ -276,7 +276,7 @@ export function relationPath(
 }
 
 function GroupCard({
-  node, members, relationCount, isCollapsed, selected, isGrabbed, dragTilt = 0, onToggle, onOpen, onStartResize
+  node, members, relationCount, isCollapsed, selected, isGrabbed, dragTilt = 0, onToggle, onOpen, onStartResize, isResizeLocked
 }: {
   node: CanvasNode;
   members: CanvasNode[];
@@ -288,6 +288,7 @@ function GroupCard({
   onToggle: () => void;
   onOpen: () => void;
   onStartResize: (event: React.PointerEvent, handle: SectionResizeHandle) => void;
+  isResizeLocked?: boolean;
 }) {
   const customColor = node.color;
   return (
@@ -374,7 +375,7 @@ function GroupCard({
         <div className="group-crease" aria-hidden="true"><i /><i /><i /></div>
       )}
 
-      {!isCollapsed && (['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'] as SectionResizeHandle[]).map(handle => (
+      {!isCollapsed && !isResizeLocked && (['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'] as SectionResizeHandle[]).map(handle => (
         <button
           key={handle}
           className={`group-resize-handle handle-${handle}`}
@@ -389,7 +390,7 @@ function GroupCard({
 
 function KnowledgeCard({
   node, selected, isEditing, isGrabbed, dragTilt = 0, onToggleEdit, onUpdateContent, onPointerDown, onClick, onOpenLightbox, onOpenFileModal,
-  allNodesById, onOpenEvidenceCitation
+  allNodesById, onOpenEvidenceCitation, isResizeLocked, onStartResize
 }: {
   node: CanvasNode;
   selected: boolean;
@@ -404,6 +405,8 @@ function KnowledgeCard({
   onOpenFileModal?: (file: { fileData?: string; fileName?: string; fileSize?: number; fileType?: string; content?: string; initialPage?: number; highlightExcerpt?: string }) => void;
   allNodesById?: Record<string, CanvasNode>;
   onOpenEvidenceCitation?: (evidence: CitationReference) => void;
+  isResizeLocked?: boolean;
+  onStartResize?: (event: React.PointerEvent, handle: SectionResizeHandle) => void;
 }) {
   const customColor = node.color;
   const isSource = node.type === 'source' || node.type === 'link';
@@ -428,6 +431,11 @@ function KnowledgeCard({
       style={{
         transform: `translate3d(${node.x}px, ${node.y}px, 0) scale(${isGrabbed ? 1.035 : 1}) rotate(${isGrabbed ? dragTilt : 0}deg) translateY(${isGrabbed ? -4 : 0}px)`,
         width: node.width || (isImage ? 320 : 280),
+        height: node.height ? `${node.height}px` : undefined,
+        minHeight: '124px',
+        maxHeight: node.height ? `${node.height}px` : undefined,
+        display: 'flex',
+        flexDirection: 'column',
         backgroundColor: '#ffffff',
         ...(customColor ? {
           ['--node-custom-color' as `--${string}`]: customColor,
@@ -474,166 +482,178 @@ function KnowledgeCard({
       </div>
       <h2>{node.title}</h2>
 
-      {/* Media & Figure preview */}
-      {isImage && (
-        <div className="figure-card-wrap">
-          {previewImage ? (
-            <div className="figure-image-container">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={previewImage}
-                alt={caption || node.title}
-                className="figure-card-img"
-                loading="lazy"
-              />
-              <button
-                type="button"
-                className="figure-zoom-btn"
-                title="Expand and view image"
-                aria-label="Expand and view image"
-                onPointerDown={event => event.stopPropagation()}
-                onClick={event => {
-                  event.stopPropagation();
-                  onOpenLightbox?.(previewImage, node.title, caption);
-                }}
-              >
-                <Maximize2 size={13} />
-              </button>
-            </div>
-          ) : (
-            <div className="figure-placeholder-box">
-              <Images size={26} className="figure-placeholder-icon" />
-              <span>Select record to add image</span>
-            </div>
-          )}
-          {/* Bottom part: image name and size */}
-          {(node.fileName || node.fileSize) && (
-            <div className="figure-file-meta">
-              <span className="figure-filename" title={node.fileName}>{node.fileName || 'Image asset'}</span>
-              {node.fileSize ? <span className="figure-filesize">{formatFileSize(node.fileSize)}</span> : null}
-            </div>
-          )}
-          {caption && <figcaption className="figure-card-caption">{caption}</figcaption>}
-        </div>
-      )}
-
-      {/* Messenger-style Link Preview: Thumbnail banner (with YouTube play badge) OR clean favicon preview */}
-      {isSource && !hasFile && (safeUrl || effectiveDomain) && (
-        linkThumb.thumbnailUrl ? (
-          <WebsiteImage
-            imageUrl={linkThumb.thumbnailUrl}
-            alt={node.title}
-            maxHeight={135}
-            isYouTube={linkThumb.isYouTube}
-            linkUrl={safeUrl}
-            className="my-1.5"
-          />
-        ) : (
-          <div
-            className="link-no-thumb-preview"
-            onClick={(e) => {
-              if (safeUrl) {
-                e.stopPropagation();
-                window.open(safeUrl, '_blank', 'noopener,noreferrer');
-              }
-            }}
-            onPointerDown={(e) => {
-              if (safeUrl) e.stopPropagation();
-            }}
-            title={safeUrl ? `Open ${safeUrl}` : undefined}
-          >
-            <div className="link-no-thumb-favicon">
-              <WebsiteLogo url={safeUrl} domain={effectiveDomain} logo={websiteLogo} size={22} />
-            </div>
-            <div className="link-no-thumb-info">
-              <span className="link-no-thumb-domain">{effectiveDomain || 'web link'}</span>
-              {(node.description || node.content) && (
-                <span className="link-no-thumb-desc">{node.description || node.content}</span>
-              )}
-            </div>
-            {safeUrl && <ExternalLink size={12} className="source-link-icon flex-shrink-0 text-slate-400" />}
+      <div className={`knowledge-card-body-scroll ${node.height ? 'has-custom-height' : ''}`}>
+        {/* Media & Figure preview */}
+        {isImage && (
+          <div className="figure-card-wrap">
+            {previewImage ? (
+              <div className="figure-image-container">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={previewImage}
+                  alt={caption || node.title}
+                  className="figure-card-img"
+                  loading="lazy"
+                />
+                <button
+                  type="button"
+                  className="figure-zoom-btn"
+                  title="Expand and view image"
+                  aria-label="Expand and view image"
+                  onPointerDown={event => event.stopPropagation()}
+                  onClick={event => {
+                    event.stopPropagation();
+                    onOpenLightbox?.(previewImage, node.title, caption);
+                  }}
+                >
+                  <Maximize2 size={13} />
+                </button>
+              </div>
+            ) : (
+              <div className="figure-placeholder-box">
+                <Images size={26} className="figure-placeholder-icon" />
+                <span>Select record to add image</span>
+              </div>
+            )}
+            {/* Bottom part: image name and size */}
+            {(node.fileName || node.fileSize) && (
+              <div className="figure-file-meta">
+                <span className="figure-filename" title={node.fileName}>{node.fileName || 'Image asset'}</span>
+                {node.fileSize ? <span className="figure-filesize">{formatFileSize(node.fileSize)}</span> : null}
+              </div>
+            )}
+            {caption && <figcaption className="figure-card-caption">{caption}</figcaption>}
           </div>
-        )
-      )}
+        )}
 
-      {/* File Attachment Badge for PDF, TXT, JSON, CSV, MD, Code */}
-      {hasFile && !isImage && (
-        <AttachedFileBadge
-          fileName={node.fileName}
-          fileSize={node.fileSize}
-          fileType={node.fileType}
-          fileData={node.fileData}
-          content={node.content}
-          onOpenPreview={() => onOpenFileModal?.({
-            fileData: node.fileData,
-            fileName: node.fileName,
-            fileSize: node.fileSize,
-            fileType: node.fileType,
-            content: node.content
-          })}
-        />
-      )}
-
-      {node.type === 'note' ? (
-        isEditing ? (
-          <MarkdownEditor className="card-markdown-editor" value={node.content || ''} onChange={onUpdateContent} ariaLabel="Edit note in Markdown" />
-        ) : body ? (
-          <MarkdownView content={body} className="node-summary note-markdown-preview" onToggleTask={index => onUpdateContent(toggleMarkdownTask(body, index))} />
-        ) : (
-          <p className="node-summary note-placeholder">Add a note and format it with Markdown.</p>
-        )
-      ) : body && !isImage ? (
-        <p className="node-summary">{body}</p>
-      ) : null}
-
-      {/* Website metadata: logo, domain, author and external link (shown below thumbnail) */}
-      {isSource && (safeUrl || effectiveDomain) && !hasFile && linkThumb.thumbnailUrl && (
-        <div className="source-meta-row">
-          <a
-            className="source-domain"
-            href={safeUrl || '#'}
-            target={safeUrl ? '_blank' : undefined}
-            rel="noreferrer"
-            onPointerDown={event => event.stopPropagation()}
-            onClick={event => { if (!safeUrl) event.preventDefault(); event.stopPropagation(); }}
-            title={safeUrl ? `Open ${safeUrl}` : undefined}
-          >
-            <WebsiteLogo url={safeUrl} domain={effectiveDomain} logo={websiteLogo} size={13} />
-            <span className="source-domain-text">{effectiveDomain || 'web-source'}</span>
-            {safeUrl && <ExternalLink size={11} className="source-link-icon" />}
-          </a>
-          {author && <span className="source-author" title={`By ${author}`}>By {author}</span>}
-        </div>
-      )}
-      {node.metadata?.evidence?.length ? (
-        <div className="card-evidence-list">
-          {node.metadata.evidence.map((ev, idx) => {
-            const src = allNodesById?.[ev.sourceId];
-            const pageNum = ev.page || extractPageNumber(ev.location);
-            const isContradiction = ev.relation === 'contradicts';
-            const hasPdf = Boolean(src?.fileData && (src.fileType?.includes('pdf') || src.fileName?.toLowerCase().endsWith('.pdf') || src.fileData.startsWith('data:application/pdf')));
-
-            return (
-              <button
-                key={idx}
-                type="button"
-                className={`card-evidence-pill ${isContradiction ? 'contradicts' : 'supports'} ${hasPdf ? 'has-pdf' : ''}`}
-                title={ev.excerpt ? `“${ev.excerpt}” — Click to ${hasPdf ? 'open PDF citation' : 'view source'}` : `Source: ${src?.title || ev.sourceId}`}
-                onPointerDown={e => e.stopPropagation()}
-                onClick={e => {
+        {/* Messenger-style Link Preview: Thumbnail banner (with YouTube play badge) OR clean favicon preview */}
+        {isSource && !hasFile && (safeUrl || effectiveDomain) && (
+          linkThumb.thumbnailUrl ? (
+            <WebsiteImage
+              imageUrl={linkThumb.thumbnailUrl}
+              alt={node.title}
+              maxHeight={135}
+              isYouTube={linkThumb.isYouTube}
+              linkUrl={safeUrl}
+              className="my-1.5"
+            />
+          ) : (
+            <div
+              className="link-no-thumb-preview"
+              onClick={(e) => {
+                if (safeUrl) {
                   e.stopPropagation();
-                  onOpenEvidenceCitation?.(ev);
-                }}
-              >
-                <span className="evidence-relation-dot" />
-                <span className="evidence-source-title">{src?.title || ev.sourceId}</span>
-                {pageNum && <span className="evidence-page-badge">p.{pageNum}</span>}
-                {hasPdf && <FileText size={10} className="evidence-pdf-icon" />}
-              </button>
-            );
-          })}
-        </div>
-      ) : null}
+                  window.open(safeUrl, '_blank', 'noopener,noreferrer');
+                }
+              }}
+              onPointerDown={(e) => {
+                if (safeUrl) e.stopPropagation();
+              }}
+              title={safeUrl ? `Open ${safeUrl}` : undefined}
+            >
+              <div className="link-no-thumb-favicon">
+                <WebsiteLogo url={safeUrl} domain={effectiveDomain} logo={websiteLogo} size={22} />
+              </div>
+              <div className="link-no-thumb-info">
+                <span className="link-no-thumb-domain">{effectiveDomain || 'web link'}</span>
+                {(node.description || node.content) && (
+                  <span className="link-no-thumb-desc">{node.description || node.content}</span>
+                )}
+              </div>
+              {safeUrl && <ExternalLink size={12} className="source-link-icon flex-shrink-0 text-slate-400" />}
+            </div>
+          )
+        )}
+
+        {/* File Attachment Badge for PDF, TXT, JSON, CSV, MD, Code */}
+        {hasFile && !isImage && (
+          <AttachedFileBadge
+            fileName={node.fileName}
+            fileSize={node.fileSize}
+            fileType={node.fileType}
+            fileData={node.fileData}
+            content={node.content}
+            onOpenPreview={() => onOpenFileModal?.({
+              fileData: node.fileData,
+              fileName: node.fileName,
+              fileSize: node.fileSize,
+              fileType: node.fileType,
+              content: node.content
+            })}
+          />
+        )}
+
+        {node.type === 'note' ? (
+          isEditing ? (
+            <MarkdownEditor className="card-markdown-editor" value={node.content || ''} onChange={onUpdateContent} ariaLabel="Edit note in Markdown" />
+          ) : body ? (
+            <MarkdownView content={body} className="node-summary note-markdown-preview" onToggleTask={index => onUpdateContent(toggleMarkdownTask(body, index))} />
+          ) : (
+            <p className="node-summary note-placeholder">Add a note and format it with Markdown.</p>
+          )
+        ) : body && !isImage ? (
+          <p className="node-summary">{body}</p>
+        ) : null}
+
+        {/* Website metadata: logo, domain, author and external link (shown below thumbnail) */}
+        {isSource && (safeUrl || effectiveDomain) && !hasFile && linkThumb.thumbnailUrl && (
+          <div className="source-meta-row">
+            <a
+              className="source-domain"
+              href={safeUrl || '#'}
+              target={safeUrl ? '_blank' : undefined}
+              rel="noreferrer"
+              onPointerDown={event => event.stopPropagation()}
+              onClick={event => { if (!safeUrl) event.preventDefault(); event.stopPropagation(); }}
+              title={safeUrl ? `Open ${safeUrl}` : undefined}
+            >
+              <WebsiteLogo url={safeUrl} domain={effectiveDomain} logo={websiteLogo} size={13} />
+              <span className="source-domain-text">{effectiveDomain || 'web-source'}</span>
+              {safeUrl && <ExternalLink size={11} className="source-link-icon" />}
+            </a>
+            {author && <span className="source-author" title={`By ${author}`}>By {author}</span>}
+          </div>
+        )}
+        {node.metadata?.evidence?.length ? (
+          <div className="card-evidence-list">
+            {node.metadata.evidence.map((ev, idx) => {
+              const src = allNodesById?.[ev.sourceId];
+              const pageNum = ev.page || extractPageNumber(ev.location);
+              const isContradiction = ev.relation === 'contradicts';
+              const hasPdf = Boolean(src?.fileData && (src.fileType?.includes('pdf') || src.fileName?.toLowerCase().endsWith('.pdf') || src.fileData.startsWith('data:application/pdf')));
+
+              return (
+                <button
+                  key={idx}
+                  type="button"
+                  className={`card-evidence-pill ${isContradiction ? 'contradicts' : 'supports'} ${hasPdf ? 'has-pdf' : ''}`}
+                  title={ev.excerpt ? `“${ev.excerpt}” — Click to ${hasPdf ? 'open PDF citation' : 'view source'}` : `Source: ${src?.title || ev.sourceId}`}
+                  onPointerDown={e => e.stopPropagation()}
+                  onClick={e => {
+                    e.stopPropagation();
+                    onOpenEvidenceCitation?.(ev);
+                  }}
+                >
+                  <span className="evidence-relation-dot" />
+                  <span className="evidence-source-title">{src?.title || ev.sourceId}</span>
+                  {pageNum && <span className="evidence-page-badge">p.{pageNum}</span>}
+                  {hasPdf && <FileText size={10} className="evidence-pdf-icon" />}
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
+      </div>
+
+      {/* 8-point resize handles when card is selected and resize is unlocked */}
+      {selected && !isResizeLocked && !isGrabbed && (['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'] as SectionResizeHandle[]).map(handle => (
+        <span
+          key={handle}
+          className={`card-resize-handle handle-${handle}`}
+          onPointerDown={event => onStartResize?.(event, handle)}
+          title={`Resize card (${handle})`}
+        />
+      ))}
     </article>
   );
 }
@@ -642,7 +662,7 @@ export function GraphCanvas({
   graph, selectedNodeIds, viewport, setViewport, activeTool, spacePressed, linkingFromId,
   autoFitKey, editingNoteId, onSelectNode, onSelectMultipleNodes, onClearSelection, onClickAway, onCancelLinking, onMoveNodes, onConnect,
   onStartLinking, onToggleGroup, onEditNote, onUpdateNote, onUpdateRelationship, onDeleteRelationship, onResizeGroup, onOpenGroup,
-  onAddRecordWithData, onDeleteNodes, projectId
+  onAddRecordWithData, onDeleteNodes, projectId, isResizeLocked = false
 }: {
   graph: KnowledgeGraph;
   selectedNodeIds: string[];
@@ -671,6 +691,7 @@ export function GraphCanvas({
   onAddRecordWithData?: (type: CanvasNodeType, initialData?: Partial<CanvasNode>) => void;
   onDeleteNodes?: (ids: string[]) => void;
   projectId?: string;
+  isResizeLocked?: boolean;
 }) {
   const canvasRef = useRef<HTMLDivElement>(null);
   const gesture = useRef<Gesture | null>(null);
@@ -727,11 +748,11 @@ export function GraphCanvas({
     }
     for (const node of nodes) {
       if (node.type !== 'group' && node.type !== 'section') {
-        const h = nodeHeights[node.id] || estimateNodeHeight(node);
+        const h = node.height || nodeHeights[node.id] || estimateNodeHeight(node);
         bounds[node.id] = {
           x: node.x,
           y: node.y,
-          width: node.width || 280,
+          width: node.width || (node.type === 'image' ? 320 : 280),
           height: h
         };
       }
@@ -1021,12 +1042,17 @@ export function GraphCanvas({
       } else if (current.kind === 'resize') {
         const dx = (event.clientX - current.start.x) / viewport.zoom;
         const dy = (event.clientY - current.start.y) / viewport.zoom;
-        const { x, y, width = 540, height = 360 } = current.node;
+        const isGroup = current.node.type === 'group' || current.node.type === 'section';
+        const defaultWidth = isGroup ? 540 : (current.node.type === 'image' ? 320 : 280);
+        const defaultHeight = isGroup ? 360 : 130;
+        const { x, y, width = defaultWidth, height = defaultHeight } = current.node;
         const handle = current.handle;
         const nextX = handle.includes('w') ? x + dx : x;
         const nextY = handle.includes('n') ? y + dy : y;
-        const nextWidth = Math.max(300, width + (handle.includes('e') ? dx : handle.includes('w') ? -dx : 0));
-        const nextHeight = Math.max(220, height + (handle.includes('s') ? dy : handle.includes('n') ? -dy : 0));
+        const minW = isGroup ? 300 : 180;
+        const minH = isGroup ? 220 : 100;
+        const nextWidth = Math.max(minW, width + (handle.includes('e') ? dx : handle.includes('w') ? -dx : 0));
+        const nextHeight = Math.max(minH, height + (handle.includes('s') ? dy : handle.includes('n') ? -dy : 0));
         onResizeGroup(current.node.id, { x: nextX, y: nextY, width: nextWidth, height: nextHeight });
       } else {
         pendingMoveEvent.current = { clientX: event.clientX, clientY: event.clientY, shiftKey: event.shiftKey };
@@ -1311,6 +1337,13 @@ export function GraphCanvas({
   };
 
   const startGroupResize = (event: React.PointerEvent, node: CanvasNode, handle: SectionResizeHandle) => {
+    if (isResizeLocked) return;
+    event.preventDefault(); event.stopPropagation();
+    gesture.current = { kind: 'resize', start: { x: event.clientX, y: event.clientY }, node, handle };
+  };
+
+  const startNodeResize = (event: React.PointerEvent, node: CanvasNode, handle: SectionResizeHandle) => {
+    if (isResizeLocked) return;
     event.preventDefault(); event.stopPropagation();
     gesture.current = { kind: 'resize', start: { x: event.clientX, y: event.clientY }, node, handle };
   };
@@ -1488,7 +1521,7 @@ export function GraphCanvas({
 
   return (
     <div
-      className={`graph-canvas ${spacePressed || activeTool === 'hand' ? 'is-hand-tool' : ''} ${activeTool === 'connect' ? 'is-link-tool' : ''}`}
+      className={`graph-canvas ${spacePressed || activeTool === 'hand' ? 'is-hand-tool' : ''} ${activeTool === 'connect' ? 'is-link-tool' : ''} ${isResizeLocked ? 'canvas-resize-locked' : ''}`}
       ref={canvasRef}
       onPointerDownCapture={trackTouchPointer}
       onWheel={zoomAtPointer}
@@ -1546,22 +1579,56 @@ export function GraphCanvas({
               <path d="M0,0 L0,6 L7,3 z" fill="#3c6e71" />
             </marker>
           </defs>
-          {edges.map(({ edge, path, mid }) => (
-            <g key={edge.id} className="relationship-mark">
-              <path className="relationship-hit" d={path} />
-              <path
-                className={`relationship-stroke ${edge.animated && edge.strokePattern !== 'solid' ? 'relationship-animated' : ''}`}
-                d={path}
-                stroke={RELATION_PALETTE[edge.color || 'neutral'] || '#284b63'}
-                strokeDasharray={edge.strokePattern === 'dotted' ? '0 8' : edge.strokePattern === 'dashed' ? '8 8' : undefined}
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                markerEnd={edge.arrowhead === 'none' || edge.arrowhead === 'start' ? undefined : `url(#relation-arrow-${edge.color || 'neutral'})`}
-                markerStart={edge.arrowhead === 'both' || edge.arrowhead === 'start' ? `url(#relation-arrow-${edge.color || 'neutral'})` : undefined}
-              />
-              <RelationshipControls connection={edge} x={mid.x} y={mid.y} onUpdate={fields => onUpdateRelationship(edge.id, fields)} onDelete={() => onDeleteRelationship(edge.id)} />
-            </g>
-          ))}
+          {edges.map(({ edge, path, mid }) => {
+            const isDotted = edge.strokePattern === 'dotted';
+            const isDashed = edge.strokePattern === 'dashed';
+            const isSolid = !isDotted && !isDashed;
+            const strokeColor = RELATION_PALETTE[edge.color || 'neutral'] || '#284b63';
+
+            return (
+              <g key={edge.id} className="relationship-mark">
+                <path className="relationship-hit" d={path} />
+
+                {/* Base vector line */}
+                <path
+                  className={`relationship-stroke ${
+                    edge.animated
+                      ? isDotted
+                        ? 'relationship-animated-dotted'
+                        : isDashed
+                        ? 'relationship-animated-dashed'
+                        : ''
+                      : ''
+                  }`}
+                  d={path}
+                  stroke={strokeColor}
+                  strokeDasharray={isDotted ? '0 8' : isDashed ? '8 8' : undefined}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  opacity={edge.animated && isSolid ? 0.35 : 1}
+                  markerEnd={edge.arrowhead === 'none' || edge.arrowhead === 'start' ? undefined : `url(#relation-arrow-${edge.color || 'neutral'})`}
+                  markerStart={edge.arrowhead === 'both' || edge.arrowhead === 'start' ? `url(#relation-arrow-${edge.color || 'neutral'})` : undefined}
+                />
+
+                {/* Continuous animation pulse on solid lines: travels right on the line with exact zero offset */}
+                {edge.animated && isSolid && (
+                  <path
+                    className="relationship-stroke relationship-animated-continuous"
+                    d={path}
+                    stroke={strokeColor}
+                    strokeWidth="2"
+                    strokeDasharray="40 100"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    fill="none"
+                    pointerEvents="none"
+                  />
+                )}
+
+                <RelationshipControls connection={edge} x={mid.x} y={mid.y} onUpdate={fields => onUpdateRelationship(edge.id, fields)} onDelete={() => onDeleteRelationship(edge.id)} />
+              </g>
+            );
+          })}
           {linkingFromId && cursorWorld && graph.nodesById[linkingFromId] && (() => {
             const from = graph.nodesById[linkingFromId];
             const fromBox = nodeBounds[from.id] || {
@@ -1616,6 +1683,7 @@ export function GraphCanvas({
                 onToggle={() => onToggleGroup(group.id)}
                 onOpen={() => onOpenGroup(group.id)}
                 onStartResize={(event, handle) => startGroupResize(event, group, handle)}
+                isResizeLocked={isResizeLocked}
               />
             </div>
           );
@@ -1640,6 +1708,8 @@ export function GraphCanvas({
               onSelectNode(current.id, event.ctrlKey || event.metaKey);
               if (current.type !== 'note' || editingNoteId !== current.id) onEditNote(null);
             }}
+            isResizeLocked={isResizeLocked}
+            onStartResize={(event, handle) => startNodeResize(event, node, handle)}
           />
         ))}
       </div>

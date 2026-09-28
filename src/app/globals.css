@@ -965,6 +965,9 @@ kbd {
   box-shadow: 0 3px 12px rgba(53, 53, 53, 0.06), 0 1px 3px rgba(53, 53, 53, 0.04);
   cursor: grab;
   user-select: none;
+  box-sizing: border-box;
+  overflow-wrap: anywhere;
+  word-break: break-word;
   transition: border-color 0.15s ease, box-shadow 0.18s ease, transform 0.1s cubic-bezier(0.2, 0, 0, 1);
   will-change: transform, box-shadow;
 }
@@ -1017,7 +1020,7 @@ kbd {
 .knowledge-card.type-claim { border-color: #353535; }
 .knowledge-card.type-question { border-color: #3c6e71; }
 
-.knowledge-card-topline { display: flex; align-items: center; gap: 7px; min-height: 20px; margin-bottom: 9px; }
+.knowledge-card-topline { display: flex; align-items: center; gap: 7px; min-height: 20px; margin-bottom: 9px; flex-shrink: 0; }
 
 /* Element icons: solid vibrant palette coloring */
 .node-glyph {
@@ -1058,8 +1061,41 @@ kbd {
 .claim-status.status-supported, .status-pill.status-supported { color: #ffffff; background: #3c6e71; }
 .claim-status.status-disputed, .status-pill.status-disputed, .claim-status.status-contradicted, .status-pill.status-contradicted { color: #ffffff; background: #284b63; }
 .claim-status.status-weakly_supported, .status-pill.status-weakly_supported { color: #353535; border: 1px solid #d9d9d9; background: #ffffff; }
-.knowledge-card h2 { margin: 0; color: #353535; font-size: 13.5px; font-weight: 650; line-height: 1.4; letter-spacing: -.015em; }
-.node-summary { display: -webkit-box; margin: 7px 0 0; overflow: hidden; color: #353535; opacity: 0.88; font-size: 12.5px; line-height: 1.58; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
+.knowledge-card h2 {
+  margin: 0;
+  color: #353535;
+  font-size: 13.5px;
+  font-weight: 650;
+  line-height: 1.4;
+  letter-spacing: -.015em;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  hyphens: auto;
+  max-width: 100%;
+}
+.node-summary {
+  display: -webkit-box;
+  margin: 7px 0 0;
+  overflow: hidden;
+  color: #353535;
+  opacity: 0.88;
+  font-size: 12.5px;
+  line-height: 1.58;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  max-width: 100%;
+}
+.knowledge-card-body-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(60, 110, 113, 0.35) transparent;
+  padding-right: 2px;
+}
 .source-meta-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 11px; }
 .source-domain { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 3px 8px; border: 1px solid #d9d9d9; border-radius: 5px; background: #ffffff; color: #284b63; font-size: 11px; font-weight: 560; text-decoration: none; overflow: hidden; transition: background .12s, border-color .12s; }
 .source-domain:hover { background: rgba(60, 110, 113, 0.08); border-color: #3c6e71; color: #3c6e71; text-decoration: none; }
@@ -1743,10 +1779,18 @@ kbd {
   pointer-events: none;
   transition: stroke-width .15s, opacity .15s;
 }
-.relationship-mark:hover .relationship-stroke { stroke-width: 2.6; }
-.relationship-mark:has(.relationship-controls:hover) .relationship-stroke { stroke-width: 2.6; }
 .relationship-animated { animation: relationshipFlow 1.6s linear infinite; }
+.relationship-animated-dotted { animation: relationshipFlow 1.4s linear infinite; }
+.relationship-animated-dashed { animation: relationshipFlow 1.4s linear infinite; }
+.relationship-animated-continuous {
+  animation: continuousFlow 1.6s linear infinite;
+  pointer-events: none;
+}
 @keyframes relationshipFlow { to { stroke-dashoffset: -32; } }
+@keyframes continuousFlow {
+  from { stroke-dashoffset: 140; }
+  to { stroke-dashoffset: 0; }
+}
 .relationship-preview {
   fill: none;
   stroke: #3c6e71;
@@ -2070,10 +2114,40 @@ kbd {
   cursor: pointer;
 }
 
-/* Folded groups and markdown notes */
+/* Folded groups, cards and markdown notes */
 .group-resize-handle { position: absolute; z-index: 4; width: 10px; height: 10px; padding: 0; border: 1.5px solid #3c6e71; border-radius: 3px; background: #fff; opacity: 0; transition: opacity .13s, transform .13s; }
 .graph-group:hover .group-resize-handle, .graph-group.is-selected .group-resize-handle { opacity: .88; }
 .group-resize-handle:hover { transform: scale(1.22); background: #ffffff; opacity: 1; }
+
+.card-resize-handle {
+  position: absolute;
+  z-index: 15;
+  width: 10px;
+  height: 10px;
+  padding: 0;
+  border: 1.5px solid #284b63;
+  border-radius: 3px;
+  background: #ffffff;
+  opacity: 0;
+  transition: opacity .13s, transform .13s, background-color .13s;
+  pointer-events: auto;
+}
+.knowledge-card:hover .card-resize-handle,
+.knowledge-card.is-selected .card-resize-handle {
+  opacity: 0.92;
+}
+.card-resize-handle:hover {
+  transform: scale(1.25);
+  background: #284b63;
+  opacity: 1;
+}
+
+.canvas-resize-locked .card-resize-handle,
+.canvas-resize-locked .group-resize-handle {
+  display: none !important;
+  pointer-events: none !important;
+}
+
 .handle-nw { top: -5px; left: -5px; cursor: nwse-resize; }.handle-n { top: -5px; left: 50%; transform: translateX(-50%); cursor: ns-resize; }.handle-ne { top: -5px; right: -5px; cursor: nesw-resize; }.handle-e { top: 50%; right: -5px; transform: translateY(-50%); cursor: ew-resize; }.handle-se { right: -5px; bottom: -5px; cursor: nwse-resize; }.handle-s { bottom: -5px; left: 50%; transform: translateX(-50%); cursor: ns-resize; }.handle-sw { bottom: -5px; left: -5px; cursor: nesw-resize; }.handle-w { top: 50%; left: -5px; transform: translateY(-50%); cursor: ew-resize; }
 .note-mode-toggle { display: inline-flex; align-items: center; gap: 3px; height: 22px; margin-left: auto; padding: 0 5px; border: 1px solid transparent; border-radius: 5px; color: #3c6e71; background: transparent; font-size: 8px; cursor: pointer; }
 .note-mode-toggle:hover, .note-mode-toggle.is-editing { border-color: #d9d9d9; color: #353535; background: #d9d9d9; }
