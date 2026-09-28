@@ -2,22 +2,23 @@ import { getAllConnectionsFromDb, getAllNodesFromDb, getProjectsFromDb, projectE
 import { normalizeGraph } from '@/lib/graph';
 import { buildVaultFiles, createZipArchive, sanitizeVaultFilename } from '@/lib/vault-export';
 import type { KnowledgeGraph } from '@/lib/graph';
+import type { CanvasNode, Connection } from '@/types/canvas';
 
 export async function GET(request: Request) {
   try {
     const url = new URL(request.url);
     const projectId = url.searchParams.get('projectId') || 'default';
 
-    if (!projectExistsInDb(projectId)) {
+    if (!(await projectExistsInDb(projectId))) {
       return Response.json({ error: 'Project not found.' }, { status: 404 });
     }
 
-    const projects = getProjectsFromDb();
+    const projects = await getProjectsFromDb();
     const currentProject = projects.find(p => p.id === projectId);
     const projectTitle = currentProject?.title || 'Research Workspace';
 
-    const rawNodes = getAllNodesFromDb(projectId);
-    const rawEdges = getAllConnectionsFromDb(projectId);
+    const rawNodes = (await getAllNodesFromDb(projectId)) as CanvasNode[];
+    const rawEdges = (await getAllConnectionsFromDb(projectId)) as Connection[];
     const graph = normalizeGraph(rawNodes, rawEdges);
 
     const files = buildVaultFiles(graph, projectTitle);

@@ -8,8 +8,8 @@ export async function PATCH(
     const { sessionId } = await context.params;
     const body = await request.json();
     const projectId = typeof body?.projectId === 'string' ? body.projectId : 'default';
-    if (projectId.length > 80 || !projectExistsInDb(projectId)) return Response.json({ error: 'Project not found.' }, { status: 404 });
-    const session = getResearchSession(sessionId, projectId);
+    if (projectId.length > 80 || !(await projectExistsInDb(projectId))) return Response.json({ error: 'Project not found.' }, { status: 404 });
+    const session = await getResearchSession(sessionId, projectId);
     if (!session) return Response.json({ error: 'Research session not found.' }, { status: 404 });
     if (!Array.isArray(body?.decisions) || body.decisions.length > 100) {
       return Response.json({ error: 'Expected a list of review decisions.' }, { status: 400 });
@@ -21,7 +21,7 @@ export async function PATCH(
     )) {
       return Response.json({ error: 'One or more review decisions are invalid.' }, { status: 400 });
     }
-    const updated = reviewResearchSession(sessionId, body.decisions, projectId);
+    const updated = await reviewResearchSession(sessionId, body.decisions, projectId);
     return Response.json({ session: updated });
   } catch (error) {
     console.error('Failed to review research changes:', error);
