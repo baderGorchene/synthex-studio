@@ -10,8 +10,8 @@
 |---|---|---|---|---|
 | **Part 1: Code-Only & Local** | Storage, Canvas UI, Math, Exports, Cleanups | 0 | 0 | 18 |
 | **Part 2: AI & External Services** | Graph RAG, Agentic Tools, SSE Streaming, Deep Research | 1 | 0 | 5 |
-| **Part 3: Cloud, Auth & SaaS** | GCP, Clerk Auth, Landing Page, Stripe, Context Credits | 4 | 0 | 7 |
-| **Total** | | **5** | **0** | **30** |
+| **Part 3: Cloud, Auth & SaaS** | GCP, Clerk Auth, Landing Page, Stripe, Context Credits | 2 | 0 | 9 |
+| **Total** | | **3** | **0** | **32** |
 
 ---
 
@@ -287,33 +287,35 @@
 ---
 
 ## 3.4 Stripe Monetization, Subscriptions & 3-Day Free Trial (P1)
-
-- [ ] **Stripe Checkout & Billing Integration**
+ 
+- [x] **Stripe Checkout & Billing Integration**
   - *Objective:* Seamless payment flow supporting subscriptions, per-seat billing, and one-click credit refills.
-  - *Architecture:*
-    - Install `stripe` SDK and configure Stripe Client in [src/lib/stripe.ts](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/src/lib/stripe.ts).
-    - Create `POST /api/billing/checkout` generating Stripe Checkout sessions with pre-populated customer emails.
-    - Create `POST /api/billing/portal` launching the Stripe Customer Portal for self-service subscription upgrades, payment method changes, and tax invoices.
-    - Idempotent Stripe Webhook handler (`/api/webhooks/stripe`):
-      - `customer.subscription.created`: Provision tier and allocate monthly credits.
-      - `invoice.payment_succeeded`: Monthly credit replenishment and invoice record.
-      - `customer.subscription.updated`: Handle seat count changes for Team Plans.
-      - `customer.subscription.deleted`: Gracefully downgrade to Free/BYOK tier.
-- [ ] **Subscription Tier Definitions & Rules**
+  - *Architecture & Implementation:*
+    - Installed `stripe` SDK and configured resilient Stripe Client in [src/lib/stripe.ts](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/src/lib/stripe.ts) with zero-config offline/dev fallback when `STRIPE_SECRET_KEY` is omitted.
+    - Created `POST /api/billing/checkout` in [src/app/api/billing/checkout/route.ts](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/src/app/api/billing/checkout/route.ts) generating Stripe Checkout sessions with pre-populated customer emails, seat counts, and interval mapping.
+    - Created `POST /api/billing/portal` in [src/app/api/billing/portal/route.ts](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/src/app/api/billing/portal/route.ts) launching the Stripe Customer Portal for self-service subscription upgrades, payment method updates, and invoices.
+    - Implemented idempotent Stripe Webhook handler in [src/app/api/webhooks/stripe/route.ts](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/src/app/api/webhooks/stripe/route.ts) handling:
+      - `checkout.session.completed`: Credit refill provisioning or subscription linkage.
+      - `customer.subscription.created` & `customer.subscription.updated`: Tier upgrades, seat expansion, period ends, and initial plan credit allocations.
+      - `invoice.payment_succeeded`: Monthly recurring Context Credits replenishment for active subscribers.
+      - `customer.subscription.deleted`: Graceful downgrade to trial/canceled status without data loss.
+    - Updated [src/lib/db.ts](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/src/lib/db.ts) with user subscription columns (`stripeSubscriptionId`, `seatCount`, `currentPeriodEnd`, `billingInterval`) and helper methods (`getUserByStripeCustomerId`, `getUserByStripeSubscriptionId`, `updateUserSubscription`).
+    - Added comprehensive unit test in [tests/graph.test.mjs](file:///c:/Users/badrg/OneDrive/Documents/projects/research%20notes/tests/graph.test.mjs) (`Stripe Monetization & Subscriptions: tier definitions, checkout sessions, and webhook credit provisioning`).
+- [x] **Subscription Tier Definitions & Rules**
   1. **3-Day Free Trial (No Credit Card Upfront)**
      - Triggered automatically upon Clerk signup.
      - Allocates **100 Context Credits** to explore the studio.
      - Topbar shows subtle countdown pill (`2 days left in trial`).
      - At end of Day 3 or when credits hit 0, prompts user to select a subscription plan.
-  2. **BYOK / No-AI Tier ($3.00 / month)**
+  2. **BYOK / No-AI Tier ($3.00 / month, $2.40 / month annual)**
      - Cloud storage, multi-device sync, unlimited workspaces, GCS vault, and PDF citation deep-linking.
      - 0 platform AI credits included; user enters their own OpenAI or Gemini API key in settings.
      - Perfect for developers and researchers with existing API access.
-  3. **Pro Tier ($9.99 / month)**
+  3. **Pro Tier ($9.99 / month, $7.99 / month annual)**
      - 1 User.
      - **1,500 Context Credits / month** (auto-refreshed each billing cycle).
-     - Full access to managed multi-hop research (`gpt-6-luna` + Google Search Grounding), priority model queue, and 20 GB GCS vault.
-  4. **Team Plan ($29.99 / seat / month)**
+     - Full access to managed multi-hop research, priority model queue, and 20 GB GCS vault.
+  4. **Team Plan ($29.99 / seat / month, $23.99 / seat / month annual)**
      - Multi-seat collaboration with Clerk Organization RBAC.
      - **5,000 Pooled Context Credits / month** shared across team members.
      - Shared collaborative workspaces, centralized review queue, and unified team billing.

@@ -153,6 +153,20 @@ function ensureSchemaColumns(db: Database.Database) {
     }
   }
 
+  const userCols = [
+    { name: 'stripeSubscriptionId', type: 'TEXT' },
+    { name: 'seatCount', type: 'INTEGER DEFAULT 1' },
+    { name: 'currentPeriodEnd', type: 'INTEGER' },
+    { name: 'billingInterval', type: "TEXT DEFAULT 'month'" }
+  ];
+  for (const col of userCols) {
+    try {
+      db.exec(`ALTER TABLE users ADD COLUMN ${col.name} ${col.type}`);
+    } catch {
+      // Column already exists
+    }
+  }
+
   db.exec(`
     CREATE INDEX IF NOT EXISTS nodes_project_idx ON nodes(projectId);
     CREATE INDEX IF NOT EXISTS connections_project_idx ON connections(projectId);
@@ -177,8 +191,12 @@ function ensureSchemaColumns(db: Database.Database) {
       email TEXT,
       name TEXT,
       stripeCustomerId TEXT UNIQUE,
+      stripeSubscriptionId TEXT,
       subscriptionTier TEXT NOT NULL DEFAULT 'trial',
       subscriptionStatus TEXT NOT NULL DEFAULT 'active',
+      seatCount INTEGER DEFAULT 1,
+      billingInterval TEXT DEFAULT 'month',
+      currentPeriodEnd INTEGER,
       contextCredits INTEGER NOT NULL DEFAULT 100,
       trialEndsAt INTEGER,
       createdAt INTEGER NOT NULL
@@ -1071,8 +1089,12 @@ export interface UserRecord {
   email: string | null;
   name: string | null;
   stripeCustomerId: string | null;
+  stripeSubscriptionId?: string | null;
   subscriptionTier: 'trial' | 'byok' | 'pro' | 'team';
   subscriptionStatus: 'active' | 'past_due' | 'canceled' | 'trialing';
+  seatCount?: number | null;
+  billingInterval?: 'month' | 'year' | null;
+  currentPeriodEnd?: number | null;
   contextCredits: number;
   trialEndsAt: number | null;
   createdAt: number;
@@ -1088,10 +1110,70 @@ export interface CreditTransaction {
   createdAt: number;
 }
 
+export function getUserById(id: string): UserRecord | null {
+  const db = getDatabase();
+  const row = db.prepare('SELECT * FROM users WHERE id = ?').get(id) as UserRecord | undefined;
+  return row || null;
+}
+
 export function getUserByClerkId(clerkId: string): UserRecord | null {
   const db = getDatabase();
   const row = db.prepare('SELECT * FROM users WHERE clerkId = ?').get(clerkId) as UserRecord | undefined;
   return row || null;
+}
+
+export function getUserByStripeCustomerId(stripeCustomerId: string): UserRecord | null {
+  const db = getDatabase();
+  const row = db.prepare('SELECT * FROM users WHERE stripeCustomerId = ?').get(stripeCustomerId) as UserRecord | undefined;
+  return row || null;
+}
+
+export function getUserByStripeSubscriptionId(stripeSubscriptionId: string): UserRecord | null {
+  const db = getDatabase();
+  const row = db.prepare('SELECT * FROM users WHERE stripeSubscriptionId = ?').get(stripeSubscriptionId) as UserRecord | undefined;
+  return row || null;
+}
+
+export function updateUserSubscription(
+  userId: string,
+  data: Partial<UserRecord>
+): UserRecord | null {
+  const db = getDatabase();
+  const existing = getUserById(userId);
+  if (!existing) return null;
+
+  const updated: UserRecord = {
+    ...existing,
+    ...data,
+    id: existing.id
+  };
+
+  db.prepare(`
+    UPDATE users SET
+      stripeCustomerId = ?,
+      stripeSubscriptionId = ?,
+      subscriptionTier = ?,
+      subscriptionStatus = ?,
+      seatCount = ?,
+      billingInterval = ?,
+      currentPeriodEnd = ?,
+      contextCredits = ?,
+      trialEndsAt = ?
+    WHERE id = ?
+  `).run(
+    updated.stripeCustomerId || null,
+    updated.stripeSubscriptionId || null,
+    updated.subscriptionTier,
+    updated.subscriptionStatus,
+    updated.seatCount || 1,
+    updated.billingInterval || 'month',
+    updated.currentPeriodEnd || null,
+    updated.contextCredits,
+    updated.trialEndsAt || null,
+    userId
+  );
+
+  return updated;
 }
 
 export function upsertUser(user: Partial<UserRecord> & { clerkId: string }): UserRecord {
@@ -1109,12 +1191,15 @@ export function upsertUser(user: Partial<UserRecord> & { clerkId: string }): Use
     };
     db.prepare(`
       UPDATE users SET
-        email = ?, name = ?, stripeCustomerId = ?, subscriptionTier = ?,
-        subscriptionStatus = ?, contextCredits = ?, trialEndsAt = ?
+        email = ?, name = ?, stripeCustomerId = ?, stripeSubscriptionId = ?,
+        subscriptionTier = ?, subscriptionStatus = ?, seatCount = ?,
+        billingInterval = ?, currentPeriodEnd = ?, contextCredits = ?, trialEndsAt = ?
       WHERE clerkId = ?
     `).run(
-      next.email, next.name, next.stripeCustomerId, next.subscriptionTier,
-      next.subscriptionStatus, next.contextCredits, next.trialEndsAt,
+      next.email, next.name, next.stripeCustomerId, next.stripeSubscriptionId || null,
+      next.subscriptionTier, next.subscriptionStatus, next.seatCount || 1,
+      next.billingInterval || 'month', next.currentPeriodEnd || null,
+      next.contextCredits, next.trialEndsAt,
       next.clerkId
     );
     return next;
@@ -1128,32 +1213,39 @@ export function upsertUser(user: Partial<UserRecord> & { clerkId: string }): Use
     email: user.email || null,
     name: user.name || null,
     stripeCustomerId: user.stripeCustomerId || null,
+    stripeSubscriptionId: user.stripeSubscriptionId || null,
     subscriptionTier: user.subscriptionTier || 'trial',
     subscriptionStatus: user.subscriptionStatus || 'trialing',
+    seatCount: user.seatCount || 1,
+    billingInterval: user.billingInterval || 'month',
+    currentPeriodEnd: user.currentPeriodEnd || null,
     contextCredits: typeof user.contextCredits === 'number' ? user.contextCredits : 100,
     trialEndsAt: trialEnds,
     createdAt: now
   };
 
   db.prepare(`
-    INSERT INTO users (id, clerkId, email, name, stripeCustomerId, subscriptionTier, subscriptionStatus, contextCredits, trialEndsAt, createdAt)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO users (id, clerkId, email, name, stripeCustomerId, stripeSubscriptionId, subscriptionTier, subscriptionStatus, seatCount, billingInterval, currentPeriodEnd, contextCredits, trialEndsAt, createdAt)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
-    newUser.id, newUser.clerkId, newUser.email, newUser.name, newUser.stripeCustomerId,
-    newUser.subscriptionTier, newUser.subscriptionStatus, newUser.contextCredits, newUser.trialEndsAt, newUser.createdAt
+    newUser.id, newUser.clerkId, newUser.email, newUser.name,
+    newUser.stripeCustomerId, newUser.stripeSubscriptionId,
+    newUser.subscriptionTier, newUser.subscriptionStatus,
+    newUser.seatCount, newUser.billingInterval, newUser.currentPeriodEnd,
+    newUser.contextCredits, newUser.trialEndsAt, newUser.createdAt
   );
 
   return newUser;
 }
 
 export function deductUserCredits(
-  clerkId: string,
+  userIdentifier: string,
   amount: number,
   action: CreditTransaction['action'],
   metadata?: string
 ): { success: boolean; balance: number; error?: string } {
   const db = getDatabase();
-  const user = getUserByClerkId(clerkId);
+  const user = getUserByClerkId(userIdentifier) || getUserById(userIdentifier);
   if (!user) {
     return { success: false, balance: 0, error: 'User account not found.' };
   }
@@ -1184,15 +1276,15 @@ export function deductUserCredits(
 }
 
 export function topUpUserCredits(
-  clerkId: string,
+  userIdentifier: string,
   amount: number,
   action: CreditTransaction['action'] = 'refill',
   metadata?: string
 ): { success: boolean; balance: number } {
   const db = getDatabase();
-  let user = getUserByClerkId(clerkId);
+  let user = getUserByClerkId(userIdentifier) || getUserById(userIdentifier);
   if (!user) {
-    user = upsertUser({ clerkId });
+    user = upsertUser({ clerkId: userIdentifier });
   }
 
   const nextBalance = user.contextCredits + amount;

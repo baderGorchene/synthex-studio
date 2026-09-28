@@ -977,6 +977,112 @@ test('Clerk Authentication & Multi-Tenant Provisioning: server auth fallback, we
   assert.strictEqual(teamWorkspace.organizationId, 'org_synthex_labs', 'Team workspace is scoped to organization');
 });
 
+test('Stripe Monetization & Subscriptions: tier definitions, checkout sessions, and webhook credit provisioning', async () => {
+  const { SUBSCRIPTION_TIERS, REFILL_PACKS, createCheckoutSession, isStripeConfigured } = await import('../src/lib/stripe.ts');
+  const {
+    upsertUser,
+    getUserById,
+    getUserByStripeCustomerId,
+    updateUserSubscription,
+    topUpUserCredits,
+    getCreditTransactions
+  } = await import('../src/lib/db.ts');
+
+  // 1. Validate pricing matrix and credit allocations
+  assert.strictEqual(SUBSCRIPTION_TIERS.trial.creditsMonthly, 100);
+  assert.strictEqual(SUBSCRIPTION_TIERS.byok.priceMonthlyUsd, 3.00);
+  assert.strictEqual(SUBSCRIPTION_TIERS.byok.creditsMonthly, 0);
+  assert.strictEqual(SUBSCRIPTION_TIERS.pro.priceMonthlyUsd, 9.99);
+  assert.strictEqual(SUBSCRIPTION_TIERS.pro.creditsMonthly, 1500);
+  assert.strictEqual(SUBSCRIPTION_TIERS.team.priceMonthlyUsd, 29.99);
+  assert.strictEqual(SUBSCRIPTION_TIERS.team.creditsMonthly, 5000);
+  assert.strictEqual(SUBSCRIPTION_TIERS.team.perSeat, true);
+  assert.strictEqual(REFILL_PACKS.refill_500.priceUsd, 5.00);
+  assert.strictEqual(REFILL_PACKS.refill_500.credits, 500);
+
+  // 2. Test checkout session generator in offline/dev simulation mode
+  assert.strictEqual(isStripeConfigured(), false, 'Stripe is unconfigured in test environment');
+  const mockUserId = `usr_billing_test_${Date.now()}`;
+  const checkout = await createCheckoutSession({
+    userId: mockUserId,
+    userEmail: 'alex@synthex.cloud',
+    tierId: 'pro',
+    interval: 'annual',
+    returnUrlOrigin: 'http://localhost:3000'
+  });
+
+  assert.strictEqual(checkout.isMock, true);
+  assert.ok(checkout.url?.includes('tier=pro'));
+  assert.ok(checkout.url?.includes('mock=true'));
+
+  // Test on-demand refill checkout ($5 for 500 credits)
+  const refillCheckout = await createCheckoutSession({
+    userId: mockUserId,
+    tierId: 'refill_500',
+    returnUrlOrigin: 'http://localhost:3000'
+  });
+  assert.strictEqual(refillCheckout.isMock, true);
+  assert.ok(refillCheckout.url?.includes('credits=500'));
+
+  // 3. User subscription lifecycle via database helpers & simulated webhook events
+  const testUser = upsertUser({
+    clerkId: `clerk_stripe_${Date.now()}`,
+    email: 'billing.researcher@synthex.cloud',
+    name: 'Ada Lovelace',
+    subscriptionTier: 'trial',
+    contextCredits: 100
+  });
+
+  const stripeCustId = `cus_mock_${Date.now()}`;
+  const stripeSubId = `sub_mock_${Date.now()}`;
+
+  // Upgrade to Pro Tier via customer.subscription.created simulation
+  updateUserSubscription(testUser.id, {
+    stripeCustomerId: stripeCustId,
+    stripeSubscriptionId: stripeSubId,
+    subscriptionTier: 'pro',
+    subscriptionStatus: 'active',
+    seatCount: 1,
+    currentPeriodEnd: Date.now() + 30 * 24 * 60 * 60 * 1000
+  });
+
+  topUpUserCredits(testUser.id, SUBSCRIPTION_TIERS.pro.creditsMonthly, 'bonus', 'Initial Pro allocation');
+
+  const proUser = getUserById(testUser.id);
+  assert.strictEqual(proUser?.subscriptionTier, 'pro');
+  assert.strictEqual(proUser?.subscriptionStatus, 'active');
+  assert.strictEqual(proUser?.contextCredits, 1600, '100 trial + 1500 Pro credits');
+
+  const userByStripe = getUserByStripeCustomerId(stripeCustId);
+  assert.strictEqual(userByStripe?.id, testUser.id);
+
+  // Simulate on-demand refill (+500 credits)
+  topUpUserCredits(testUser.id, 500, 'refill', 'Stripe refill pack');
+  const refilledUser = getUserById(testUser.id);
+  assert.strictEqual(refilledUser?.contextCredits, 2100, '1600 + 500 refill credits');
+
+  // Simulate monthly recurring billing cycle (invoice.payment_succeeded)
+  topUpUserCredits(testUser.id, SUBSCRIPTION_TIERS.pro.creditsMonthly, 'refill', 'Monthly cycle');
+  const cycledUser = getUserById(testUser.id);
+  assert.strictEqual(cycledUser?.contextCredits, 3600, '2100 + 1500 monthly replenishment');
+
+  // Verify credit transaction ledger
+  const txHistory = getCreditTransactions(testUser.id);
+  assert.ok(txHistory.length >= 3, 'Multiple transactions logged in ledger');
+  assert.strictEqual(txHistory[0].balanceAfter, 3600);
+
+  // Simulate subscription cancellation (customer.subscription.deleted)
+  updateUserSubscription(testUser.id, {
+    subscriptionTier: 'trial',
+    subscriptionStatus: 'canceled',
+    stripeSubscriptionId: null
+  });
+
+  const canceledUser = getUserById(testUser.id);
+  assert.strictEqual(canceledUser?.subscriptionStatus, 'canceled');
+  assert.strictEqual(canceledUser?.stripeSubscriptionId, null);
+});
+
 
 
 
