@@ -16,8 +16,10 @@ function requestedProject(request: Request): string | undefined {
 export async function GET(request: Request) {
   try {
     const projectId = requestedProject(request);
-    if (!projectId || !projectExistsInDb(projectId)) return Response.json({ error: 'Project not found.' }, { status: 404 });
-    const graph = normalizeGraph(getAllNodesFromDb(projectId), getAllConnectionsFromDb(projectId));
+    if (!projectId || !(await projectExistsInDb(projectId))) return Response.json({ error: 'Project not found.' }, { status: 404 });
+    const rawNodes = (await getAllNodesFromDb(projectId)) as CanvasNode[];
+    const rawEdges = (await getAllConnectionsFromDb(projectId)) as Connection[];
+    const graph = normalizeGraph(rawNodes, rawEdges);
     return Response.json({ nodes: Object.values(graph.nodesById), relationships: Object.values(graph.edgesById) });
   } catch (error) {
     console.error('Failed to load knowledge graph:', error);
@@ -32,7 +34,7 @@ export async function PUT(request: Request) {
 
     const body = await request.json();
     const projectId = typeof body?.projectId === 'string' ? body.projectId : 'default';
-    if (projectId.length > 80 || !projectExistsInDb(projectId)) return Response.json({ error: 'Project not found.' }, { status: 404 });
+    if (projectId.length > 80 || !(await projectExistsInDb(projectId))) return Response.json({ error: 'Project not found.' }, { status: 404 });
     if (!Array.isArray(body?.nodes) || !Array.isArray(body?.relationships)) {
       return Response.json({ error: 'Expected nodes and relationships.' }, { status: 400 });
     }
@@ -60,7 +62,7 @@ export async function PUT(request: Request) {
     }
 
     const graph = normalizeGraph(nodes, relationships);
-    bulkSaveCanvasToDb(Object.values(graph.nodesById), Object.values(graph.edgesById), projectId);
+    await bulkSaveCanvasToDb(Object.values(graph.nodesById), Object.values(graph.edgesById), projectId);
     indexGraphNodes(projectId, nodes);
     return Response.json({ saved: true, nodeCount: nodes.length, relationshipCount: relationships.length });
   } catch (error) {

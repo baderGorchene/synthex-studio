@@ -29,9 +29,9 @@ export function isClerkConfigured(): boolean {
 export async function getServerAuth(): Promise<AuthContext> {
   if (!isClerkConfigured()) {
     // Zero-config offline/local development mode
-    let localUser = getUserByClerkId('local_researcher');
+    let localUser = (await getUserByClerkId('local_researcher')) as UserRecord | null;
     if (!localUser) {
-      localUser = upsertUser({
+      localUser = (await upsertUser({
         clerkId: 'local_researcher',
         email: 'local@synthex.internal',
         name: 'Local Researcher',
@@ -39,7 +39,7 @@ export async function getServerAuth(): Promise<AuthContext> {
         subscriptionStatus: 'active',
         contextCredits: 5000,
         trialEndsAt: null
-      });
+      })) as UserRecord;
     }
 
     return {
@@ -67,16 +67,16 @@ export async function getServerAuth(): Promise<AuthContext> {
       };
     }
 
-    let userRecord = getUserByClerkId(authState.userId);
+    let userRecord = (await getUserByClerkId(authState.userId)) as UserRecord | null;
     if (!userRecord) {
       // First-time sign in provision: 3-day free trial with 100 Context Credits
-      userRecord = upsertUser({
+      userRecord = (await upsertUser({
         clerkId: authState.userId,
         subscriptionTier: 'trial',
         subscriptionStatus: 'trialing',
         contextCredits: 100,
         trialEndsAt: Date.now() + 3 * 24 * 60 * 60 * 1000
-      });
+      })) as UserRecord;
     }
 
     return {

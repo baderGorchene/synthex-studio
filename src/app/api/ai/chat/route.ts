@@ -3,6 +3,7 @@ import { getAllConnectionsFromDb, getAllNodesFromDb, projectExistsInDb } from '@
 import { normalizeGraph } from '@/lib/graph';
 import { getServerAuth } from '@/lib/auth';
 import { verifyCreditBalance, deductCredits } from '@/lib/credits';
+import type { CanvasNode, Connection } from '@/types/canvas';
 
 export async function POST(request: Request) {
   try {
@@ -15,13 +16,13 @@ export async function POST(request: Request) {
     }
     const selectedNodeId = typeof body.selectedNodeId === 'string' ? body.selectedNodeId.slice(0, 200) : undefined;
     const projectId = typeof body.projectId === 'string' ? body.projectId : 'default';
-    if (projectId.length > 80 || !projectExistsInDb(projectId)) return Response.json({ error: 'Project not found.' }, { status: 404 });
+    if (projectId.length > 80 || !(await projectExistsInDb(projectId))) return Response.json({ error: 'Project not found.' }, { status: 404 });
 
     // Check Context Credits balance
     const auth = await getServerAuth();
     const userId = auth.user?.id || auth.clerkId;
     if (userId) {
-      const check = verifyCreditBalance(userId, 'chat');
+      const check = await verifyCreditBalance(userId, 'chat');
       if (!check.hasSufficient) {
         return Response.json({
           error: 'INSUFFICIENT_CREDITS',
@@ -32,7 +33,11 @@ export async function POST(request: Request) {
       }
     }
 
-    const graph = normalizeGraph(getAllNodesFromDb(projectId), getAllConnectionsFromDb(projectId));
+    const [rawNodes, rawEdges] = await Promise.all([
+      getAllNodesFromDb(projectId),
+      getAllConnectionsFromDb(projectId)
+    ]);
+    const graph = normalizeGraph(rawNodes as CanvasNode[], rawEdges as Connection[]);
     const wantsStream = request.headers.get('accept')?.includes('text/event-stream') || body?.stream === true;
 
     if (wantsStream) {
@@ -44,7 +49,7 @@ export async function POST(request: Request) {
               controller.enqueue(encoder.encode(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`));
             }
             if (userId) {
-              const deduction = deductCredits(userId, 'chat', `Asked: "${question.slice(0, 50)}..."`);
+              const deduction = (await deductCredits(userId, 'chat', `Asked: "${question.slice(0, 50)}..."`)) as { success: boolean; cost: number; balance: number; error?: string };
               controller.enqueue(encoder.encode(`event: credits\ndata: ${JSON.stringify({ creditsRemaining: deduction.balance })}\n\n`));
             }
             controller.close();
@@ -68,7 +73,7 @@ export async function POST(request: Request) {
     const result = await askGraph(question, graph, selectedNodeId, projectId);
     let creditsRemaining: number | undefined;
     if (userId) {
-      const deduction = deductCredits(userId, 'chat', `Asked: "${question.slice(0, 50)}..."`);
+      const deduction = (await deductCredits(userId, 'chat', `Asked: "${question.slice(0, 50)}..."`)) as { success: boolean; cost: number; balance: number; error?: string };
       creditsRemaining = deduction.balance;
     }
 

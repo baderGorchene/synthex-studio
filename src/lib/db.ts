@@ -1,4 +1,5 @@
-import Database from 'better-sqlite3';
+import type Database from 'better-sqlite3';
+import { createRequire } from 'module';
 import fs from 'fs';
 import path from 'path';
 import type {
@@ -18,9 +19,69 @@ import type {
 } from '../types/canvas';
 import { SEED_CONNECTIONS, SEED_NODES } from '../constants/seedData.ts';
 import { addNode, addRelationship, normalizeGraph } from './graph.ts';
+import {
+  isNeonConfigured,
+  neonGetProjects,
+  neonProjectExists,
+  neonCreateProject,
+  neonGetAllNodes,
+  neonSaveNode,
+  neonUpdateNodePosition,
+  neonUpdateMultipleNodePositions,
+  neonUpdateNode,
+  neonDeleteNode,
+  neonGetAllConnections,
+  neonSaveConnection,
+  neonUpdateConnection,
+  neonDeleteConnection,
+  neonBulkSaveCanvas,
+  neonGetResearchSessions,
+  neonGetResearchSession,
+  neonSaveResearchSession,
+  neonReviewResearchSession,
+  neonCreateGraphRevision,
+  neonGetGraphRevisions,
+  neonGetGraphRevisionById,
+  neonRestoreGraphRevision,
+  neonDeleteGraphRevision,
+  neonGetUserById,
+  neonGetUserByClerkId,
+  neonGetUserByStripeCustomerId,
+  neonGetUserByStripeSubscriptionId,
+  neonUpdateUserSubscription,
+  neonUpsertUser,
+  neonDeductUserCredits,
+  neonTopUpUserCredits,
+  neonGetCreditTransactions
+} from './neon.ts';
 
-// Ensure database file path in workspace
-const dbPath = path.join(process.cwd(), 'canvas.db');
+const require = createRequire(import.meta.url);
+// Lazily load better-sqlite3 so Vercel serverless environments using Neon never touch native addons
+let BetterSqlite3Constructor: (new (path: string) => Database.Database) | null = null;
+function getBetterSqlite3() {
+  if (!BetterSqlite3Constructor) {
+    BetterSqlite3Constructor = require('better-sqlite3') as new (path: string) => Database.Database;
+  }
+  return BetterSqlite3Constructor;
+}
+
+function getDbPath(): string {
+  // On Vercel / AWS Lambda, the app root is read-only (EROFS).
+  // /tmp is the only writable directory available to serverless functions.
+  if (process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME) {
+    const tmpDbPath = path.join('/tmp', 'canvas.db');
+    const sourceDbPath = path.join(process.cwd(), 'canvas.db');
+    if (!fs.existsSync(tmpDbPath) && fs.existsSync(sourceDbPath)) {
+      try {
+        fs.copyFileSync(sourceDbPath, tmpDbPath);
+      } catch (err) {
+        console.warn('Could not copy seed database to /tmp:', err);
+      }
+    }
+    return tmpDbPath;
+  }
+  return path.join(process.cwd(), 'canvas.db');
+}
 
 interface DbNodeRow {
   id: string;
@@ -259,7 +320,9 @@ function migrateProjectScopedIds(db: Database.Database) {
 
 export function getDatabase(): Database.Database {
   if (!global._sqliteDb) {
-    global._sqliteDb = new Database(dbPath);
+    const SqliteClass = getBetterSqlite3();
+    const activePath = getDbPath();
+    global._sqliteDb = new SqliteClass(activePath);
     initSchema(global._sqliteDb);
   } else {
     ensureSchemaColumns(global._sqliteDb);
@@ -388,7 +451,10 @@ function initSchema(db: Database.Database) {
   }
 }
 
-export function getAllNodesFromDb(projectId = 'default'): CanvasNode[] {
+export function getAllNodesFromDb(projectId = 'default'): CanvasNode[] | Promise<CanvasNode[]> {
+  if (isNeonConfigured()) {
+    return neonGetAllNodes(projectId);
+  }
   const db = getDatabase();
   const rows = db.prepare('SELECT * FROM nodes WHERE projectId = ? ORDER BY createdAt ASC').all(projectId) as DbNodeRow[];
 
@@ -419,7 +485,10 @@ export function getAllNodesFromDb(projectId = 'default'): CanvasNode[] {
   }));
 }
 
-export function saveNodeToDb(node: CanvasNode, projectId = 'default'): void {
+export function saveNodeToDb(node: CanvasNode, projectId = 'default'): void | Promise<void> {
+  if (isNeonConfigured()) {
+    return neonSaveNode(node, projectId);
+  }
   const db = getDatabase();
   const stmt = db.prepare(`
     INSERT INTO nodes (
@@ -481,12 +550,18 @@ export function saveNodeToDb(node: CanvasNode, projectId = 'default'): void {
   });
 }
 
-export function updateNodePositionInDb(id: string, x: number, y: number, projectId = 'default'): void {
+export function updateNodePositionInDb(id: string, x: number, y: number, projectId = 'default'): void | Promise<void> {
+  if (isNeonConfigured()) {
+    return neonUpdateNodePosition(id, x, y, projectId);
+  }
   const db = getDatabase();
   db.prepare('UPDATE nodes SET x = ?, y = ? WHERE id = ? AND projectId = ?').run(x, y, id, projectId);
 }
 
-export function updateMultipleNodePositionsInDb(positions: { id: string; x: number; y: number }[], projectId = 'default'): void {
+export function updateMultipleNodePositionsInDb(positions: { id: string; x: number; y: number }[], projectId = 'default'): void | Promise<void> {
+  if (isNeonConfigured()) {
+    return neonUpdateMultipleNodePositions(positions, projectId);
+  }
   const db = getDatabase();
   const updateStmt = db.prepare('UPDATE nodes SET x = ?, y = ? WHERE id = ? AND projectId = ?');
   const tx = db.transaction((items: { id: string; x: number; y: number }[]) => {
@@ -497,7 +572,10 @@ export function updateMultipleNodePositionsInDb(positions: { id: string; x: numb
   tx(positions);
 }
 
-export function updateNodeInDb(id: string, fields: Partial<CanvasNode>, projectId = 'default'): void {
+export function updateNodeInDb(id: string, fields: Partial<CanvasNode>, projectId = 'default'): void | Promise<void> {
+  if (isNeonConfigured()) {
+    return neonUpdateNode(id, fields, projectId);
+  }
   const db = getDatabase();
   const existing = db.prepare('SELECT * FROM nodes WHERE id = ? AND projectId = ?').get(id, projectId) as DbNodeRow | undefined;
   if (!existing) return;
@@ -537,13 +615,19 @@ export function updateNodeInDb(id: string, fields: Partial<CanvasNode>, projectI
   saveNodeToDb(updated, projectId);
 }
 
-export function deleteNodeFromDb(id: string, projectId = 'default'): void {
+export function deleteNodeFromDb(id: string, projectId = 'default'): void | Promise<void> {
+  if (isNeonConfigured()) {
+    return neonDeleteNode(id, projectId);
+  }
   const db = getDatabase();
   db.prepare('DELETE FROM nodes WHERE id = ? AND projectId = ?').run(id, projectId);
   db.prepare('DELETE FROM connections WHERE (from_node = ? OR to_node = ?) AND projectId = ?').run(id, id, projectId);
 }
 
-export function getAllConnectionsFromDb(projectId = 'default'): Connection[] {
+export function getAllConnectionsFromDb(projectId = 'default'): Connection[] | Promise<Connection[]> {
+  if (isNeonConfigured()) {
+    return neonGetAllConnections(projectId);
+  }
   const db = getDatabase();
   const rows = db.prepare('SELECT * FROM connections WHERE projectId = ?').all(projectId) as DbConnectionRow[];
 
@@ -561,7 +645,10 @@ export function getAllConnectionsFromDb(projectId = 'default'): Connection[] {
   }));
 }
 
-export function saveConnectionToDb(conn: Connection, projectId = 'default'): void {
+export function saveConnectionToDb(conn: Connection, projectId = 'default'): void | Promise<void> {
+  if (isNeonConfigured()) {
+    return neonSaveConnection(conn, projectId);
+  }
   const db = getDatabase();
   const stmt = db.prepare(`
     INSERT INTO connections (id, projectId, from_node, to_node, label, arrowhead, line_style, stroke_pattern, color, animated, metadata)
@@ -593,7 +680,10 @@ export function saveConnectionToDb(conn: Connection, projectId = 'default'): voi
   );
 }
 
-export function updateConnectionInDb(id: string, fields: Partial<Connection>, projectId = 'default'): void {
+export function updateConnectionInDb(id: string, fields: Partial<Connection>, projectId = 'default'): void | Promise<void> {
+  if (isNeonConfigured()) {
+    return neonUpdateConnection(id, fields, projectId);
+  }
   const db = getDatabase();
   const existing = db.prepare('SELECT * FROM connections WHERE id = ? AND projectId = ?').get(id, projectId) as DbConnectionRow | undefined;
   if (!existing) return;
@@ -614,12 +704,18 @@ export function updateConnectionInDb(id: string, fields: Partial<Connection>, pr
   saveConnectionToDb(updated, projectId);
 }
 
-export function deleteConnectionFromDb(id: string, projectId = 'default'): void {
+export function deleteConnectionFromDb(id: string, projectId = 'default'): void | Promise<void> {
+  if (isNeonConfigured()) {
+    return neonDeleteConnection(id, projectId);
+  }
   const db = getDatabase();
   db.prepare('DELETE FROM connections WHERE id = ? AND projectId = ?').run(id, projectId);
 }
 
-export function bulkSaveCanvasToDb(nodes: CanvasNode[], connections: Connection[], projectId = 'default'): void {
+export function bulkSaveCanvasToDb(nodes: CanvasNode[], connections: Connection[], projectId = 'default'): void | Promise<void> {
+  if (isNeonConfigured()) {
+    return neonBulkSaveCanvas(nodes, connections, projectId);
+  }
   const db = getDatabase();
   const sync = db.transaction(() => {
     db.prepare('DELETE FROM nodes WHERE projectId = ?').run(projectId);
@@ -656,19 +752,28 @@ function mapResearchSession(row: DbResearchSessionRow): ResearchSession {
   };
 }
 
-export function getResearchSessions(projectId = 'default'): ResearchSession[] {
+export function getResearchSessions(projectId = 'default'): ResearchSession[] | Promise<ResearchSession[]> {
+  if (isNeonConfigured()) {
+    return neonGetResearchSessions(projectId);
+  }
   const rows = getDatabase()
     .prepare('SELECT * FROM research_sessions WHERE projectId = ? ORDER BY createdAt DESC LIMIT 30')
     .all(projectId) as DbResearchSessionRow[];
   return rows.map(mapResearchSession);
 }
 
-export function getResearchSession(id: string, projectId = 'default'): ResearchSession | undefined {
+export function getResearchSession(id: string, projectId = 'default'): ResearchSession | undefined | Promise<ResearchSession | undefined> {
+  if (isNeonConfigured()) {
+    return neonGetResearchSession(id, projectId);
+  }
   const row = getDatabase().prepare('SELECT * FROM research_sessions WHERE id = ? AND projectId = ?').get(id, projectId) as DbResearchSessionRow | undefined;
   return row ? mapResearchSession(row) : undefined;
 }
 
-export function saveResearchSession(session: ResearchSession, projectId = 'default'): void {
+export function saveResearchSession(session: ResearchSession, projectId = 'default'): void | Promise<void> {
+  if (isNeonConfigured()) {
+    return neonSaveResearchSession(session, projectId);
+  }
   getDatabase().prepare(`
     INSERT INTO research_sessions (id, projectId, query, mode, status, summary, trail, changes, createdAt)
     VALUES (@id, @projectId, @query, @mode, @status, @summary, @trail, @changes, @createdAt)
@@ -684,7 +789,10 @@ export function reviewResearchSession(
   id: string,
   decisions: Array<{ changeId: string; status: Exclude<ResearchChangeStatus, 'pending'> }>,
   projectId = 'default'
-): ResearchSession | undefined {
+): ResearchSession | undefined | Promise<ResearchSession | undefined> {
+  if (isNeonConfigured()) {
+    return neonReviewResearchSession(id, decisions, projectId);
+  }
   const db = getDatabase();
   const row = db.prepare('SELECT * FROM research_sessions WHERE id = ? AND projectId = ?').get(id, projectId) as DbResearchSessionRow | undefined;
   if (!row) return undefined;
@@ -696,7 +804,7 @@ export function reviewResearchSession(
   }));
   const newlyReviewed = (change: ResearchSession['changes'][number]) => session.changes.find(item => item.id === change.id)?.status === 'pending';
 
-  let graph = normalizeGraph(getAllNodesFromDb(projectId), getAllConnectionsFromDb(projectId));
+  let graph = normalizeGraph(getAllNodesFromDb(projectId) as CanvasNode[], getAllConnectionsFromDb(projectId) as Connection[]);
   const acceptedNodes = changes.filter(change => change.kind === 'node' && change.status === 'accepted' && newlyReviewed(change));
   for (const change of acceptedNodes) {
     graph = addNode(graph, change.payload as CanvasNode);
@@ -736,15 +844,24 @@ export interface ResearchProject {
   createdAt: number;
 }
 
-export function getProjectsFromDb(): ResearchProject[] {
+export function getProjectsFromDb(): ResearchProject[] | Promise<ResearchProject[]> {
+  if (isNeonConfigured()) {
+    return neonGetProjects();
+  }
   return getDatabase().prepare('SELECT id, title, createdAt FROM projects ORDER BY createdAt ASC').all() as ResearchProject[];
 }
 
-export function projectExistsInDb(id: string): boolean {
+export function projectExistsInDb(id: string): boolean | Promise<boolean> {
+  if (isNeonConfigured()) {
+    return neonProjectExists(id);
+  }
   return Boolean(getDatabase().prepare('SELECT 1 FROM projects WHERE id = ?').get(id));
 }
 
-export function createProjectInDb(id: string, title: string, template: 'blank' | 'rag' = 'blank'): ResearchProject {
+export function createProjectInDb(id: string, title: string, template: 'blank' | 'rag' = 'blank'): ResearchProject | Promise<ResearchProject> {
+  if (isNeonConfigured()) {
+    return neonCreateProject(id, title, template);
+  }
   const project = { id, title, createdAt: Date.now() };
   getDatabase().prepare('INSERT INTO projects (id, title, createdAt) VALUES (@id, @title, @createdAt)').run(project);
   if (template === 'rag') {
@@ -766,7 +883,10 @@ export function createGraphRevision(
   title: string,
   nodes: CanvasNode[],
   relationships: Connection[]
-): GraphRevisionSummary {
+): GraphRevisionSummary | Promise<GraphRevisionSummary> {
+  if (isNeonConfigured()) {
+    return neonCreateGraphRevision(projectId, title, nodes, relationships);
+  }
   const db = getDatabase();
   const id = `rev-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
   const createdAt = Date.now();
@@ -801,7 +921,10 @@ export function createGraphRevision(
   return record;
 }
 
-export function getGraphRevisions(projectId: string, limit = 50): GraphRevisionSummary[] {
+export function getGraphRevisions(projectId: string, limit = 50): GraphRevisionSummary[] | Promise<GraphRevisionSummary[]> {
+  if (isNeonConfigured()) {
+    return neonGetGraphRevisions(projectId, limit);
+  }
   const db = getDatabase();
   return db.prepare(`
     SELECT id, projectId, title, nodeCount, edgeCount, createdAt
@@ -812,7 +935,10 @@ export function getGraphRevisions(projectId: string, limit = 50): GraphRevisionS
   `).all(projectId, limit) as GraphRevisionSummary[];
 }
 
-export function getGraphRevisionById(projectId: string, revisionId: string): GraphRevision | null {
+export function getGraphRevisionById(projectId: string, revisionId: string): GraphRevision | null | Promise<GraphRevision | null> {
+  if (isNeonConfigured()) {
+    return neonGetGraphRevisionById(projectId, revisionId);
+  }
   const db = getDatabase();
   const row = db.prepare(`
     SELECT id, projectId, title, nodeCount, edgeCount, graphData, createdAt
@@ -842,8 +968,11 @@ export function getGraphRevisionById(projectId: string, revisionId: string): Gra
 export function restoreGraphRevision(
   projectId: string,
   revisionId: string
-): { revision: GraphRevisionSummary; nodes: CanvasNode[]; relationships: Connection[] } | null {
-  const target = getGraphRevisionById(projectId, revisionId);
+): { revision: GraphRevisionSummary; nodes: CanvasNode[]; relationships: Connection[] } | null | Promise<{ revision: GraphRevisionSummary; nodes: CanvasNode[]; relationships: Connection[] } | null> {
+  if (isNeonConfigured()) {
+    return neonRestoreGraphRevision(projectId, revisionId);
+  }
+  const target = getGraphRevisionById(projectId, revisionId) as GraphRevision | null;
   if (!target) return null;
 
   // Atomically save the target graph to the database and record a restoration checkpoint
@@ -853,7 +982,7 @@ export function restoreGraphRevision(
     `Restored: ${target.title}`,
     target.nodes,
     target.relationships
-  );
+  ) as GraphRevisionSummary;
 
   return {
     revision: restoreCheckpoint,
@@ -862,7 +991,10 @@ export function restoreGraphRevision(
   };
 }
 
-export function deleteGraphRevision(projectId: string, revisionId: string): boolean {
+export function deleteGraphRevision(projectId: string, revisionId: string): boolean | Promise<boolean> {
+  if (isNeonConfigured()) {
+    return neonDeleteGraphRevision(projectId, revisionId);
+  }
   const db = getDatabase();
   const result = db.prepare('DELETE FROM graph_revisions WHERE id = ? AND projectId = ?').run(revisionId, projectId);
   return result.changes > 0;
@@ -881,7 +1013,7 @@ function ensureBackupDir() {
 }
 
 export function getDatabaseFilePath(): string {
-  return dbPath;
+  return getDbPath();
 }
 
 export function getBackupFilePath(fileName: string): string | null {
@@ -1009,9 +1141,10 @@ export async function restoreDatabaseBackup(
     global._sqliteDb = undefined;
   }
 
-  // 2. Remove lingering WAL/SHM files for canvas.db
-  const walPath = `${dbPath}-wal`;
-  const shmPath = `${dbPath}-shm`;
+  // 2. Remove lingering WAL/SHM files for active database
+  const activePath = getDbPath();
+  const walPath = `${activePath}-wal`;
+  const shmPath = `${activePath}-shm`;
   if (fs.existsSync(walPath)) {
     try { fs.unlinkSync(walPath); } catch {}
   }
@@ -1019,8 +1152,8 @@ export async function restoreDatabaseBackup(
     try { fs.unlinkSync(shmPath); } catch {}
   }
 
-  // 3. Copy snapshot over canvas.db
-  fs.copyFileSync(sourcePath, dbPath);
+  // 3. Copy snapshot over active database
+  fs.copyFileSync(sourcePath, activePath);
 
   // 4. Re-open DB to verify and run schema migration if needed
   getDatabase();
@@ -1110,25 +1243,37 @@ export interface CreditTransaction {
   createdAt: number;
 }
 
-export function getUserById(id: string): UserRecord | null {
+export function getUserById(id: string): UserRecord | null | Promise<UserRecord | null> {
+  if (isNeonConfigured()) {
+    return neonGetUserById(id);
+  }
   const db = getDatabase();
   const row = db.prepare('SELECT * FROM users WHERE id = ?').get(id) as UserRecord | undefined;
   return row || null;
 }
 
-export function getUserByClerkId(clerkId: string): UserRecord | null {
+export function getUserByClerkId(clerkId: string): UserRecord | null | Promise<UserRecord | null> {
+  if (isNeonConfigured()) {
+    return neonGetUserByClerkId(clerkId);
+  }
   const db = getDatabase();
   const row = db.prepare('SELECT * FROM users WHERE clerkId = ?').get(clerkId) as UserRecord | undefined;
   return row || null;
 }
 
-export function getUserByStripeCustomerId(stripeCustomerId: string): UserRecord | null {
+export function getUserByStripeCustomerId(stripeCustomerId: string): UserRecord | null | Promise<UserRecord | null> {
+  if (isNeonConfigured()) {
+    return neonGetUserByStripeCustomerId(stripeCustomerId);
+  }
   const db = getDatabase();
   const row = db.prepare('SELECT * FROM users WHERE stripeCustomerId = ?').get(stripeCustomerId) as UserRecord | undefined;
   return row || null;
 }
 
-export function getUserByStripeSubscriptionId(stripeSubscriptionId: string): UserRecord | null {
+export function getUserByStripeSubscriptionId(stripeSubscriptionId: string): UserRecord | null | Promise<UserRecord | null> {
+  if (isNeonConfigured()) {
+    return neonGetUserByStripeSubscriptionId(stripeSubscriptionId);
+  }
   const db = getDatabase();
   const row = db.prepare('SELECT * FROM users WHERE stripeSubscriptionId = ?').get(stripeSubscriptionId) as UserRecord | undefined;
   return row || null;
@@ -1137,9 +1282,12 @@ export function getUserByStripeSubscriptionId(stripeSubscriptionId: string): Use
 export function updateUserSubscription(
   userId: string,
   data: Partial<UserRecord>
-): UserRecord | null {
+): UserRecord | null | Promise<UserRecord | null> {
+  if (isNeonConfigured()) {
+    return neonUpdateUserSubscription(userId, data);
+  }
   const db = getDatabase();
-  const existing = getUserById(userId);
+  const existing = getUserById(userId) as UserRecord | null;
   if (!existing) return null;
 
   const updated: UserRecord = {
@@ -1176,9 +1324,12 @@ export function updateUserSubscription(
   return updated;
 }
 
-export function upsertUser(user: Partial<UserRecord> & { clerkId: string }): UserRecord {
+export function upsertUser(user: Partial<UserRecord> & { clerkId: string }): UserRecord | Promise<UserRecord> {
+  if (isNeonConfigured()) {
+    return neonUpsertUser(user);
+  }
   const db = getDatabase();
-  const existing = getUserByClerkId(user.clerkId);
+  const existing = getUserByClerkId(user.clerkId) as UserRecord | null;
   const now = Date.now();
 
   if (existing) {
@@ -1243,9 +1394,12 @@ export function deductUserCredits(
   amount: number,
   action: CreditTransaction['action'],
   metadata?: string
-): { success: boolean; balance: number; error?: string } {
+): { success: boolean; balance: number; error?: string } | Promise<{ success: boolean; balance: number; error?: string }> {
+  if (isNeonConfigured()) {
+    return neonDeductUserCredits(userIdentifier, amount, action, metadata);
+  }
   const db = getDatabase();
-  const user = getUserByClerkId(userIdentifier) || getUserById(userIdentifier);
+  const user = (getUserByClerkId(userIdentifier) || getUserById(userIdentifier)) as UserRecord | null;
   if (!user) {
     return { success: false, balance: 0, error: 'User account not found.' };
   }
@@ -1280,11 +1434,14 @@ export function topUpUserCredits(
   amount: number,
   action: CreditTransaction['action'] = 'refill',
   metadata?: string
-): { success: boolean; balance: number } {
+): { success: boolean; balance: number } | Promise<{ success: boolean; balance: number }> {
+  if (isNeonConfigured()) {
+    return neonTopUpUserCredits(userIdentifier, amount, action, metadata);
+  }
   const db = getDatabase();
-  let user = getUserByClerkId(userIdentifier) || getUserById(userIdentifier);
+  let user = (getUserByClerkId(userIdentifier) || getUserById(userIdentifier)) as UserRecord | null;
   if (!user) {
-    user = upsertUser({ clerkId: userIdentifier });
+    user = upsertUser({ clerkId: userIdentifier }) as UserRecord;
   }
 
   const nextBalance = user.contextCredits + amount;
@@ -1304,7 +1461,10 @@ export function topUpUserCredits(
   return { success: true, balance: nextBalance };
 }
 
-export function getCreditTransactions(userId: string, limit = 50): CreditTransaction[] {
+export function getCreditTransactions(userId: string, limit = 50): CreditTransaction[] | Promise<CreditTransaction[]> {
+  if (isNeonConfigured()) {
+    return neonGetCreditTransactions(userId, limit);
+  }
   const db = getDatabase();
   return db.prepare('SELECT * FROM credit_transactions WHERE userId = ? ORDER BY createdAt DESC LIMIT ?')
     .all(userId, limit) as CreditTransaction[];

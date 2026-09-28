@@ -18,7 +18,7 @@ export async function POST(req: Request) {
 
       // Allocate 3-day trial and 100 Context Credits
       const trialDurationMs = 3 * 24 * 60 * 60 * 1000;
-      const user = upsertUser({
+      const user = await upsertUser({
         clerkId,
         email: primaryEmail,
         name: fullName,
@@ -37,9 +37,9 @@ export async function POST(req: Request) {
       const primaryEmail = data.email_addresses?.[0]?.email_address;
       const fullName = [data.first_name, data.last_name].filter(Boolean).join(' ');
 
-      const existing = getUserByClerkId(clerkId);
+      const existing = (await getUserByClerkId(clerkId)) as import('@/lib/db').UserRecord | null;
       if (existing) {
-        upsertUser({
+        await upsertUser({
           clerkId,
           email: primaryEmail || existing.email,
           name: fullName || existing.name

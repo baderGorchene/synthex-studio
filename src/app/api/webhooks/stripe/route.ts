@@ -44,10 +44,10 @@ export async function POST(req: NextRequest) {
         if (session.mode === 'payment' && session.metadata?.type === 'credit_refill') {
           const creditsToAdd = Number(session.metadata?.credits) || 500;
           if (userId) {
-            topUpUserCredits(userId, creditsToAdd, 'refill', `Stripe checkout refill (${creditsToAdd} credits)`);
+            await topUpUserCredits(userId, creditsToAdd, 'refill', `Stripe checkout refill (${creditsToAdd} credits)`);
           }
         } else if (session.mode === 'subscription' && userId && customerId) {
-          updateUserSubscription(userId, {
+          await updateUserSubscription(userId, {
             stripeCustomerId: customerId,
             stripeSubscriptionId: session.subscription as string | undefined
           });
@@ -74,12 +74,12 @@ export async function POST(req: NextRequest) {
           : undefined;
 
         const user = userId
-          ? getUserById(userId)
-          : (customerId ? getUserByStripeCustomerId(customerId) : null) || getUserByStripeSubscriptionId(subId);
+          ? (await getUserById(userId))
+          : ((customerId ? (await getUserByStripeCustomerId(customerId)) : null) || (await getUserByStripeSubscriptionId(subId)));
 
         if (user && customerId) {
           const prevTier = user.subscriptionTier;
-          updateUserSubscription(user.id, {
+          await updateUserSubscription(user.id, {
             stripeCustomerId: customerId,
             stripeSubscriptionId: subId,
             subscriptionTier: tierId,
@@ -93,7 +93,7 @@ export async function POST(req: NextRequest) {
             const plan = SUBSCRIPTION_TIERS[tierId];
             if (plan && plan.creditsMonthly > 0) {
               const allocatedCredits = plan.perSeat ? plan.creditsMonthly * seats : plan.creditsMonthly;
-              topUpUserCredits(
+              await topUpUserCredits(
                 user.id,
                 allocatedCredits,
                 'bonus',
@@ -113,13 +113,13 @@ export async function POST(req: NextRequest) {
 
         // When a subscription renews automatically on its monthly/annual cycle
         if (billingReason === 'subscription_cycle' && customerId) {
-          const user = getUserByStripeCustomerId(customerId);
+          const user = await getUserByStripeCustomerId(customerId);
           if (user) {
             const plan = SUBSCRIPTION_TIERS[user.subscriptionTier];
             if (plan && plan.creditsMonthly > 0) {
               const seats = user.seatCount || 1;
               const monthlyCredits = plan.perSeat ? plan.creditsMonthly * seats : plan.creditsMonthly;
-              topUpUserCredits(
+              await topUpUserCredits(
                 user.id,
                 monthlyCredits,
                 'refill',
@@ -137,9 +137,9 @@ export async function POST(req: NextRequest) {
         const customerId = typeof sub.customer === 'string' ? sub.customer : sub.customer?.id;
         const subId = sub.id;
 
-        const user = (customerId ? getUserByStripeCustomerId(customerId) : null) || getUserByStripeSubscriptionId(subId);
+        const user = (customerId ? (await getUserByStripeCustomerId(customerId)) : null) || (await getUserByStripeSubscriptionId(subId));
         if (user) {
-          updateUserSubscription(user.id, {
+          await updateUserSubscription(user.id, {
             subscriptionTier: 'trial',
             subscriptionStatus: 'canceled',
             stripeSubscriptionId: null

@@ -17,14 +17,14 @@ export async function GET(request: NextRequest) {
     const revisionId = searchParams.get('revisionId');
 
     if (revisionId) {
-      const fullRevision = getGraphRevisionById(projectId, revisionId);
+      const fullRevision = await getGraphRevisionById(projectId, revisionId);
       if (!fullRevision) {
         return NextResponse.json({ error: 'Revision not found' }, { status: 404 });
       }
       return NextResponse.json({ revision: fullRevision });
     }
 
-    const revisions = getGraphRevisions(projectId);
+    const revisions = await getGraphRevisions(projectId);
     return NextResponse.json({ revisions });
   } catch (error) {
     console.error('Error fetching revisions:', error);
@@ -46,7 +46,7 @@ export async function POST(request: NextRequest) {
       if (!revisionId) {
         return NextResponse.json({ error: 'revisionId is required to restore' }, { status: 400 });
       }
-      const restored = restoreGraphRevision(projectId, revisionId);
+      const restored = await restoreGraphRevision(projectId, revisionId);
       if (!restored) {
         return NextResponse.json({ error: 'Revision not found or corrupted' }, { status: 404 });
       }
@@ -64,16 +64,16 @@ export async function POST(request: NextRequest) {
       if (!revisionId) {
         return NextResponse.json({ error: 'revisionId is required to delete' }, { status: 400 });
       }
-      const deleted = deleteGraphRevision(projectId, revisionId);
+      const deleted = await deleteGraphRevision(projectId, revisionId);
       return NextResponse.json({ success: deleted });
     }
 
     // Default: create a new revision checkpoint
     const title = typeof body.title === 'string' ? body.title : 'Snapshot checkpoint';
-    const nodes: CanvasNode[] = Array.isArray(body.nodes) ? body.nodes : getAllNodesFromDb(projectId);
-    const relationships: Connection[] = Array.isArray(body.relationships) ? body.relationships : getAllConnectionsFromDb(projectId);
+    const nodes: CanvasNode[] = Array.isArray(body.nodes) ? body.nodes : ((await getAllNodesFromDb(projectId)) as CanvasNode[]);
+    const relationships: Connection[] = Array.isArray(body.relationships) ? body.relationships : ((await getAllConnectionsFromDb(projectId)) as Connection[]);
 
-    const revision = createGraphRevision(projectId, title, nodes, relationships);
+    const revision = await createGraphRevision(projectId, title, nodes, relationships);
     return NextResponse.json({ success: true, revision });
   } catch (error) {
     console.error('Error managing revisions:', error);
