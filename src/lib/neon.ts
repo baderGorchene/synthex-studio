@@ -90,9 +90,9 @@ export async function ensureNeonSchema(): Promise<void> {
 
       await sql`
         CREATE TABLE IF NOT EXISTS projects (
-          id VARCHAR(64) PRIMARY KEY,
+          id VARCHAR(128) PRIMARY KEY,
           title VARCHAR(255) NOT NULL,
-          user_id VARCHAR(64),
+          user_id VARCHAR(128),
           organization_id VARCHAR(128),
           created_at BIGINT NOT NULL
         )
@@ -102,9 +102,9 @@ export async function ensureNeonSchema(): Promise<void> {
 
       await sql`
         CREATE TABLE IF NOT EXISTS nodes (
-          id VARCHAR(64) NOT NULL,
-          project_id VARCHAR(64) NOT NULL,
-          user_id VARCHAR(64),
+          id VARCHAR(128) NOT NULL,
+          project_id VARCHAR(128) NOT NULL,
+          user_id VARCHAR(128),
           organization_id VARCHAR(128),
           type VARCHAR(32) NOT NULL,
           x DOUBLE PRECISION NOT NULL,
@@ -120,7 +120,7 @@ export async function ensureNeonSchema(): Promise<void> {
           url TEXT,
           domain VARCHAR(255),
           description TEXT,
-          section_id VARCHAR(64),
+          section_id VARCHAR(128),
           file_data TEXT,
           file_name VARCHAR(255),
           file_size BIGINT,
@@ -136,12 +136,12 @@ export async function ensureNeonSchema(): Promise<void> {
 
       await sql`
         CREATE TABLE IF NOT EXISTS connections (
-          id VARCHAR(64) NOT NULL,
-          project_id VARCHAR(64) NOT NULL,
-          user_id VARCHAR(64),
+          id VARCHAR(128) NOT NULL,
+          project_id VARCHAR(128) NOT NULL,
+          user_id VARCHAR(128),
           organization_id VARCHAR(128),
-          from_node VARCHAR(64) NOT NULL,
-          to_node VARCHAR(64) NOT NULL,
+          from_node VARCHAR(128) NOT NULL,
+          to_node VARCHAR(128) NOT NULL,
           label VARCHAR(64),
           arrowhead VARCHAR(32) DEFAULT 'end',
           line_style VARCHAR(32) DEFAULT 'curved',
@@ -158,9 +158,9 @@ export async function ensureNeonSchema(): Promise<void> {
 
       await sql`
         CREATE TABLE IF NOT EXISTS research_sessions (
-          id VARCHAR(64) PRIMARY KEY,
-          project_id VARCHAR(64) NOT NULL,
-          user_id VARCHAR(64),
+          id VARCHAR(128) PRIMARY KEY,
+          project_id VARCHAR(128) NOT NULL,
+          user_id VARCHAR(128),
           organization_id VARCHAR(128),
           query TEXT NOT NULL,
           mode VARCHAR(32) NOT NULL,
@@ -176,8 +176,8 @@ export async function ensureNeonSchema(): Promise<void> {
 
       await sql`
         CREATE TABLE IF NOT EXISTS graph_revisions (
-          id VARCHAR(64) PRIMARY KEY,
-          project_id VARCHAR(64) NOT NULL,
+          id VARCHAR(128) PRIMARY KEY,
+          project_id VARCHAR(128) NOT NULL,
           title VARCHAR(255) NOT NULL,
           node_count INTEGER NOT NULL,
           edge_count INTEGER NOT NULL,
@@ -187,6 +187,25 @@ export async function ensureNeonSchema(): Promise<void> {
       `;
 
       await sql`CREATE INDEX IF NOT EXISTS idx_graph_revisions_project ON graph_revisions(project_id, created_at DESC)`;
+
+      // Auto-widen existing columns if created with earlier narrower definitions
+      try { await sql`ALTER TABLE projects ALTER COLUMN id TYPE VARCHAR(128)`; } catch {}
+      try { await sql`ALTER TABLE projects ALTER COLUMN user_id TYPE VARCHAR(128)`; } catch {}
+      try { await sql`ALTER TABLE nodes ALTER COLUMN id TYPE VARCHAR(128)`; } catch {}
+      try { await sql`ALTER TABLE nodes ALTER COLUMN project_id TYPE VARCHAR(128)`; } catch {}
+      try { await sql`ALTER TABLE nodes ALTER COLUMN user_id TYPE VARCHAR(128)`; } catch {}
+      try { await sql`ALTER TABLE nodes ALTER COLUMN section_id TYPE VARCHAR(128)`; } catch {}
+      try { await sql`ALTER TABLE connections ALTER COLUMN id TYPE VARCHAR(128)`; } catch {}
+      try { await sql`ALTER TABLE connections ALTER COLUMN project_id TYPE VARCHAR(128)`; } catch {}
+      try { await sql`ALTER TABLE connections ALTER COLUMN user_id TYPE VARCHAR(128)`; } catch {}
+      try { await sql`ALTER TABLE connections ALTER COLUMN from_node TYPE VARCHAR(128)`; } catch {}
+      try { await sql`ALTER TABLE connections ALTER COLUMN to_node TYPE VARCHAR(128)`; } catch {}
+      try { await sql`ALTER TABLE connections ALTER COLUMN label TYPE VARCHAR(255)`; } catch {}
+      try { await sql`ALTER TABLE research_sessions ALTER COLUMN id TYPE VARCHAR(128)`; } catch {}
+      try { await sql`ALTER TABLE research_sessions ALTER COLUMN project_id TYPE VARCHAR(128)`; } catch {}
+      try { await sql`ALTER TABLE research_sessions ALTER COLUMN user_id TYPE VARCHAR(128)`; } catch {}
+      try { await sql`ALTER TABLE graph_revisions ALTER COLUMN id TYPE VARCHAR(128)`; } catch {}
+      try { await sql`ALTER TABLE graph_revisions ALTER COLUMN project_id TYPE VARCHAR(128)`; } catch {}
 
       // 2. Ensure default workspace exists
       const existingProjects = await sql`SELECT id FROM projects WHERE id = 'default' LIMIT 1`;
@@ -307,15 +326,17 @@ export async function neonCreateProject(
   `;
 
   if (template === 'rag') {
-    const ids = new Map(SEED_NODES.map(node => [node.id, `${id}-${node.id}`]));
+    const shortProj = id.replace(/^project-/, '').slice(0, 8);
+    const ids = new Map(SEED_NODES.map(node => [node.id, `n-${shortProj}-${node.id}`]));
     const nodes = SEED_NODES.map(node => ({
       ...node,
       id: ids.get(node.id)!,
+      sectionId: node.sectionId ? (ids.get(node.sectionId) || node.sectionId) : undefined,
       metadata: node.metadata ? { ...node.metadata } : undefined
     }));
     const connections = SEED_CONNECTIONS.map(edge => ({
       ...edge,
-      id: `${id}-${edge.id}`,
+      id: `c-${shortProj}-${edge.id}`,
       from: ids.get(edge.from)!,
       to: ids.get(edge.to)!
     }));
