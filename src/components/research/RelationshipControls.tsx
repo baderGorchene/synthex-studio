@@ -293,7 +293,7 @@ export function RelationshipControls({ connection, x, y, onUpdate, onDelete }: {
                 checked={Boolean(connection.animated)}
                 onChange={event => onUpdate({ animated: event.target.checked })}
               />
-              <Zap size={12} className={connection.animated ? "text-[#3c6e71]" : "text-[#353535] opacity-60"} />
+              <Zap size={12} className={connection.animated ? "text-[#1F3DFF]" : "text-[#111214] opacity-60"} />
               <span>Flow animation</span>
               <svg width="34" height="10" viewBox="0 0 34 10" fill="none" className="ml-auto opacity-75">
                 <line

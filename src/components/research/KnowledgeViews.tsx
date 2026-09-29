@@ -483,7 +483,7 @@ function RevisionsView({
               </form>
             ) : (
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
-                <span style={{ fontSize: '11px', color: '#3c6e71' }}>
+                <span style={{ fontSize: '11px', color: '#1F3DFF' }}>
                   Current sheet: <strong>{currentNodesCount}</strong> records, <strong>{currentEdgesCount}</strong> links
                 </span>
                 <button
@@ -519,7 +519,7 @@ function RevisionsView({
                 return (
                   <div className="revision-card" key={rev.id}>
                     <div className="revision-card-left">
-                      <div className="revision-icon-wrap" style={isRestored ? { background: '#3c6e71', color: '#fff' } : undefined}>
+                      <div className="revision-icon-wrap" style={isRestored ? { background: '#1F3DFF', color: '#fff' } : undefined}>
                         <History size={16} />
                       </div>
                       <div className="revision-details">
@@ -594,7 +594,7 @@ function RevisionsView({
               </form>
             ) : (
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
-                <span style={{ fontSize: '11px', color: '#3c6e71' }}>
+                <span style={{ fontSize: '11px', color: '#1F3DFF' }}>
                   Offline SQLite snapshots stored in <code>.backups/</code>
                 </span>
                 <div style={{ display: 'flex', gap: '8px' }}>
@@ -639,7 +639,7 @@ function RevisionsView({
                 return (
                   <div className="revision-card" key={snap.id}>
                     <div className="revision-card-left">
-                      <div className="revision-icon-wrap" style={{ background: '#284b63', color: '#fff' }}>
+                      <div className="revision-icon-wrap" style={{ background: '#111214', color: '#fff' }}>
                         <Database size={16} />
                       </div>
                       <div className="revision-details">

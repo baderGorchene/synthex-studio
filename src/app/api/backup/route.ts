@@ -9,8 +9,17 @@ import {
   getDatabaseFilePath,
   getBackupFilePath
 } from '@/lib/db';
+import { getServerAuth } from '@/lib/auth';
+
+// Whole-database file operations: only for the single-user local mode, never for hosted accounts.
+async function localOnly() {
+  const auth = await getServerAuth();
+  return auth.isLocal ? null : NextResponse.json({ error: 'Not found' }, { status: 404 });
+}
 
 export async function GET(request: Request) {
+  const denied = await localOnly();
+  if (denied) return denied;
   try {
     const url = new URL(request.url);
     const isDownload = url.searchParams.get('download') === '1';
@@ -55,6 +64,8 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  const denied = await localOnly();
+  if (denied) return denied;
   try {
     const body = await request.json();
     const action = body.action;

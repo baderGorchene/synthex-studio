@@ -2,6 +2,7 @@ import type { CanvasNode, SectionResizeHandle } from '@/types/canvas';
 import type { CitationReference } from '@/utils/citation';
 export interface NodeCardProps {
   node: CanvasNode; selected: boolean; isEditing: boolean; isGrabbed?: boolean; dragTilt?: number;
+  isDraft?: boolean; isDetaching?: boolean;
   onToggleEdit: () => void; onUpdateContent: (content: string) => void;
   onPointerDown: (event: React.PointerEvent, node: CanvasNode) => void;
   onClick: (event: React.MouseEvent, node: CanvasNode) => void;

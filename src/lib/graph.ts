@@ -188,3 +188,14 @@ export function exportGraphJson(graph: KnowledgeGraph): string {
     relationships: Object.values(graph.edgesById).sort(compareById)
   }, null, 2);
 }
+
+const DASHED_RELATIONS = new Set(['contradicts', 'challenges', 'refutes', 'disputes', 'replaces']);
+const DOTTED_RELATIONS = new Set(['asks', 'answers', 'questions']);
+
+/** Line grammar: a relation's meaning sets its stroke (solid supports, dashed challenges, dotted open questions). */
+export function strokeForLabel(label = ''): NonNullable<Connection['strokePattern']> {
+  const key = label.trim().toLowerCase().replace(/\s+/g, '_');
+  if (DASHED_RELATIONS.has(key)) return 'dashed';
+  if (DOTTED_RELATIONS.has(key)) return 'dotted';
+  return 'solid';
+}

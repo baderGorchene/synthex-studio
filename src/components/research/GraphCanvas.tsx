@@ -10,7 +10,7 @@ import { getLinkThumbnail, extractYouTubeVideoId } from './SourceMetadata';
 import { NodeCard, NodeGlyph } from './nodes';
 
 const RELATION_PALETTE: Record<string, string> = {
-  neutral: '#64748b', indigo: '#6366f1', emerald: '#10b981', rose: '#f43f5e',
+  neutral: '#6B6F76', indigo: '#6366f1', emerald: '#10b981', rose: '#f43f5e',
   amber: '#f59e0b', sky: '#0ea5e9', purple: '#a855f7'
 };
 import { FileViewerModal, ImageViewerModal } from './FileAndMediaModal';
@@ -298,7 +298,7 @@ function GroupCard({
           borderStyle: isCollapsed ? 'solid' : 'dashed',
           borderWidth: isCollapsed ? '1.5px' : '2px',
           ...(isCollapsed ? {
-            boxShadow: `0 1px 3px rgba(53, 53, 53, 0.08), 0 4px 0 -1px #ffffff, 0 4px 0 0 ${customColor}, 0 8px 0 -2px #ffffff, 0 8px 0 -1px ${customColor}, 0 12px 20px -3px rgba(53, 53, 53, 0.1)`
+            boxShadow: `0 1px 3px rgba(17, 18, 20, 0.08), 0 4px 0 -1px #ffffff, 0 4px 0 0 ${customColor}, 0 8px 0 -2px #ffffff, 0 8px 0 -1px ${customColor}, 0 12px 20px -3px rgba(17, 18, 20, 0.1)`
           } : {})
         } : {})
       }}
@@ -388,7 +388,7 @@ export function GraphCanvas({
   graph, selectedNodeIds, viewport, setViewport, activeTool, spacePressed, linkingFromId,
   autoFitKey, editingNoteId, onSelectNode, onSelectMultipleNodes, onClearSelection, onClickAway, onCancelLinking, onMoveNodes, onConnect,
   onStartLinking, onToggleGroup, onEditNote, onUpdateNote, onUpdateRelationship, onDeleteRelationship, onResizeGroup, onOpenGroup,
-  onAddRecordWithData, onDeleteNodes, projectId, isResizeLocked = false
+  onAddRecordWithData, onDeleteNodes, projectId, isResizeLocked = false, draftIds, detachingIds
 }: {
   graph: KnowledgeGraph;
   selectedNodeIds: string[];
@@ -418,6 +418,10 @@ export function GraphCanvas({
   onDeleteNodes?: (ids: string[]) => void;
   projectId?: string;
   isResizeLocked?: boolean;
+  /** Node and edge ids that are AI drafts: rendered in proof blue, read-only until kept. */
+  draftIds?: Set<string>;
+  /** Node ids playing the pin-detach animation before removal. */
+  detachingIds?: string[];
 }) {
   const canvasRef = useRef<HTMLDivElement>(null);
   const gesture = useRef<Gesture | null>(null);
@@ -675,7 +679,9 @@ export function GraphCanvas({
   const handleFitCanvas = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas || nodes.length === 0 || canvasSize.width === 0 || canvasSize.height === 0) return;
-    const bounds = nodes.reduce((current, node) => ({
+    // On phones only the drafts fit on screen, so frame them: they are what the draft bar is asking about.
+    const framed = canvasSize.width < 600 && draftIds?.size ? nodes.filter(node => draftIds.has(node.id)) : nodes;
+    const bounds = framed.reduce((current, node) => ({
       left: Math.min(current.left, node.x),
       top: Math.min(current.top, node.y),
       right: Math.max(current.right, node.x + (node.width || 280)),
@@ -683,15 +689,21 @@ export function GraphCanvas({
     }), { left: Infinity, top: Infinity, right: -Infinity, bottom: -Infinity });
     const width = Math.max(1, bounds.right - bounds.left);
     const height = Math.max(1, bounds.bottom - bounds.top);
-    const zoom = Math.max(.2, Math.min(.85, (canvasSize.width - 56) / width, (canvasSize.height - 110) / height));
+    // On phones, fitting a whole map makes notes unreadable; keep a readable floor and let people pan.
+    const phone = canvasSize.width < 600;
+    const minZoom = phone ? .6 : .2;
+    const zoom = Math.max(minZoom, Math.min(.85, (canvasSize.width - 56) / width, (canvasSize.height - 110) / height));
+    // Phones keep the top clear for the draft bar and the bottom for the tool row + composer.
+    const reserveTop = phone ? 250 : 0;
+    const usableHeight = canvasSize.height - reserveTop - (phone ? 170 : 0);
     setViewport({
       zoom,
       pan: {
         x: (canvasSize.width - width * zoom) / 2 - bounds.left * zoom,
-        y: (canvasSize.height - height * zoom) / 2 - bounds.top * zoom
+        y: reserveTop + Math.max(0, (usableHeight - height * zoom) / 2) - bounds.top * zoom
       }
     });
-  }, [nodes, canvasSize.width, canvasSize.height, setViewport]);
+  }, [nodes, canvasSize.width, canvasSize.height, setViewport, draftIds]);
 
   useEffect(() => {
     if (nodes.length === 0 || canvasSize.width === 0 || canvasSize.height === 0 || lastFittedKey.current === autoFitKey) return;
@@ -1086,6 +1098,7 @@ export function GraphCanvas({
     }
     if (event.button !== 0) return;
     if ((event.target as HTMLElement).closest('button, input, textarea, a, .markdown-editor')) { event.stopPropagation(); return; }
+    if (draftIds?.has(node.id)) { event.stopPropagation(); onSelectNode(node.id, false); return; }
     if (activeTool === 'connect' || linkingFromId) {
       event.preventDefault();
       event.stopPropagation();
@@ -1259,8 +1272,9 @@ export function GraphCanvas({
         setCursorWorld({ x: (event.clientX - rect.left - viewport.pan.x) / viewport.zoom, y: (event.clientY - rect.top - viewport.pan.y) / viewport.zoom });
       }}
       style={{
-        backgroundSize: `${22 * viewport.zoom}px ${22 * viewport.zoom}px`,
-        backgroundPosition: `${viewport.pan.x}px ${viewport.pan.y}px`
+        // Typeset Grid column module: a 280px column + 40px gutter, panned and zoomed with the map.
+        backgroundSize: `${320 * viewport.zoom}px 100%`,
+        backgroundPosition: `${viewport.pan.x}px 0`
       }}
     >
       <div className="canvas-rules" aria-hidden="true"><span>KNOWLEDGE PLANE</span><span>FOLD TO FOCUS</span></div>
@@ -1298,18 +1312,18 @@ export function GraphCanvas({
                 orient="auto-start-reverse"
                 markerUnits="strokeWidth"
               >
-                <path d="M0,0 L0,6 L7,3 z" fill={RELATION_PALETTE[color] || '#284b63'} />
+                <path d="M0,0 L0,6 L7,3 z" fill={RELATION_PALETTE[color] || '#111214'} />
               </marker>
             ))}
             <marker id="relation-preview-arrow" markerWidth="8" markerHeight="8" refX="5.5" refY="3" orient="auto">
-              <path d="M0,0 L0,6 L7,3 z" fill="#3c6e71" />
+              <path d="M0,0 L0,6 L7,3 z" fill="#1F3DFF" />
             </marker>
           </defs>
-          {edges.map(({ edge, path, mid }) => {
+          {edges.map(({ edge, path }) => {
             const isDotted = edge.strokePattern === 'dotted';
             const isDashed = edge.strokePattern === 'dashed';
             const isSolid = !isDotted && !isDashed;
-            const strokeColor = RELATION_PALETTE[edge.color || 'neutral'] || '#284b63';
+            const strokeColor = draftIds?.has(edge.id) ? '#1F3DFF' : RELATION_PALETTE[edge.color || 'neutral'] || '#111214';
 
             return (
               <g key={edge.id} className="relationship-mark">
@@ -1348,7 +1362,6 @@ export function GraphCanvas({
                   />
                 )}
 
-                <RelationshipControls connection={edge} x={mid.x} y={mid.y} onUpdate={fields => onUpdateRelationship(edge.id, fields)} onDelete={() => onDeleteRelationship(edge.id)} />
               </g>
             );
           })}
@@ -1372,12 +1385,12 @@ export function GraphCanvas({
                 y1={guide.y1}
                 x2={guide.x2}
                 y2={guide.y2}
-                stroke="#3c6e71"
+                stroke="#1F3DFF"
                 strokeWidth="1.2"
                 strokeDasharray="4 3"
               />
-              <circle cx={guide.x1} cy={guide.y1} r="2.5" fill="#3c6e71" />
-              <circle cx={guide.x2} cy={guide.y2} r="2.5" fill="#3c6e71" />
+              <circle cx={guide.x1} cy={guide.y1} r="2.5" fill="#1F3DFF" />
+              <circle cx={guide.x2} cy={guide.y2} r="2.5" fill="#1F3DFF" />
             </g>
           ))}
         </svg>
@@ -1419,6 +1432,8 @@ export function GraphCanvas({
             isGrabbed={draggedNodeIds.includes(node.id)}
             dragTilt={draggedNodeIds.includes(node.id) ? dragTilt : 0}
             isEditing={editingNoteId === node.id}
+            isDraft={draftIds?.has(node.id)}
+            isDetaching={detachingIds?.includes(node.id)}
             allNodesById={graph.nodesById}
             onOpenEvidenceCitation={handleOpenEvidenceCitation}
             onToggleEdit={() => onEditNote(editingNoteId === node.id ? null : node.id)}
@@ -1435,6 +1450,13 @@ export function GraphCanvas({
             onStartResize={(event, handle) => startNodeResize(event, node, handle)}
           />
         ))}
+        <svg className="relationship-layer relationship-label-layer" width="100000" height="100000">
+          {edges.map(({ edge, mid }) => (
+            <g key={edge.id} className="relationship-mark">
+              <RelationshipControls connection={edge} x={mid.x} y={mid.y} onUpdate={fields => onUpdateRelationship(edge.id, fields)} onDelete={() => onDeleteRelationship(edge.id)} />
+            </g>
+          ))}
+        </svg>
       </div>
       {linkingFromId && <div className="canvas-instruction">Choose a node to create a relationship <button onClick={onCancelLinking}>Cancel</button></div>}
       {activeTool === 'connect' && !linkingFromId && <div className="canvas-instruction">Select two nodes to describe their relationship</div>}
@@ -1472,6 +1494,7 @@ export function GraphCanvas({
           onPanTo={pan => setViewport(prev => ({ ...prev, pan }))}
           onFitCanvas={handleFitCanvas}
           selectedNodeIds={selectedNodeIds}
+          draftIds={draftIds}
         />
       )}
 

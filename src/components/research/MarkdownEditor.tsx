@@ -54,6 +54,6 @@ export function MarkdownEditor({ value, onChange, className = '', ariaLabel = 'N
     <div className="markdown-toolbar" role="toolbar" aria-label="Markdown formatting">
       {formats.map(({ id, label, icon: Icon }) => <button key={id} type="button" title={label} aria-label={label} onPointerDown={event => event.preventDefault()} onClick={() => format(id)}><Icon size={14} /></button>)}
     </div>
-    <textarea ref={textarea} aria-label={ariaLabel} maxLength={50000} value={value} onChange={event => onChange(event.target.value)} />
+    <textarea ref={textarea} autoFocus aria-label={ariaLabel} maxLength={50000} value={value} onChange={event => onChange(event.target.value)} />
   </div>;
 }

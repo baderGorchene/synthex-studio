@@ -1,4 +1,5 @@
-import { getAllConnectionsFromDb, getAllNodesFromDb, getProjectsFromDb, projectExistsInDb } from '@/lib/db';
+import { getAllConnectionsFromDb, getAllNodesFromDb, getProjectsFromDb, userHasProjectAccess } from '@/lib/db';
+import { getServerAuth } from '@/lib/auth';
 import { normalizeGraph } from '@/lib/graph';
 import { buildVaultFiles, createZipArchive, sanitizeVaultFilename } from '@/lib/vault-export';
 import type { KnowledgeGraph } from '@/lib/graph';
@@ -9,11 +10,14 @@ export async function GET(request: Request) {
     const url = new URL(request.url);
     const projectId = url.searchParams.get('projectId') || 'default';
 
-    if (!(await projectExistsInDb(projectId))) {
+    const auth = await getServerAuth();
+    const userId = auth.user?.id || auth.userId;
+    if (!auth.isLocal && !userId) return Response.json({ error: 'Unauthorized' }, { status: 401 });
+    if (!(await userHasProjectAccess(projectId, userId, auth.orgId, auth.clerkId))) {
       return Response.json({ error: 'Project not found.' }, { status: 404 });
     }
 
-    const projects = await getProjectsFromDb();
+    const projects = await getProjectsFromDb(userId, auth.orgId, auth.clerkId);
     const currentProject = projects.find(p => p.id === projectId);
     const projectTitle = currentProject?.title || 'Research Workspace';
 

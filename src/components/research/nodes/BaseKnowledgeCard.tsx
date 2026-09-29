@@ -9,10 +9,16 @@ import { WebsiteLogo, WebsiteImage, getWebsiteDomain, getLinkThumbnail } from '.
 import { AttachedFileBadge, getFileCategory } from '../FileAndMediaModal';
 
 const nodeLabel: Record<string, string> = {
-  note: 'Note & Idea', claim: 'Claim & Inquiry', source: 'Document & Source', image: 'Media & Figure', group: 'Knowledge cluster',
-  concept: 'Concept', hypothesis: 'Hypothesis', question: 'Question', link: 'Link & Website', section: 'Knowledge cluster',
-  research_result: 'Research result', task: 'Research task', ai_insight: 'AI insight'
+  note: 'Note', claim: 'Claim', source: 'Source', image: 'Image', group: 'Cluster',
+  concept: 'Idea', hypothesis: 'Hypothesis', question: 'Question', link: 'Link', section: 'Cluster',
+  research_result: 'Research', task: 'Task', ai_insight: 'Insight'
 };
+// Stable per-note hang angle (-0.6°..0.6°) so the board reads as pinned paper, not a spreadsheet.
+function hangTilt(id: string) {
+  let hash = 0;
+  for (let i = 0; i < id.length; i++) hash = (hash * 31 + id.charCodeAt(i)) | 0;
+  return ((Math.abs(hash) % 13) - 6) / 10;
+}
 function safeExternalHref(value?: string) {
   try { const url = new URL(value || ''); return url.protocol === 'http:' || url.protocol === 'https:' ? url.href : undefined; }
   catch { return undefined; }
@@ -43,7 +49,7 @@ export function NodeGlyph({ type, fileName, fileType }: { type: string; fileName
 }
 
 export function BaseKnowledgeCard({
-  node, selected, isEditing, isGrabbed, dragTilt = 0, onToggleEdit, onUpdateContent, onPointerDown, onClick, onOpenLightbox, onOpenFileModal,
+  node, selected, isEditing, isGrabbed, dragTilt = 0, isDraft, isDetaching, onToggleEdit, onUpdateContent, onPointerDown, onClick, onOpenLightbox, onOpenFileModal,
   allNodesById, onOpenEvidenceCitation, isResizeLocked, onStartResize
 }: {
   node: CanvasNode;
@@ -51,6 +57,8 @@ export function BaseKnowledgeCard({
   isEditing: boolean;
   isGrabbed?: boolean;
   dragTilt?: number;
+  isDraft?: boolean;
+  isDetaching?: boolean;
   onToggleEdit: () => void;
   onUpdateContent: (content: string) => void;
   onPointerDown: (event: React.PointerEvent, node: CanvasNode) => void;
@@ -62,7 +70,8 @@ export function BaseKnowledgeCard({
   isResizeLocked?: boolean;
   onStartResize?: (event: React.PointerEvent, handle: SectionResizeHandle) => void;
 }) {
-  const customColor = node.color;
+  // Only user-picked hex colours tint a note; legacy accent names (neutral, cobalt…) keep the ink default.
+  const customColor = node.color?.startsWith('#') ? node.color : undefined;
   const isSource = node.type === 'source' || node.type === 'link';
   const isImage = node.type === 'image';
   const hasFile = Boolean(node.fileData || node.fileName);
@@ -81,9 +90,9 @@ export function BaseKnowledgeCard({
   return (
     <article
       data-graph-node={node.id}
-      className={`knowledge-card type-${node.type} ${customColor ? 'has-custom-color' : ''} ${selected ? 'is-selected' : ''} ${isGrabbed ? 'is-grabbed' : ''}`}
+      className={`knowledge-card type-${node.type} ${customColor ? 'has-custom-color' : ''} ${selected ? 'is-selected' : ''} ${isGrabbed ? 'is-grabbed' : ''} ${isDraft ? 'is-draft' : ''} ${isDetaching ? 'is-detaching' : ''}`}
       style={{
-        transform: `translate3d(${node.x}px, ${node.y}px, 0) scale(${isGrabbed ? 1.035 : 1}) rotate(${isGrabbed ? dragTilt : 0}deg) translateY(${isGrabbed ? -4 : 0}px)`,
+        transform: `translate3d(${node.x}px, ${node.y}px, 0) scale(${isGrabbed ? 1.035 : 1}) rotate(${isGrabbed ? dragTilt : hangTilt(node.id)}deg) translateY(${isGrabbed ? -4 : 0}px)`,
         width: node.width || (isImage ? 320 : 280),
         height: node.height ? `${node.height}px` : undefined,
         minHeight: '124px',
@@ -105,35 +114,10 @@ export function BaseKnowledgeCard({
       onPointerDown={event => onPointerDown(event, node)}
       onClick={event => onClick(event, node)}
     >
-      <div className="knowledge-card-topline">
-        <span
-          className={`node-glyph ${isSource && !hasFile && (safeUrl || effectiveDomain) ? 'has-favicon' : ''}`}
-          style={isSource && !hasFile && (safeUrl || effectiveDomain) ? (
-            { backgroundColor: 'transparent', borderColor: 'transparent', borderWidth: 0 }
-          ) : customColor ? (
-            node.type === 'image'
-              ? { backgroundColor: 'transparent', borderColor: customColor, color: customColor }
-              : { backgroundColor: customColor, borderColor: customColor, color: '#ffffff' }
-          ) : undefined}
-        >
-          {isSource && !hasFile && (safeUrl || effectiveDomain) ? (
-            <WebsiteLogo url={safeUrl} domain={effectiveDomain} logo={websiteLogo} size={16} />
-          ) : (
-            <NodeGlyph type={node.type} fileName={node.fileName} fileType={node.fileType} />
-          )}
-        </span>
-        <span
-          className="node-kind"
-          style={customColor ? { color: customColor } : undefined}
-        >
-          {nodeLabel[node.type] || 'Knowledge'}
-        </span>
-        {siteName && <span className="source-sitename-tag" title={siteName}>{siteName}</span>}
-        {node.metadata?.origin === 'ai' && <span className="origin-label">AI proposal</span>}
-        {node.metadata?.origin === 'example' && <span className="origin-label">Example</span>}
-        {status && <span className={`claim-status status-${node.metadata?.claimStatus}`}>{status}</span>}
-        {node.type === 'note' && <button className={`note-mode-toggle ${isEditing ? 'is-editing' : ''}`} aria-label={isEditing ? 'Finish editing note' : 'Edit note'} title={isEditing ? 'Finish editing note' : 'Edit note'} onPointerDown={event => event.stopPropagation()} onClick={event => { event.stopPropagation(); onToggleEdit(); }}>{isEditing ? <Check size={13} /> : <Pencil size={12} />}<span>{isEditing ? 'Done' : 'Edit'}</span></button>}
-      </div>
+      <span className="note-pin" aria-hidden="true" />
+      {node.type === 'note' && <div className="knowledge-card-topline">
+        <button className={`note-mode-toggle ${isEditing ? 'is-editing' : ''}`} aria-label={isEditing ? 'Finish editing note' : 'Edit note'} title={isEditing ? 'Finish editing note' : 'Edit note'} onPointerDown={event => event.stopPropagation()} onClick={event => { event.stopPropagation(); onToggleEdit(); }}>{isEditing ? <Check size={13} /> : <Pencil size={12} />}<span>{isEditing ? 'Done' : 'Edit'}</span></button>
+      </div>}
       <h2>{node.title}</h2>
 
       <div className={`knowledge-card-body-scroll ${node.height ? 'has-custom-height' : ''}`}>
@@ -298,6 +282,10 @@ export function BaseKnowledgeCard({
           </div>
         ) : null}
       </div>
+
+      <p className="note-meta">
+        {[nodeLabel[node.type] || 'Idea', isDraft ? 'Draft' : node.metadata?.origin === 'ai' ? 'From research' : null, siteName, status, node.metadata?.evidence?.length ? `${node.metadata.evidence.length} source${node.metadata.evidence.length === 1 ? '' : 's'}` : null].filter(Boolean).join(' · ')}
+      </p>
 
       {/* 8-point resize handles when card is selected and resize is unlocked */}
       {selected && !isResizeLocked && !isGrabbed && (['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'] as SectionResizeHandle[]).map(handle => (

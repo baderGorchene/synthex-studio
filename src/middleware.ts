@@ -6,14 +6,28 @@ const isPublicRoute = createRouteMatcher([
   '/sign-in(.*)',
   '/sign-up(.*)',
   '/api/webhooks(.*)',
-  '/api/metadata(.*)',
-  '/api/ai/status(.*)',
   '/uploads/(.*)'
 ]);
 
 const clerkHandler = clerkMiddleware(async (auth, request) => {
   if (!isPublicRoute(request)) {
     await auth.protect();
+  }
+}, {
+  // Clerk merges these with the directives it needs (its own domains, Stripe, Turnstile).
+  // ponytail: script-src still allows 'unsafe-inline' because pages are statically rendered;
+  // switch to `strict: true` (nonces) once the app pages render dynamically.
+  contentSecurityPolicy: {
+    directives: {
+      'img-src': ['https:', 'data:', 'blob:'],          // OG images, favicons, pasted/inline uploads
+      'media-src': ['self', 'https:', 'data:', 'blob:'],
+      'frame-src': ['data:', 'blob:', 'https://storage.googleapis.com'], // PDF preview
+      'style-src': ['https://fonts.googleapis.com'],
+      'font-src': ['self', 'https://fonts.gstatic.com', 'data:'],
+      'object-src': ['none'],
+      'base-uri': ['self'],
+      'frame-ancestors': ['self']
+    }
   }
 });
 

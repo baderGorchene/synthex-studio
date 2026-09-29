@@ -14,23 +14,21 @@ export async function POST(req: NextRequest) {
   const signature = req.headers.get('stripe-signature');
   const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
 
+  // Never accept unsigned events: they grant credits and plan upgrades.
+  if (!stripe || !webhookSecret) {
+    return NextResponse.json({ error: 'Stripe webhooks are not configured.' }, { status: 503 });
+  }
+  if (!signature) {
+    return NextResponse.json({ error: 'Missing Stripe signature.' }, { status: 400 });
+  }
+
   let event: Stripe.Event;
 
   try {
-    const rawBody = await req.text();
-
-    if (webhookSecret && signature && stripe) {
-      event = stripe.webhooks.constructEvent(rawBody, signature, webhookSecret);
-    } else {
-      // In dev or test environments without Stripe webhook secret, parse raw payload
-      event = JSON.parse(rawBody) as Stripe.Event;
-    }
+    event = stripe.webhooks.constructEvent(await req.text(), signature, webhookSecret);
   } catch (err) {
     console.error('Stripe webhook signature verification failed:', err);
-    return NextResponse.json(
-      { error: `Webhook error: ${err instanceof Error ? err.message : 'Invalid signature'}` },
-      { status: 400 }
-    );
+    return NextResponse.json({ error: 'Invalid webhook signature.' }, { status: 400 });
   }
 
   try {
@@ -157,7 +155,7 @@ export async function POST(req: NextRequest) {
   } catch (error) {
     console.error('Error processing Stripe webhook event:', error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Error processing webhook event' },
+      { error: 'Error processing webhook event' },
       { status: 500 }
     );
   }

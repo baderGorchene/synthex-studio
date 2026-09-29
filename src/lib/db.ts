@@ -27,14 +27,8 @@ import {
   neonCreateProject,
   neonGetAllNodes,
   neonSaveNode,
-  neonUpdateNodePosition,
-  neonUpdateMultipleNodePositions,
-  neonUpdateNode,
-  neonDeleteNode,
   neonGetAllConnections,
   neonSaveConnection,
-  neonUpdateConnection,
-  neonDeleteConnection,
   neonBulkSaveCanvas,
   neonGetResearchSessions,
   neonGetResearchSession,
@@ -551,80 +545,6 @@ export function saveNodeToDb(node: CanvasNode, projectId = 'default'): void | Pr
   });
 }
 
-export function updateNodePositionInDb(id: string, x: number, y: number, projectId = 'default'): void | Promise<void> {
-  if (isNeonConfigured()) {
-    return neonUpdateNodePosition(id, x, y, projectId);
-  }
-  const db = getDatabase();
-  db.prepare('UPDATE nodes SET x = ?, y = ? WHERE id = ? AND projectId = ?').run(x, y, id, projectId);
-}
-
-export function updateMultipleNodePositionsInDb(positions: { id: string; x: number; y: number }[], projectId = 'default'): void | Promise<void> {
-  if (isNeonConfigured()) {
-    return neonUpdateMultipleNodePositions(positions, projectId);
-  }
-  const db = getDatabase();
-  const updateStmt = db.prepare('UPDATE nodes SET x = ?, y = ? WHERE id = ? AND projectId = ?');
-  const tx = db.transaction((items: { id: string; x: number; y: number }[]) => {
-    for (const item of items) {
-      updateStmt.run(item.x, item.y, item.id, projectId);
-    }
-  });
-  tx(positions);
-}
-
-export function updateNodeInDb(id: string, fields: Partial<CanvasNode>, projectId = 'default'): void | Promise<void> {
-  if (isNeonConfigured()) {
-    return neonUpdateNode(id, fields, projectId);
-  }
-  const db = getDatabase();
-  const existing = db.prepare('SELECT * FROM nodes WHERE id = ? AND projectId = ?').get(id, projectId) as DbNodeRow | undefined;
-  if (!existing) return;
-
-  const updated: CanvasNode = {
-    id,
-    type: (fields.type ?? existing.type) as CanvasNodeType,
-    x: fields.x ?? existing.x,
-    y: fields.y ?? existing.y,
-    width: fields.width !== undefined ? fields.width : (existing.width ?? undefined),
-    height: fields.height !== undefined ? fields.height : (existing.height ?? undefined),
-    color: (fields.color ?? existing.color ?? 'neutral') as AccentColor,
-    title: fields.title ?? existing.title,
-    content: fields.content !== undefined ? fields.content : (existing.content ?? undefined),
-    items:
-      fields.items !== undefined
-        ? fields.items
-        : existing.items
-        ? JSON.parse(existing.items)
-        : undefined,
-    imageUrl: fields.imageUrl !== undefined ? fields.imageUrl : (existing.imageUrl ?? undefined),
-    caption: fields.caption !== undefined ? fields.caption : (existing.caption ?? undefined),
-    url: fields.url !== undefined ? fields.url : (existing.url ?? undefined),
-    domain: fields.domain !== undefined ? fields.domain : (existing.domain ?? undefined),
-    description:
-      fields.description !== undefined ? fields.description : (existing.description ?? undefined),
-    sectionId: fields.sectionId !== undefined ? fields.sectionId : (existing.sectionId ?? undefined),
-    fileData: fields.fileData !== undefined ? fields.fileData : (existing.fileData ?? undefined),
-    fileName: fields.fileName !== undefined ? fields.fileName : (existing.fileName ?? undefined),
-    fileSize: fields.fileSize !== undefined ? fields.fileSize : (existing.fileSize ?? undefined),
-    fileType: fields.fileType !== undefined ? fields.fileType : (existing.fileType ?? undefined),
-    pageCount: fields.pageCount !== undefined ? fields.pageCount : (existing.pageCount ?? undefined),
-    metadata: fields.metadata !== undefined ? fields.metadata : (existing.metadata ? JSON.parse(existing.metadata) : undefined),
-    createdAt: existing.createdAt
-  };
-
-  saveNodeToDb(updated, projectId);
-}
-
-export function deleteNodeFromDb(id: string, projectId = 'default'): void | Promise<void> {
-  if (isNeonConfigured()) {
-    return neonDeleteNode(id, projectId);
-  }
-  const db = getDatabase();
-  db.prepare('DELETE FROM nodes WHERE id = ? AND projectId = ?').run(id, projectId);
-  db.prepare('DELETE FROM connections WHERE (from_node = ? OR to_node = ?) AND projectId = ?').run(id, id, projectId);
-}
-
 export function getAllConnectionsFromDb(projectId = 'default'): Connection[] | Promise<Connection[]> {
   if (isNeonConfigured()) {
     return neonGetAllConnections(projectId);
@@ -679,38 +599,6 @@ export function saveConnectionToDb(conn: Connection, projectId = 'default'): voi
     conn.animated !== undefined ? (conn.animated ? 1 : 0) : 1,
     conn.metadata ? JSON.stringify(conn.metadata) : null
   );
-}
-
-export function updateConnectionInDb(id: string, fields: Partial<Connection>, projectId = 'default'): void | Promise<void> {
-  if (isNeonConfigured()) {
-    return neonUpdateConnection(id, fields, projectId);
-  }
-  const db = getDatabase();
-  const existing = db.prepare('SELECT * FROM connections WHERE id = ? AND projectId = ?').get(id, projectId) as DbConnectionRow | undefined;
-  if (!existing) return;
-
-  const updated: Connection = {
-    id,
-    from: fields.from ?? existing.from_node,
-    to: fields.to ?? existing.to_node,
-    label: fields.label !== undefined ? fields.label : (existing.label ?? undefined),
-    arrowhead: fields.arrowhead ?? (existing.arrowhead as ArrowheadType) ?? 'end',
-    lineStyle: fields.lineStyle ?? (existing.line_style as ConnectionLineStyle) ?? 'curved',
-    strokePattern: fields.strokePattern ?? (existing.stroke_pattern as ConnectionStrokePattern) ?? 'dashed',
-    color: fields.color ?? (existing.color as ConnectionColor) ?? 'indigo',
-    animated: fields.animated !== undefined ? fields.animated : existing.animated !== null ? Boolean(existing.animated) : true,
-    metadata: fields.metadata !== undefined ? fields.metadata : existing.metadata ? JSON.parse(existing.metadata) : undefined
-  };
-
-  saveConnectionToDb(updated, projectId);
-}
-
-export function deleteConnectionFromDb(id: string, projectId = 'default'): void | Promise<void> {
-  if (isNeonConfigured()) {
-    return neonDeleteConnection(id, projectId);
-  }
-  const db = getDatabase();
-  db.prepare('DELETE FROM connections WHERE id = ? AND projectId = ?').run(id, projectId);
 }
 
 export function bulkSaveCanvasToDb(nodes: CanvasNode[], connections: Connection[], projectId = 'default'): void | Promise<void> {
@@ -878,7 +766,7 @@ export function getProjectsFromDb(
       ORDER BY createdAt ASC
     `).all(...params) as ResearchProject[];
   }
-  return db.prepare('SELECT id, title, createdAt, userId, organizationId FROM projects ORDER BY createdAt ASC').all() as ResearchProject[];
+  return [];
 }
 
 export function projectExistsInDb(id: string): boolean | Promise<boolean> {
@@ -898,9 +786,8 @@ export function userHasProjectAccess(
     return neonUserHasProjectAccess(id, userId, orgId, clerkId);
   }
   const db = getDatabase();
-  if (!userId && !orgId && !clerkId) {
-    return Boolean(db.prepare('SELECT 1 FROM projects WHERE id = ?').get(id));
-  }
+  // No identity means no access; never fall back to "project exists".
+  if (!userId && !orgId && !clerkId) return false;
   const conditions: string[] = [];
   const params: string[] = [id];
   if (userId) {
@@ -1483,27 +1370,30 @@ export function deductUserCredits(
     return { success: false, balance: 0, error: 'User account not found.' };
   }
 
-  if (user.contextCredits < amount) {
+  const txId = `ctx-${globalThis.crypto?.randomUUID?.() || Math.random().toString(36).slice(2, 10)}`;
+  const now = Date.now();
+
+  // Check and decrement in one statement so concurrent requests can't overspend.
+  const runTx = db.transaction(() => {
+    const row = db.prepare(
+      'UPDATE users SET contextCredits = contextCredits - ? WHERE id = ? AND contextCredits >= ? RETURNING contextCredits'
+    ).get(amount, user.id, amount) as { contextCredits: number } | undefined;
+    if (!row) return null;
+    db.prepare(`
+      INSERT INTO credit_transactions (id, userId, amount, action, balanceAfter, metadata, createdAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(txId, user.id, -amount, action, row.contextCredits, metadata || null, now);
+    return row.contextCredits;
+  });
+
+  const nextBalance = runTx();
+  if (nextBalance === null) {
     return {
       success: false,
       balance: user.contextCredits,
       error: `Insufficient Context Credits (${user.contextCredits} available, ${amount} required). Please refill your credits.`
     };
   }
-
-  const nextBalance = user.contextCredits - amount;
-  const txId = `ctx-${globalThis.crypto?.randomUUID?.() || Math.random().toString(36).slice(2, 10)}`;
-  const now = Date.now();
-
-  const runTx = db.transaction(() => {
-    db.prepare('UPDATE users SET contextCredits = ? WHERE id = ?').run(nextBalance, user.id);
-    db.prepare(`
-      INSERT INTO credit_transactions (id, userId, amount, action, balanceAfter, metadata, createdAt)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(txId, user.id, -amount, action, nextBalance, metadata || null, now);
-  });
-
-  runTx();
 
   return { success: true, balance: nextBalance };
 }

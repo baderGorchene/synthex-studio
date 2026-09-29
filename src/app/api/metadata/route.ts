@@ -1,21 +1,65 @@
 import { NextResponse } from 'next/server';
+import { lookup as dnsLookup, type LookupAddress, type LookupOptions } from 'node:dns';
+import { lookup } from 'node:dns/promises';
+import http from 'node:http';
+import https from 'node:https';
+import { BlockList, isIP, type LookupFunction } from 'node:net';
+import { Readable } from 'node:stream';
 
-function isPrivateIp(hostname: string): boolean {
-  if (
-    hostname === 'localhost' ||
-    hostname === '127.0.0.1' ||
-    hostname === '::1' ||
-    hostname.endsWith('.local') ||
-    hostname.endsWith('.internal')
-  ) {
-    return true;
+const blocked = new BlockList();
+for (const [net, prefix] of [
+  ['0.0.0.0', 8], ['10.0.0.0', 8], ['100.64.0.0', 10], ['127.0.0.0', 8], ['169.254.0.0', 16],
+  ['172.16.0.0', 12], ['192.0.0.0', 24], ['192.168.0.0', 16], ['198.18.0.0', 15], ['224.0.0.0', 3]
+] as const) blocked.addSubnet(net, prefix, 'ipv4');
+for (const [net, prefix] of [
+  ['::', 127], ['64:ff9b::', 96], ['fc00::', 7], ['fe80::', 10], ['ff00::', 8]
+] as const) blocked.addSubnet(net, prefix, 'ipv6');
+
+const isBlocked = (address: string, family: number) => blocked.check(address, family === 6 ? 'ipv6' : 'ipv4');
+
+// Resolves the host and rejects it if ANY address is non-public (covers decimal/hex IPs,
+// IPv4-mapped IPv6 (BlockList maps it onto the IPv4 rules) and hostnames that point at internal addresses).
+async function isPublicHost(hostname: string): Promise<boolean> {
+  const host = hostname.replace(/^\[|\]$/g, '');
+  if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local') || host.endsWith('.internal')) return false;
+  try {
+    const addresses = isIP(host) ? [{ address: host, family: isIP(host) }] : await lookup(host, { all: true });
+    return addresses.length > 0 && addresses.every(({ address, family }) => !isBlocked(address, family));
+  } catch {
+    return false;
   }
-  // IPv4 private ranges
-  if (/^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname)) return true;
-  if (/^192\.168\.\d{1,3}\.\d{1,3}$/.test(hostname)) return true;
-  if (/^172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}$/.test(hostname)) return true;
-  if (/^169\.254\.\d{1,3}\.\d{1,3}$/.test(hostname)) return true; // link-local
-  return false;
+}
+
+// DNS lookup used by the socket itself: it re-checks the addresses it actually connects to,
+// so a DNS-rebinding server can't swap in a private IP after isPublicHost() passed.
+const pinnedLookup = ((hostname: string, options: LookupOptions, callback: (...args: unknown[]) => void) => {
+  dnsLookup(hostname, { ...options, all: true }, (err, addresses: LookupAddress[]) => {
+    if (err) return callback(err);
+    if (!addresses.length || addresses.some(a => isBlocked(a.address, a.family))) {
+      return callback(new Error('Blocked private address'));
+    }
+    if (options.all) return callback(null, addresses);
+    callback(null, addresses[0].address, addresses[0].family);
+  });
+}) as unknown as LookupFunction;
+
+const FETCH_HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+  'Accept-Language': 'en-US,en;q=0.9'
+};
+
+// One GET without following redirects, over a socket that uses pinnedLookup.
+function getPinned(url: URL, signal: AbortSignal): Promise<Response> {
+  return new Promise((resolve, reject) => {
+    const req = (url.protocol === 'https:' ? https : http).get(url, { headers: FETCH_HEADERS, lookup: pinnedLookup, signal }, res => {
+      const status = res.statusCode || 500;
+      const headers = Object.entries(res.headers).flatMap(([k, v]) => (v === undefined ? [] : [[k, String(v)] as [string, string]]));
+      const body = [204, 205, 304].includes(status) ? null : (Readable.toWeb(res) as ReadableStream<Uint8Array>);
+      resolve(new Response(body, { status, headers }));
+    });
+    req.on('error', reject);
+  });
 }
 
 function resolveUrl(relativeOrAbsolute: string | undefined, baseUrl: string): string | undefined {
@@ -62,7 +106,7 @@ export async function GET(request: Request) {
     const domain = parsedUrl.hostname.replace(/^www\./i, '');
     const googleFavicon = `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=128`;
 
-    if (isPrivateIp(parsedUrl.hostname)) {
+    if (!(await isPublicHost(parsedUrl.hostname))) {
       return NextResponse.json({ error: 'Access to private network addresses is forbidden.' }, { status: 403 });
     }
 
@@ -123,19 +167,24 @@ export async function GET(request: Request) {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 4500);
 
-      const response = await fetch(parsedUrl.href, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-          'Accept-Language': 'en-US,en;q=0.9'
-        },
-        signal: controller.signal,
-        redirect: 'follow'
-      });
+      // Follow redirects by hand so every hop goes through the private-address check.
+      let currentUrl = parsedUrl;
+      let response: Response | null = null;
+      for (let hop = 0; hop <= 5; hop++) {
+        if (hop > 0 && !(await isPublicHost(currentUrl.hostname))) break;
+        response = await getPinned(currentUrl, controller.signal);
+        const location = response.headers.get('location');
+        if (response.status < 300 || response.status >= 400 || !location) break;
+        response.body?.cancel().catch(() => {});
+        const next = new URL(location, currentUrl);
+        if (next.protocol !== 'http:' && next.protocol !== 'https:') break;
+        currentUrl = next;
+        response = null;
+      }
 
       clearTimeout(timeoutId);
 
-      if (!response.ok) {
+      if (!response || !response.ok) {
         return NextResponse.json(result);
       }
 
@@ -200,11 +249,11 @@ export async function GET(request: Request) {
 
       const rawImage = ogImage || twitterImage;
       if (rawImage) {
-        result.image = resolveUrl(rawImage, parsedUrl.href);
+        result.image = resolveUrl(rawImage, currentUrl.href);
       }
 
       if (iconHref) {
-        const resolvedIcon = resolveUrl(iconHref, parsedUrl.href);
+        const resolvedIcon = resolveUrl(iconHref, currentUrl.href);
         if (resolvedIcon) {
           result.logo = resolvedIcon;
         }

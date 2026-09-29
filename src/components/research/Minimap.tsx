@@ -13,21 +13,13 @@ interface MinimapProps {
   onPanTo: (pan: { x: number; y: number }) => void;
   onFitCanvas?: () => void;
   selectedNodeIds?: string[];
+  draftIds?: Set<string>;
 }
 
-const TYPE_COLORS: Record<string, string> = {
-  concept: '#3c6e71',
-  claim: '#284b63',
-  source: '#577590',
-  question: '#f59e0b',
-  hypothesis: '#6366f1',
-  note: '#64748b',
-  image: '#ec4899',
-  link: '#0284c7',
-  task: '#10b981',
-  research_result: '#8b5cf6',
-  ai_insight: '#06b6d4'
-};
+// Typeset Grid: kept ideas are ink, sources lighter; proof blue is reserved for drafts and selection.
+const KEPT_COLOR = '#6B6F76';
+const SOURCE_COLOR = '#A7AAAF';
+const PROOF = '#1F3DFF';
 
 const MAP_WIDTH = 190;
 const MAP_HEIGHT = 120;
@@ -41,7 +33,8 @@ export function Minimap({
   nodeBounds,
   onPanTo,
   onFitCanvas,
-  selectedNodeIds = []
+  selectedNodeIds = [],
+  draftIds
 }: MinimapProps) {
   const [isOpen, setIsOpen] = useState<boolean>(() => {
     if (typeof window === 'undefined') return true;
@@ -225,7 +218,7 @@ export function Minimap({
     >
       <div className="canvas-minimap-header">
         <div className="canvas-minimap-title-wrap">
-          <Map size={13} className="text-[#3c6e71]" />
+          <Map size={13} className="text-[#6B6F76]" />
           <span className="canvas-minimap-title">Minimap</span>
           <span className="canvas-minimap-badge">{nodes.length}</span>
         </div>
@@ -264,7 +257,7 @@ export function Minimap({
           {/* Subtle background grid pattern */}
           <defs>
             <pattern id="minimap-grid" width="16" height="16" patternUnits="userSpaceOnUse">
-              <circle cx="2" cy="2" r="0.8" fill="rgba(53, 53, 53, 0.15)" />
+              <circle cx="2" cy="2" r="0.8" fill="rgba(17, 18, 20, 0.15)" />
             </pattern>
           </defs>
           <rect width={MAP_WIDTH} height={MAP_HEIGHT} fill="url(#minimap-grid)" />
@@ -286,8 +279,8 @@ export function Minimap({
                 height={gh}
                 rx="3"
                 ry="3"
-                fill="rgba(60, 110, 113, 0.05)"
-                stroke="rgba(60, 110, 113, 0.35)"
+                fill="rgba(17, 18, 20, 0.04)"
+                stroke="rgba(17, 18, 20, 0.25)"
                 strokeWidth="1"
                 strokeDasharray="3 2"
               />
@@ -304,7 +297,7 @@ export function Minimap({
             const nh = Math.max(3, box.height * scale);
 
             const isSelected = selectedNodeIds.includes(node.id);
-            const color = TYPE_COLORS[node.type] || '#64748b';
+            const color = isSelected || draftIds?.has(node.id) ? PROOF : node.type === 'source' || node.type === 'link' ? SOURCE_COLOR : KEPT_COLOR;
 
             return (
               <rect
@@ -317,7 +310,7 @@ export function Minimap({
                 ry="1.5"
                 fill={color}
                 opacity={isSelected ? 1 : 0.78}
-                stroke={isSelected ? '#ffffff' : 'none'}
+                stroke={isSelected ? '#ffffff' : 'none'} 
                 strokeWidth={isSelected ? 1.5 : 0}
               >
                 <title>{node.title || node.id}</title>

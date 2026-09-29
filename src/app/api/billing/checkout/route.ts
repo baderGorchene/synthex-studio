@@ -16,7 +16,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Missing required field: tierId.' }, { status: 400 });
     }
 
-    const origin = req.headers.get('origin') || req.nextUrl.origin || 'http://localhost:3000';
+    const origin = process.env.NEXT_PUBLIC_APP_URL || req.nextUrl.origin;
 
     const session = await createCheckoutSession({
       userId: auth.user.id,
@@ -32,7 +32,7 @@ export async function POST(req: NextRequest) {
   } catch (error) {
     console.error('Checkout creation error:', error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Could not create checkout session.' },
+      { error: 'Could not create checkout session.' },
       { status: 500 }
     );
   }

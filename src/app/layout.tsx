@@ -1,6 +1,10 @@
 import type { Metadata } from "next";
+import { Schibsted_Grotesk } from "next/font/google";
 import { ClerkProvider } from "@clerk/nextjs";
 import "./globals.css";
+import "./typeset.css";
+
+const grotesk = Schibsted_Grotesk({ subsets: ["latin"], variable: "--font-grotesk" });
 
 export const metadata: Metadata = {
   title: "Synthex Studio — Grounded Semantic Knowledge Graph",
@@ -20,7 +24,7 @@ export default function RootLayout({
   const hasClerk = Boolean(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY);
 
   const bodyContent = (
-    <html lang="en" className="h-full antialiased">
+    <html lang="en" className={`h-full antialiased ${grotesk.variable}`}>
       <body className="h-full w-full overflow-hidden m-0 p-0 font-sans">
         {children}
       </body>
