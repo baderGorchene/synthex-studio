@@ -475,48 +475,6 @@ export async function neonSaveNode(node: CanvasNode, projectId = 'default'): Pro
   `;
 }
 
-export async function neonUpdateNodePosition(id: string, x: number, y: number, projectId = 'default'): Promise<void> {
-  await ensureNeonSchema();
-  const sql = getSql();
-  await sql`UPDATE nodes SET x = ${x}, y = ${y} WHERE id = ${id} AND project_id = ${projectId}`;
-}
-
-export async function neonUpdateMultipleNodePositions(
-  positions: { id: string; x: number; y: number }[],
-  projectId = 'default'
-): Promise<void> {
-  await ensureNeonSchema();
-  const sql = getSql();
-  if (positions.length === 0) return;
-  await Promise.all(
-    positions.map(p => sql`UPDATE nodes SET x = ${p.x}, y = ${p.y} WHERE id = ${p.id} AND project_id = ${projectId}`)
-  );
-}
-
-export async function neonUpdateNode(id: string, fields: Partial<CanvasNode>, projectId = 'default'): Promise<void> {
-  await ensureNeonSchema();
-  const sql = getSql();
-  const rows = (await sql`SELECT * FROM nodes WHERE id = ${id} AND project_id = ${projectId} LIMIT 1`) as unknown as RawNeonNode[];
-  if (rows.length === 0) return;
-  const existing = mapNeonNode(rows[0]);
-
-  const updated: CanvasNode = {
-    ...existing,
-    ...fields,
-    id,
-    createdAt: existing.createdAt
-  };
-
-  await neonSaveNode(updated, projectId);
-}
-
-export async function neonDeleteNode(id: string, projectId = 'default'): Promise<void> {
-  await ensureNeonSchema();
-  const sql = getSql();
-  await sql`DELETE FROM nodes WHERE id = ${id} AND project_id = ${projectId}`;
-  await sql`DELETE FROM connections WHERE (from_node = ${id} OR to_node = ${id}) AND project_id = ${projectId}`;
-}
-
 // ============================================================================
 // Connections
 // ============================================================================
@@ -592,28 +550,6 @@ export async function neonSaveConnection(conn: Connection, projectId = 'default'
       animated = EXCLUDED.animated,
       metadata = EXCLUDED.metadata
   `;
-}
-
-export async function neonUpdateConnection(id: string, fields: Partial<Connection>, projectId = 'default'): Promise<void> {
-  await ensureNeonSchema();
-  const sql = getSql();
-  const rows = (await sql`SELECT * FROM connections WHERE id = ${id} AND project_id = ${projectId} LIMIT 1`) as unknown as RawNeonConnection[];
-  if (rows.length === 0) return;
-  const existing = mapNeonConnection(rows[0]);
-
-  const updated: Connection = {
-    ...existing,
-    ...fields,
-    id
-  };
-
-  await neonSaveConnection(updated, projectId);
-}
-
-export async function neonDeleteConnection(id: string, projectId = 'default'): Promise<void> {
-  await ensureNeonSchema();
-  const sql = getSql();
-  await sql`DELETE FROM connections WHERE id = ${id} AND project_id = ${projectId}`;
 }
 
 export async function neonBulkSaveCanvas(

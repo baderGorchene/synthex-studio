@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import path from 'path';
 import fs from 'fs/promises';
+import { getServerAuth } from '@/lib/auth';
+import { userHasProjectAccess } from '@/lib/db';
 
 // Max file upload limit: 50MB
 const MAX_UPLOAD_SIZE = 50 * 1024 * 1024;
@@ -22,10 +24,17 @@ export async function POST(request: Request) {
       );
     }
 
+    const auth = await getServerAuth();
+    const userId = auth.user?.id || auth.userId;
+    if (!auth.isLocal && !userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
     // Sanitize projectId to prevent path traversal
     const projectId = typeof rawProjectId === 'string'
       ? rawProjectId.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 80) || 'default'
       : 'default';
+    if (!(await userHasProjectAccess(projectId, userId, auth.orgId, auth.clerkId))) {
+      return NextResponse.json({ error: 'Project not found.' }, { status: 404 });
+    }
 
     // Get original filename and safe extension
     const rawName = 'name' in file && typeof file.name === 'string' ? file.name : 'upload';

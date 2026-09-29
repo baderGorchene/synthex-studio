@@ -77,42 +77,6 @@ export async function uploadBufferToGcs(
 /**
  * Generate a v4 signed URL for temporary direct read access to a private research document
  */
-export async function getGcsSignedDownloadUrl(
-  destinationPath: string,
-  expiresInMinutes = 60
-): Promise<string> {
-  const bucketName = getGcsBucketName();
-  try {
-    const storage = await getStorageClient();
-    const bucket = storage.bucket(bucketName);
-    const file = bucket.file(destinationPath);
-
-    const [url] = await file.getSignedUrl({
-      version: 'v4',
-      action: 'read',
-      expires: Date.now() + expiresInMinutes * 60 * 1000
-    });
-
-    return url;
-  } catch {
-    // Fallback URL if signed URL generation is unavailable
-    return `https://storage.googleapis.com/${bucketName}/${destinationPath}`;
-  }
-}
-
 /**
  * Delete a document from the GCS bucket
- */
-export async function deleteGcsObject(destinationPath: string): Promise<boolean> {
-  const bucketName = getGcsBucketName();
-  try {
-    const storage = await getStorageClient();
-    const bucket = storage.bucket(bucketName);
-    const file = bucket.file(destinationPath);
-    await file.delete({ ignoreNotFound: true });
-    return true;
-  } catch (err) {
-    console.warn(`Failed to delete object "${destinationPath}" from GCS:`, err);
-    return false;
-  }
-}
+ */

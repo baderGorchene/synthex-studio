@@ -34,6 +34,10 @@ export async function POST(req: NextRequest) {
 
     // 1. Free Trial: instant activation without payment details
     if (plan === 'trial') {
+      // One trial per account; re-selecting would reset credits to 100 indefinitely.
+      if (auth.user.trialEndsAt || auth.user.subscriptionTier !== 'none') {
+        return NextResponse.json({ error: 'The free trial has already been used on this account.' }, { status: 409 });
+      }
       const trialEndsAt = Date.now() + 3 * 24 * 60 * 60 * 1000; // 3 days
       await updateUserSubscription(auth.user.id, {
         subscriptionTier: 'trial',
@@ -53,7 +57,7 @@ export async function POST(req: NextRequest) {
 
     // 2. Paid tiers (byok, pro, team)
     if (isStripeConfigured()) {
-      const origin = req.headers.get('origin') || req.nextUrl.origin || 'http://localhost:3000';
+      const origin = process.env.NEXT_PUBLIC_APP_URL || req.nextUrl.origin;
       const session = await createCheckoutSession({
         userId: auth.user.id,
         userEmail: auth.user.email,
@@ -71,7 +75,10 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // 3. Dev / Mock fallback if Stripe is not configured
+    // 3. Dev / Mock fallback if Stripe is not configured. Never hand out paid tiers for free in production.
+    if (process.env.NODE_ENV === 'production') {
+      return NextResponse.json({ error: 'Billing is not configured.' }, { status: 503 });
+    }
     const tierMeta = SUBSCRIPTION_TIERS[plan];
     const credits = tierMeta ? tierMeta.creditsMonthly : (plan === 'team' ? 5000 : plan === 'pro' ? 1500 : 0);
     await updateUserSubscription(auth.user.id, {

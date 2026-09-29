@@ -1,21 +1,28 @@
 import { NextResponse } from 'next/server';
+import { lookup } from 'node:dns/promises';
+import { BlockList, isIP } from 'node:net';
 
-function isPrivateIp(hostname: string): boolean {
-  if (
-    hostname === 'localhost' ||
-    hostname === '127.0.0.1' ||
-    hostname === '::1' ||
-    hostname.endsWith('.local') ||
-    hostname.endsWith('.internal')
-  ) {
-    return true;
+const blocked = new BlockList();
+for (const [net, prefix] of [
+  ['0.0.0.0', 8], ['10.0.0.0', 8], ['100.64.0.0', 10], ['127.0.0.0', 8], ['169.254.0.0', 16],
+  ['172.16.0.0', 12], ['192.0.0.0', 24], ['192.168.0.0', 16], ['198.18.0.0', 15], ['224.0.0.0', 3]
+] as const) blocked.addSubnet(net, prefix, 'ipv4');
+for (const [net, prefix] of [
+  ['::', 127], ['64:ff9b::', 96], ['fc00::', 7], ['fe80::', 10], ['ff00::', 8]
+] as const) blocked.addSubnet(net, prefix, 'ipv6');
+
+// Resolves the host and rejects it if ANY address is non-public (covers decimal/hex IPs,
+// IPv4-mapped IPv6 (BlockList maps it onto the IPv4 rules) and hostnames that point at internal addresses).
+// ponytail: DNS is resolved again by fetch, so a rebinding attacker could still race it; pin the IP with a custom agent if that matters.
+async function isPublicHost(hostname: string): Promise<boolean> {
+  const host = hostname.replace(/^\[|\]$/g, '');
+  if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local') || host.endsWith('.internal')) return false;
+  try {
+    const addresses = isIP(host) ? [{ address: host, family: isIP(host) }] : await lookup(host, { all: true });
+    return addresses.length > 0 && addresses.every(({ address, family }) => !blocked.check(address, family === 6 ? 'ipv6' : 'ipv4'));
+  } catch {
+    return false;
   }
-  // IPv4 private ranges
-  if (/^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname)) return true;
-  if (/^192\.168\.\d{1,3}\.\d{1,3}$/.test(hostname)) return true;
-  if (/^172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}$/.test(hostname)) return true;
-  if (/^169\.254\.\d{1,3}\.\d{1,3}$/.test(hostname)) return true; // link-local
-  return false;
 }
 
 function resolveUrl(relativeOrAbsolute: string | undefined, baseUrl: string): string | undefined {
@@ -62,7 +69,7 @@ export async function GET(request: Request) {
     const domain = parsedUrl.hostname.replace(/^www\./i, '');
     const googleFavicon = `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=128`;
 
-    if (isPrivateIp(parsedUrl.hostname)) {
+    if (!(await isPublicHost(parsedUrl.hostname))) {
       return NextResponse.json({ error: 'Access to private network addresses is forbidden.' }, { status: 403 });
     }
 
@@ -123,19 +130,31 @@ export async function GET(request: Request) {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 4500);
 
-      const response = await fetch(parsedUrl.href, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-          'Accept-Language': 'en-US,en;q=0.9'
-        },
-        signal: controller.signal,
-        redirect: 'follow'
-      });
+      // Follow redirects by hand so every hop goes through the private-address check.
+      let currentUrl = parsedUrl;
+      let response: Response | null = null;
+      for (let hop = 0; hop <= 5; hop++) {
+        if (hop > 0 && !(await isPublicHost(currentUrl.hostname))) break;
+        response = await fetch(currentUrl.href, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.9'
+          },
+          signal: controller.signal,
+          redirect: 'manual'
+        });
+        const location = response.headers.get('location');
+        if (response.status < 300 || response.status >= 400 || !location) break;
+        const next = new URL(location, currentUrl);
+        if (next.protocol !== 'http:' && next.protocol !== 'https:') break;
+        currentUrl = next;
+        response = null;
+      }
 
       clearTimeout(timeoutId);
 
-      if (!response.ok) {
+      if (!response || !response.ok) {
         return NextResponse.json(result);
       }
 
@@ -200,11 +219,11 @@ export async function GET(request: Request) {
 
       const rawImage = ogImage || twitterImage;
       if (rawImage) {
-        result.image = resolveUrl(rawImage, parsedUrl.href);
+        result.image = resolveUrl(rawImage, currentUrl.href);
       }
 
       if (iconHref) {
-        const resolvedIcon = resolveUrl(iconHref, parsedUrl.href);
+        const resolvedIcon = resolveUrl(iconHref, currentUrl.href);
         if (resolvedIcon) {
           result.logo = resolvedIcon;
         }

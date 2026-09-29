@@ -9,7 +9,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Authentication required to access customer portal.' }, { status: 401 });
     }
 
-    const origin = req.headers.get('origin') || req.nextUrl.origin || 'http://localhost:3000';
+    const origin = process.env.NEXT_PUBLIC_APP_URL || req.nextUrl.origin;
 
     if (!auth.user.stripeCustomerId) {
       // In offline/dev or before first payment

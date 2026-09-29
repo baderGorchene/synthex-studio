@@ -16,7 +16,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Missing required field: tierId.' }, { status: 400 });
     }
 
-    const origin = req.headers.get('origin') || req.nextUrl.origin || 'http://localhost:3000';
+    const origin = process.env.NEXT_PUBLIC_APP_URL || req.nextUrl.origin;
 
     const session = await createCheckoutSession({
       userId: auth.user.id,

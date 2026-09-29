@@ -108,10 +108,6 @@ function geminiKey(): string {
   return (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '').trim().replace(/^[\"']|[\"']$/g, '');
 }
 
-export function isAIConfigured(): boolean {
-  return Boolean(openAiKey() || geminiKey());
-}
-
 // Track whether fallback was triggered during the active server session
 let hasSwitchedToFallback = false;
 
