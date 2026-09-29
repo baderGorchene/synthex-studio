@@ -273,94 +273,187 @@ export default function MarketingLandingPage() {
           </div>
 
           {/* Canvas Work Area with Cards and SVG Connectors */}
-          <div className="landing-sheet-frame relative min-h-[380px] bg-white rounded-xl border border-[#d9d9d9] p-4 sm:p-6 overflow-x-auto">
-            {/* SVG Connector Overlay */}
-            <svg className="absolute inset-0 w-full h-full pointer-events-none z-0">
-              <defs>
-                <linearGradient id="edgeGrad1" x1="0%" y1="0%" x2="100%" y2="0%">
-                  <stop offset="0%" stopColor="#284b63" stopOpacity="0.8" />
-                  <stop offset="100%" stopColor="#3c6e71" stopOpacity="0.8" />
-                </linearGradient>
-                <linearGradient id="edgeGrad2" x1="0%" y1="0%" x2="100%" y2="0%">
-                  <stop offset="0%" stopColor="#3c6e71" stopOpacity="0.8" />
-                  <stop offset="100%" stopColor="#fbbf24" stopOpacity="0.8" />
-                </linearGradient>
-              </defs>
-              {/* Connector from Concept to Claim 1 */}
-              <path
-                d="M 260 115 C 300 115, 310 75, 340 75"
-                fill="none"
-                stroke="url(#edgeGrad1)"
-                strokeWidth="2"
-                strokeDasharray="4 4"
-                className="landing-edge-flow"
-              />
-              {/* Connector from Concept to Claim 2 */}
-              <path
-                d="M 260 145 C 300 145, 305 240, 340 240"
-                fill="none"
-                stroke="url(#edgeGrad1)"
-                strokeWidth="2"
-              />
-              {/* Connector from Claim 1 to Source */}
-              <path
-                d="M 570 75 C 600 75, 610 140, 640 140"
-                fill="none"
-                stroke="url(#edgeGrad2)"
-                strokeWidth="2"
-                strokeDasharray="6 3"
-              />
-            </svg>
+          {(() => {
+            // --- Graph layout constants ---
+            const CARD_W = 220;
+            const CARD_H = 140;
+            const PAD = 24; // internal canvas padding
 
-            {/* Interactive Cards Container */}
-            <div className="relative z-10 flex flex-col md:flex-row gap-6 min-w-[700px] justify-between items-start py-4">
-              {demoNodes.map(node => {
-                if (demoFilter === 'claims' && node.type !== 'claim') return null;
-                if (demoFilter === 'sources' && node.type !== 'source') return null;
-                const isSelected = selectedDemoNode === node.id;
+            // Positions: staggered 2-row layout for a proper graph feel
+            const nodePositions: Record<string, { x: number; y: number }> = {
+              'node-rag':     { x: PAD,            y: 100 },
+              'node-claim-1': { x: PAD + 280,      y: PAD },
+              'node-claim-2': { x: PAD + 280,      y: PAD + CARD_H + 50 },
+              'node-source':  { x: PAD + 280 + 280, y: 80 },
+            };
 
-                return (
-                  <div
-                    key={node.id}
-                    onClick={() => setSelectedDemoNode(node.id)}
-                    onKeyDown={event => {
-                      if (event.key === 'Enter' || event.key === ' ') {
-                        event.preventDefault();
-                        setSelectedDemoNode(node.id);
-                      }
-                    }}
-                    role="button"
-                    tabIndex={0}
-                    aria-pressed={isSelected}
-                    aria-label={`Inspect ${node.title}`}
-                    className={`cursor-pointer w-64 p-4 rounded-xl border transition-all duration-200 select-none bg-white shadow-lg ${
-                      isSelected
-                        ? 'border-[#3c6e71] ring-2 ring-[#3c6e71]/25 -translate-y-1 shadow-[#284b63]/10'
-                        : 'border-[#d9d9d9] hover:border-[#b8c2bf] hover:-translate-y-0.5'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-[#f7f8f7] text-[#4f5d5b]">
-                        {node.badge}
-                      </span>
-                      {node.status === 'supported' && (
-                        <span className="flex items-center gap-1 text-[11px] font-semibold text-[#167256]">
-                          <CheckCircle2 size={12} /> Supported
-                        </span>
-                      )}
-                    </div>
-                    <h4 className="text-sm font-semibold text-[#353535] leading-snug">{node.title}</h4>
-                    <p className="text-xs text-[#64706f] mt-1 leading-normal">{node.subtitle}</p>
+            // Edge definitions with labels
+            const demoEdges = [
+              { from: 'node-rag', to: 'node-claim-1', label: 'generates', color: '#284b63', dashed: true },
+              { from: 'node-rag', to: 'node-claim-2', label: 'generates', color: '#284b63', dashed: false },
+              { from: 'node-claim-1', to: 'node-source', label: 'cited by', color: '#3c6e71', dashed: true },
+              { from: 'node-claim-2', to: 'node-source', label: 'grounded in', color: '#8a5a00', dashed: false },
+            ];
 
-                    <div className="mt-3 pt-2.5 border-t border-[#d9d9d9] flex items-center justify-between text-[11px] text-[#64706f]">
-                      <span>Click to inspect</span>
-                      <ArrowRight size={11} className={isSelected ? 'text-[#3c6e71]' : 'text-[#64706f]'} />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
+            const CANVAS_W = PAD + 280 + 280 + CARD_W + PAD;
+            const CANVAS_H = PAD + CARD_H + 50 + CARD_H + PAD + 20;
+
+            // Filter visible nodes
+            const visibleNodes = demoNodes.filter(n => {
+              if (demoFilter === 'claims' && n.type !== 'claim') return false;
+              if (demoFilter === 'sources' && n.type !== 'source') return false;
+              return true;
+            });
+            const visibleIds = new Set(visibleNodes.map(n => n.id));
+
+            // Filter visible edges (both endpoints must be visible)
+            const visibleEdges = demoEdges.filter(e => visibleIds.has(e.from) && visibleIds.has(e.to));
+
+            return (
+              <div className="landing-sheet-frame relative bg-white rounded-xl border border-[#d9d9d9] overflow-x-auto">
+                <div className="relative" style={{ width: CANVAS_W, height: CANVAS_H, minWidth: CANVAS_W }}>
+                  {/* Subtle dot grid background */}
+                  <svg className="absolute inset-0 w-full h-full pointer-events-none opacity-[0.35]">
+                    <defs>
+                      <pattern id="demo-dot-grid" x="0" y="0" width="20" height="20" patternUnits="userSpaceOnUse">
+                        <circle cx="1" cy="1" r="0.8" fill="#9ca3af" />
+                      </pattern>
+                    </defs>
+                    <rect width="100%" height="100%" fill="url(#demo-dot-grid)" />
+                  </svg>
+
+                  {/* SVG Connector Overlay */}
+                  <svg className="absolute inset-0 pointer-events-none z-[1]" width={CANVAS_W} height={CANVAS_H} viewBox={`0 0 ${CANVAS_W} ${CANVAS_H}`}>
+                    <defs>
+                      <marker id="demo-arrow-dark" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
+                        <path d="M 0 0 L 8 3 L 0 6 Z" fill="#284b63" />
+                      </marker>
+                      <marker id="demo-arrow-teal" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
+                        <path d="M 0 0 L 8 3 L 0 6 Z" fill="#3c6e71" />
+                      </marker>
+                      <marker id="demo-arrow-amber" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
+                        <path d="M 0 0 L 8 3 L 0 6 Z" fill="#8a5a00" />
+                      </marker>
+                    </defs>
+
+                    {visibleEdges.map((edge, i) => {
+                      const from = nodePositions[edge.from];
+                      const to = nodePositions[edge.to];
+                      if (!from || !to) return null;
+
+                      // Connection points: right edge of source card → left edge of target card
+                      const x1 = from.x + CARD_W;
+                      const y1 = from.y + CARD_H / 2;
+                      const x2 = to.x;
+                      const y2 = to.y + CARD_H / 2;
+
+                      // Bézier control points for smooth curves
+                      const dx = (x2 - x1) * 0.5;
+                      const cx1 = x1 + dx;
+                      const cy1 = y1;
+                      const cx2 = x2 - dx;
+                      const cy2 = y2;
+
+                      const pathD = `M ${x1} ${y1} C ${cx1} ${cy1}, ${cx2} ${cy2}, ${x2} ${y2}`;
+
+                      // Label position at the midpoint of the curve
+                      const labelX = (x1 + x2) / 2;
+                      const labelY = (y1 + y2) / 2 - 8;
+
+                      const markerId = edge.color === '#284b63' ? 'demo-arrow-dark' : edge.color === '#3c6e71' ? 'demo-arrow-teal' : 'demo-arrow-amber';
+
+                      return (
+                        <g key={`edge-${i}`}>
+                          <path
+                            d={pathD}
+                            fill="none"
+                            stroke={edge.color}
+                            strokeWidth="2"
+                            strokeDasharray={edge.dashed ? '6 4' : 'none'}
+                            strokeOpacity="0.7"
+                            markerEnd={`url(#${markerId})`}
+                            className="landing-edge-flow"
+                          />
+                          {/* Edge label pill */}
+                          <rect
+                            x={labelX - 32}
+                            y={labelY - 8}
+                            width="64"
+                            height="16"
+                            rx="8"
+                            fill="white"
+                            stroke={edge.color}
+                            strokeWidth="1"
+                            strokeOpacity="0.3"
+                          />
+                          <text
+                            x={labelX}
+                            y={labelY + 4}
+                            textAnchor="middle"
+                            fill={edge.color}
+                            fontSize="9"
+                            fontWeight="600"
+                            fontFamily="inherit"
+                            opacity="0.9"
+                          >
+                            {edge.label}
+                          </text>
+                        </g>
+                      );
+                    })}
+                  </svg>
+
+                  {/* Absolutely positioned cards */}
+                  {visibleNodes.map(node => {
+                    const pos = nodePositions[node.id];
+                    if (!pos) return null;
+                    const isSelected = selectedDemoNode === node.id;
+
+                    return (
+                      <div
+                        key={node.id}
+                        onClick={() => setSelectedDemoNode(node.id)}
+                        onKeyDown={event => {
+                          if (event.key === 'Enter' || event.key === ' ') {
+                            event.preventDefault();
+                            setSelectedDemoNode(node.id);
+                          }
+                        }}
+                        role="button"
+                        tabIndex={0}
+                        aria-pressed={isSelected}
+                        aria-label={`Inspect ${node.title}`}
+                        className={`absolute z-10 cursor-pointer p-4 rounded-xl border transition-all duration-200 select-none bg-white shadow-lg ${
+                          isSelected
+                            ? 'border-[#3c6e71] ring-2 ring-[#3c6e71]/25 -translate-y-1 shadow-xl shadow-[#284b63]/10'
+                            : 'border-[#d9d9d9] hover:border-[#b8c2bf] hover:-translate-y-0.5 hover:shadow-xl'
+                        }`}
+                        style={{ left: pos.x, top: pos.y, width: CARD_W, minHeight: CARD_H }}
+                      >
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-[#f7f8f7] text-[#4f5d5b]">
+                            {node.badge}
+                          </span>
+                          {node.status === 'supported' && (
+                            <span className="flex items-center gap-1 text-[11px] font-semibold text-[#167256]">
+                              <CheckCircle2 size={12} /> Supported
+                            </span>
+                          )}
+                        </div>
+                        <h4 className="text-[13px] font-semibold text-[#353535] leading-snug">{node.title}</h4>
+                        <p className="text-[11px] text-[#64706f] mt-1 leading-normal line-clamp-2">{node.subtitle}</p>
+
+                        <div className="mt-auto pt-2.5 border-t border-[#d9d9d9] flex items-center justify-between text-[11px] text-[#64706f]">
+                          <span>Click to inspect</span>
+                          <ArrowRight size={11} className={isSelected ? 'text-[#3c6e71]' : 'text-[#64706f]'} />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })()}
 
           {/* Interactive Inspection Ribbon */}
           <div className="mt-4 p-3 rounded-lg bg-white border border-[#d9d9d9] flex flex-col sm:flex-row items-center justify-between text-xs text-[#4f5d5b] gap-3">
