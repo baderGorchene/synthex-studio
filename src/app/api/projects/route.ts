@@ -18,7 +18,7 @@ export async function GET() {
     if (projects.length === 0 && userId) {
       const starter = await createProjectInDb(
         `project-${randomUUID()}`,
-        'Research workspace',
+        'Synthex Studio Guide',
         'rag',
         userId,
         orgId
