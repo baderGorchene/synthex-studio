@@ -2,18 +2,18 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import {
-  ArrowDownToLine, ArrowRight, BookOpenText, Check, ChevronDown, CircleHelp, Clock3,
+  ArrowRight, BookOpenText, Check, ChevronDown, CircleHelp, Clock3,
   Compass, FileClock, FileJson2, Files, FileText, FolderArchive, FolderKanban, GitBranch,
-  History, Image as ImageIcon, Layers2, LoaderCircle, MessageCircle, Network, Plus, Redo2,
-  Search, Send, Shapes, SlidersHorizontal, Sparkles, Trash2, Undo2, Upload, Wrench, X, Zap
+  History, Image as ImageIcon, Layers2, LoaderCircle, MessageCircle, Plus, Redo2,
+  Search, Send, Shapes, Share, Square, SlidersHorizontal, Sparkles, Trash2, Undo2, Upload, Wrench, X, Zap
 } from 'lucide-react';
 import { GraphCanvas, membersOf } from '@/components/research/GraphCanvas';
 import { KnowledgeViews } from '@/components/research/KnowledgeViews';
 import { NodeInspector } from '@/components/research/NodeInspector';
 import { CustomSelect } from '@/components/research/CustomSelect';
-import { CanvasToolDock, addableRecords, type ResearchProject, type WorkspaceSection } from '@/components/research/WorkspaceSidebar';
+import { CanvasToolDock, type ResearchProject, type WorkspaceSection } from '@/components/research/WorkspaceSidebar';
 import { extractYouTubeVideoId } from '@/components/research/SourceMetadata';
-import { addNode, addRelationship, exportContextMarkdown, exportGraphJson, exportMermaid, normalizeGraph, removeNode, updateNode, updateRelationship, type KnowledgeGraph } from '@/lib/graph';
+import { addNode, addRelationship, exportContextMarkdown, exportGraphJson, exportMermaid, normalizeGraph, removeNode, strokeForLabel, updateNode, updateRelationship, type KnowledgeGraph } from '@/lib/graph';
 import { parseBibTeX, bibEntriesToCanvasNodes } from '@/lib/bibtex';
 import { generateStandaloneSvg, exportGraphToPng } from '@/lib/canvas-export';
 import type { CanvasNode, CanvasNodeType, Connection, Coordinates, GraphRevisionSummary, ResearchChange, ResearchSession } from '@/types/canvas';
@@ -21,6 +21,7 @@ import { ELEMENT_PALETTE } from '@/types/canvas';
 import type { AIStatus } from '@/lib/ai-service';
 import { ChatToolCard } from '@/components/research/ChatToolCard';
 import { MarkdownView } from '@/components/research/MarkdownView';
+import { DocumentPane } from '@/components/research/DocumentPane';
 import { LiveResearchCard, type ResearchLiveProgress } from '@/components/research/LiveResearchCard';
 import type { ChatToolCall } from '@/types/chat-tools';
 import { computeOrganizedLayout } from '@/lib/graph-organizer';
@@ -43,7 +44,7 @@ type ChatLine = {
   isStreaming?: boolean;
   researchProgress?: ResearchLiveProgress;
 };
-type Modal = 'research' | 'chat' | 'project' | 'search' | 'credits' | null;
+type Modal = 'chat' | 'project' | 'search' | 'credits' | null;
 
 const blankGraph = (): KnowledgeGraph => normalizeGraph([], []);
 const newId = () => globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -67,6 +68,32 @@ function downloadText(filename: string, content: string, type = 'text/plain;char
 
 const plural = (count: number, singular: string, many = `${singular}s`) => `${count} ${count === 1 ? singular : many}`;
 
+// A new note takes its title from its first line until the person names it themselves.
+function withAutoTitle(node: CanvasNode | undefined, fields: Partial<CanvasNode>): Partial<CanvasNode> {
+  if (!node || node.metadata?.autoTitle !== true) return fields;
+  if (fields.title !== undefined) return { ...fields, metadata: { ...node.metadata, ...fields.metadata, autoTitle: false } };
+  const firstLine = fields.content?.split(/\r?\n/).find(line => line.trim())?.replace(/^[#>*\-\s]+/, '').trim().slice(0, 80);
+  return firstLine ? { ...fields, title: firstLine } : fields;
+}
+
+type Layout = 'map' | 'split' | 'doc';
+const LAYOUTS: Array<[Layout, string]> = [['map', 'Map'], ['split', 'Map + Doc'], ['doc', 'Doc']];
+const MORE_VIEWS: Array<[WorkspaceSection, string, string]> = [
+  ['evidence', 'Evidence paths', 'How sources back each claim'],
+  ['table', 'Claims & questions', 'Every assertion in one table'],
+  ['sources', 'Sources', 'Everything the map cites'],
+  ['questions', 'Open questions', 'What is still unanswered'],
+  ['history', 'Research history', 'Every research run and its drafts'],
+  ['revisions', 'Revisions', 'Snapshots you can restore']
+];
+
+const STARTERS = [
+  { label: 'Map the evidence on sleep and memory', kind: 'Research question', prompt: 'How does sleep affect memory? What is well supported and what is still debated?' },
+  { label: 'Plan a video essay on urban heat islands', kind: 'Creator brief', prompt: 'Plan a video essay on urban heat islands: causes, who is most affected, and what cities are doing about it.' },
+  { label: 'Weigh three pricing models for a SaaS product', kind: 'Work decision', prompt: 'Compare per-seat, usage-based and flat-rate pricing for a B2B SaaS product: trade-offs, risks, and when each fits.' },
+  { label: 'Turn a topic into a revision map', kind: 'Study notes', prompt: 'Build a revision map of the causes and consequences of the French Revolution.' }
+];
+
 export default function SynthexWorkspace() {
   const [projects, setProjects] = useState<ResearchProject[]>([]);
   const [projectId, setProjectId] = useState<string>(() => {
@@ -78,6 +105,14 @@ export default function SynthexWorkspace() {
   const [graph, setGraph] = useState<KnowledgeGraph>(blankGraph);
   const [sessions, setSessions] = useState<ResearchSession[]>([]);
   const [section, setSection] = useState<WorkspaceSection>('canvas');
+  const [layout, setLayout] = useState<Layout>(() => {
+    if (typeof window === 'undefined') return 'map';
+    try { const saved = localStorage.getItem('synthex_layout'); return saved === 'split' || saved === 'doc' ? saved : 'map'; } catch { return 'map'; }
+  });
+  const chooseLayout = useCallback((value: Layout) => {
+    setLayout(value);
+    try { localStorage.setItem('synthex_layout', value); } catch { /* per-viewer convenience only */ }
+  }, []);
   const [loading, setLoading] = useState(true);
   const [loadedProject, setLoadedProject] = useState('');
   const [spacePressed, setSpacePressed] = useState(false);
@@ -144,8 +179,11 @@ export default function SynthexWorkspace() {
     window.addEventListener('pointerdown', handlePointerDown, true);
     return () => window.removeEventListener('pointerdown', handlePointerDown, true);
   }, [navMenuOpen, projectMenuOpen, exportMenu, addRecordMenuOpen, showToolsMenu]);
-  const [researchQuery, setResearchQuery] = useState('');
-  const [researchMode, setResearchMode] = useState<'quick' | 'deep'>('quick');
+  const [composerText, setComposerText] = useState('');
+  const [composerMode, setComposerMode] = useState<'quick' | 'deep'>('quick');
+  const composerRef = useRef<HTMLTextAreaElement | HTMLInputElement | null>(null);
+  const researchAbort = useRef<AbortController | null>(null);
+  const [detachingIds, setDetachingIds] = useState<string[]>([]);
   const [researching, setResearching] = useState(false);
   const [chatInput, setChatInput] = useState('');
   const [chatBusy, setChatBusy] = useState(false);
@@ -389,16 +427,23 @@ export default function SynthexWorkspace() {
 
   const deleteNodes = useCallback((ids: string[]) => {
     if (ids.length === 0) return;
-    updateGraph(current => {
-      let next = current;
-      for (const id of ids) {
-        next = removeNode(next, id);
-      }
-      return next;
-    });
+    const remove = () => {
+      updateGraph(current => {
+        let next = current;
+        for (const id of ids) {
+          if (next.nodesById[id]) next = removeNode(next, id);
+        }
+        return next;
+      });
+      setDetachingIds(current => current.filter(id => !ids.includes(id)));
+    };
     setSelectedIds(current => current.filter(id => !ids.includes(id)));
     if (editingNoteId && ids.includes(editingNoteId)) setEditingNoteId(null);
-    announce(ids.length === 1 ? 'Record deleted.' : `${ids.length} records deleted.`);
+    announce(ids.length === 1 ? 'Removed from the map. Undo with Ctrl+Z.' : `${ids.length} ideas removed. Undo with Ctrl+Z.`);
+    // Let the pin pop and the note drop (typeset.css) before the node leaves the graph.
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) { remove(); return; }
+    setDetachingIds(current => [...current, ...ids]);
+    setTimeout(remove, 580);
   }, [announce, updateGraph, editingNoteId]);
 
   const deleteSelected = useCallback(() => {
@@ -438,7 +483,36 @@ export default function SynthexWorkspace() {
   const edges = useMemo(() => Object.values(graph.edgesById), [graph]);
   const selectedNode = selectedIds.length === 1 ? graph.nodesById[selectedIds[0]] : undefined;
   const project = projects.find(item => item.id === projectId);
-  const pendingCount = sessions.reduce((sum, session) => sum + session.changes.filter(change => change.status === 'pending').length, 0);
+
+
+  // Draft layer: the newest research run with undecided changes sits on the board in proof blue.
+  const draftSession = useMemo(
+    () => [...sessions].sort((a, b) => b.createdAt - a.createdAt).find(session => session.changes.some(change => change.status === 'pending')),
+    [sessions]
+  );
+  const { displayGraph, draftIds } = useMemo(() => {
+    if (!draftSession) return { displayGraph: graph, draftIds: undefined };
+    const nodesById = { ...graph.nodesById };
+    const edgesById = { ...graph.edgesById };
+    const ids = new Set<string>();
+    const pending = draftSession.changes.filter(change => change.status === 'pending');
+    for (const change of pending) {
+      if (change.kind !== 'node') continue;
+      const node = change.payload as CanvasNode;
+      nodesById[node.id] = node;
+      ids.add(node.id);
+    }
+    for (const change of pending) {
+      if (change.kind !== 'relationship') continue;
+      const edge = change.payload as Connection;
+      if (!nodesById[edge.from] || !nodesById[edge.to]) continue;
+      edgesById[edge.id] = edge;
+      ids.add(edge.id);
+    }
+    return { displayGraph: { nodesById, edgesById }, draftIds: ids };
+  }, [graph, draftSession]);
+  const draftNodeCount = draftSession?.changes.filter(change => change.status === 'pending' && change.kind === 'node').length ?? 0;
+  const draftSourceCount = draftSession?.changes.filter(change => change.status === 'pending' && change.kind === 'node' && (change.payload as CanvasNode).type === 'source').length ?? 0;
   const searchResults = useMemo(() => {
     const needle = searchQuery.trim().toLowerCase();
     return needle ? nodes.filter(node => `${node.title} ${node.content || ''} ${node.description || ''} ${node.url || ''} ${node.type}`.toLowerCase().includes(needle)).slice(0, 30) : [];
@@ -458,12 +532,13 @@ export default function SynthexWorkspace() {
       title: initialData?.title || labels[type] || 'New knowledge',
       color: initialData?.color || (type === 'question' ? 'terracotta' : 'neutral'),
       createdAt: now,
-      metadata: { origin: 'user', ...(type === 'claim' ? { claimStatus: 'unverified' as const } : {}), ...initialData?.metadata },
+      metadata: { origin: 'user', ...(type === 'claim' ? { claimStatus: 'unverified' as const } : {}), ...(type === 'note' && !initialData?.title ? { autoTitle: true } : {}), ...initialData?.metadata },
       ...initialData
     };
     try {
       updateGraph(current => addNode(current, node));
       setSelectedIds([node.id]);
+      if (type === 'note') setEditingNoteId(node.id);
       setSection('canvas');
       setDrawerTab('inspector');
       setRightDrawerOpen(true);
@@ -494,7 +569,7 @@ export default function SynthexWorkspace() {
         setRightDrawerOpen(true);
         return;
       }
-      if (event.key === 'Escape') { setModal(null); setActiveSession(null); setLinkingFromId(null); setEditingNoteId(null); setGroupCanvasId(null); setTool('select'); }
+      if (event.key === 'Escape') { setModal(null); setActiveSession(null); setLinkingFromId(null); setEditingNoteId(null); setGroupCanvasId(null); setTool('select'); setRightDrawerOpen(false); }
       if (!typing && !target?.closest('button, a, [role="button"]')) {
         const key = event.key.toLowerCase();
         if (event.key === 'Delete' || event.key === 'Backspace') {
@@ -532,7 +607,7 @@ export default function SynthexWorkspace() {
           addRecord('group');
         } else if (key === 'r') {
           event.preventDefault();
-          setModal('research');
+          composerRef.current?.focus();
         } else if (event.key === '?' || (event.shiftKey && key === 'a')) {
           event.preventDefault();
           setDrawerTab('chat');
@@ -673,8 +748,8 @@ export default function SynthexWorkspace() {
         color: 'neutral',
         arrowhead: 'end',
         lineStyle: 'curved',
-        strokePattern: 'dashed',
-        animated: true
+        strokePattern: strokeForLabel(label || 'related_to'),
+        animated: false
       };
       updateGraph(current => addRelationship(current, edge));
       setLinkingFromId(null);
@@ -706,7 +781,7 @@ export default function SynthexWorkspace() {
 
   const updateSelectedNode = (fields: Partial<CanvasNode>) => {
     if (!selectedNode) return;
-    updateGraph(current => updateNode(current, selectedNode.id, fields), false);
+    updateGraph(current => updateNode(current, selectedNode.id, withAutoTitle(current.nodesById[selectedNode.id], fields)), false);
   };
 
   const reloadGraph = useCallback(async () => {
@@ -737,28 +812,6 @@ export default function SynthexWorkspace() {
       announce('Workspace created.');
     } catch (error) { announce(error instanceof Error ? error.message : 'Could not create workspace.'); }
     finally { setCreatingProject(false); }
-  }
-
-  async function runResearch(event: FormEvent) {
-    event.preventDefault();
-    if (!researchQuery.trim() || researching) return;
-    setResearching(true);
-    try {
-      const data = await readJson<{ session: ResearchSession }>(await fetch('/api/research', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectId, query: researchQuery.trim(), mode: researchMode })
-      }));
-      setResearchQuery(''); setActiveSession(data.session); setReviewDecisions({}); setModal(null);
-      await reloadHistory();
-      const usedFallback = data.session.trail?.some(t => t.includes('Fallback Triggered'));
-      if (usedFallback) {
-        announce('Note: OpenAI was unavailable; research generated via Gemini fallback.');
-        fetch('/api/ai/status', { cache: 'no-store' }).then(r => r.json()).then(setAiStatus).catch(() => { });
-      } else {
-        announce('Research proposals are ready for review.');
-      }
-    } catch (error) { announce(error instanceof Error ? error.message : 'Research could not complete.'); }
-    finally { setResearching(false); }
   }
 
   const executeStreamingResearch = useCallback(async (query: string, mode: 'quick' | 'deep') => {
@@ -796,6 +849,8 @@ export default function SynthexWorkspace() {
       }
     ]);
 
+    const controller = new AbortController();
+    researchAbort.current = controller;
     try {
       const response = await fetch('/api/research', {
         method: 'POST',
@@ -803,7 +858,8 @@ export default function SynthexWorkspace() {
           'Content-Type': 'application/json',
           'Accept': 'text/event-stream'
         },
-        body: JSON.stringify({ projectId, query, mode, stream: true })
+        body: JSON.stringify({ projectId, query, mode, stream: true }),
+        signal: controller.signal
       });
 
       if (!response.ok) {
@@ -963,7 +1019,8 @@ export default function SynthexWorkspace() {
                     setUserAuth(prev => prev ? { ...prev, contextCredits: eventData.creditsRemaining } : { contextCredits: eventData.creditsRemaining });
                   }
                   await reloadHistory();
-                  announce(`Research ready! ${session.changes.length} cards staged for review.`);
+                  setCanvasFitKey(value => value + 1);
+                  announce('Drafts are on your map. Keep what is right.');
                 } else if (eventType === 'error') {
                   throw new Error(eventData.error || 'Research failed.');
                 }
@@ -993,8 +1050,10 @@ export default function SynthexWorkspace() {
         };
         return updated;
       });
-      announce(err instanceof Error ? err.message : 'Research run failed.');
+      const stopped = err instanceof DOMException && err.name === 'AbortError';
+      announce(stopped ? 'Stopped. Nothing was added to your map.' : err instanceof Error ? err.message : 'Research run failed.');
     } finally {
+      researchAbort.current = null;
       setThinkingStep(null);
       setChatBusy(false);
       setResearching(false);
@@ -1200,6 +1259,15 @@ export default function SynthexWorkspace() {
     await executeStreamingResearch(query, mode);
   }, [executeStreamingResearch]);
 
+  const buildMap = useCallback((query: string) => {
+    const trimmed = query.trim().slice(0, 500);
+    if (!trimmed || researching) return;
+    if (!aiConfigured) { announce('AI is not set up on this server yet. Add OPENAI_API_KEY or GEMINI_API_KEY to build maps.'); return; }
+    setComposerText('');
+    setSection('canvas');
+    void handleExecuteResearch(trimmed, composerMode);
+  }, [researching, aiConfigured, announce, handleExecuteResearch, composerMode]);
+
   const handleApplyLayout = useCallback((positions: Array<{ id: string; x: number; y: number }>) => {
     updateGraph(current => {
       let next = current;
@@ -1256,7 +1324,7 @@ export default function SynthexWorkspace() {
             label: edge.label || 'related_to',
             lineStyle: 'curved',
             arrowhead: 'end',
-            strokePattern: 'solid',
+            strokePattern: strokeForLabel(edge.label),
             color: 'neutral',
             animated: false
           };
@@ -1330,7 +1398,8 @@ export default function SynthexWorkspace() {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ projectId, decisions })
       }));
-      setActiveSession(data.session); setReviewDecisions({});
+      // Only refresh the review dialog if it is open; "Keep all" from the draft bar must not pop it open.
+      setActiveSession(current => current ? data.session : null); setReviewDecisions({});
       await Promise.all([reloadHistory(), reloadGraph()]);
       fetch('/api/revisions', {
         method: 'POST',
@@ -1341,8 +1410,14 @@ export default function SynthexWorkspace() {
           title: `Research review applied (${decisions.filter(d => d.status === 'accepted').length} accepted)`
         })
       }).catch(() => { });
-      announce('Review saved. Accepted changes are now in the graph.');
+      const kept = decisions.filter(decision => decision.status === 'accepted').length;
+      announce(kept ? `Kept ${plural(kept, 'change')}. They are now part of your map.` : 'Drafts discarded.');
     } catch (error) { announce(error instanceof Error ? error.message : 'Could not save this review.'); }
+  }
+
+  function decideDrafts(status: 'accepted' | 'rejected') {
+    if (!draftSession) return;
+    void saveReview(draftSession, draftSession.changes.filter(change => change.status === 'pending').map(change => ({ changeId: change.id, status })));
   }
 
   function handleImport(event: React.ChangeEvent<HTMLInputElement>) {
@@ -1490,6 +1565,17 @@ export default function SynthexWorkspace() {
   function openSession(session: ResearchSession) { setActiveSession(session); setReviewDecisions({}); }
   function closeSession() { setActiveSession(null); setReviewDecisions({}); }
 
+  const liveProgress = researching ? chatLines[chatLines.length - 1]?.researchProgress : undefined;
+  const composerStatus = (
+    <div className="composer-status" role="status">
+      <div>
+        <strong>{thinkingStep || 'Reading your question…'}</strong>
+        <small>{plural(liveProgress?.sources.length ?? 0, 'source')} found · {composerMode === 'deep' ? 'Deep research' : 'Quick map'} · nothing joins your map until you keep it</small>
+      </div>
+      <button type="button" className="line-button" onClick={() => researchAbort.current?.abort()}><Square size={12} fill="currentColor" /> Stop</button>
+    </div>
+  );
+
   return (
     <div className={`workspace-shell ${section === 'canvas' ? 'full-canvas-shell' : ''}`}>
       {section === 'canvas' && (
@@ -1573,278 +1659,75 @@ export default function SynthexWorkspace() {
               )}
             </div>
 
-            <span className="topbar-slash" aria-hidden="true">/</span>
-
-            {/* View Navigation Menu Dropdown */}
-            <div className="menu-anchor topbar-nav-anchor" ref={navMenuRef}>
-              <button
-                className={`topbar-nav-trigger ${navMenuOpen ? 'is-open' : ''}`}
-                aria-label="Open navigation menu"
-                aria-expanded={navMenuOpen}
-                onClick={() => { setNavMenuOpen(v => !v); setProjectMenuOpen(false); setExportMenu(false); }}
-              >
-                <Compass size={13} className="nav-compass-icon" />
-                <span className="nav-trigger-label">
-                  {section === 'canvas' ? 'Knowledge graph' : section === 'outline' ? 'Outline' : section === 'evidence' ? 'Evidence paths' : section === 'table' ? 'Claims & questions' : section === 'sources' ? 'Sources' : section === 'questions' ? 'Open questions' : 'Research history'}
-                </span>
-                <ChevronDown size={11} className="nav-arrow" />
-                {pendingCount > 0 && <span className="nav-badge">{pendingCount}</span>}
-              </button>
-
-              {navMenuOpen && (
-                <div className="menu-popover topbar-navigation-menu" role="menu" aria-label="Views and navigation">
-                  <div className="nav-menu-group">
-                    <span className="nav-menu-heading">Research Spaces</span>
-                    <button className={`nav-menu-item ${section === 'canvas' ? 'is-active' : ''}`} onClick={() => { navigateTo('canvas'); setNavMenuOpen(false); }}>
-                      <Network size={15} />
-                      <div className="nav-item-content">
-                        <strong>Knowledge Graph</strong>
-                        <small>Interactive visual research canvas</small>
-                      </div>
-                      {section === 'canvas' && <Check size={13} className="active-tick" />}
-                    </button>
-                    <button className={`nav-menu-item ${section === 'outline' ? 'is-active' : ''}`} onClick={() => { navigateTo('outline'); setNavMenuOpen(false); }}>
-                      <BookOpenText size={15} />
-                      <div className="nav-item-content">
-                        <strong>Outline</strong>
-                        <small>Structured conceptual document</small>
-                      </div>
-                      {section === 'outline' && <Check size={13} className="active-tick" />}
-                    </button>
-                    <button className={`nav-menu-item ${section === 'evidence' ? 'is-active' : ''}`} onClick={() => { navigateTo('evidence'); setNavMenuOpen(false); }}>
-                      <Shapes size={15} />
-                      <div className="nav-item-content">
-                        <strong>Evidence Paths</strong>
-                        <small>Traceability from sources to claims</small>
-                      </div>
-                      {section === 'evidence' && <Check size={13} className="active-tick" />}
-                    </button>
-                    <button className={`nav-menu-item ${section === 'table' ? 'is-active' : ''}`} onClick={() => { navigateTo('table'); setNavMenuOpen(false); }}>
-                      <Files size={15} />
-                      <div className="nav-item-content">
-                        <strong>Claims & Questions</strong>
-                        <small>Tabular inventory & audit table</small>
-                      </div>
-                      {section === 'table' && <Check size={13} className="active-tick" />}
-                    </button>
-                  </div>
-
-                  <div className="menu-separator" />
-
-                  <div className="nav-menu-group">
-                    <span className="nav-menu-heading">Library & History</span>
-                    <button className={`nav-menu-item ${section === 'sources' ? 'is-active' : ''}`} onClick={() => { navigateTo('sources'); setNavMenuOpen(false); }}>
-                      <FolderKanban size={15} />
-                      <div className="nav-item-content">
-                        <strong>Sources</strong>
-                        <small>{nodes.filter(n => n.type === 'source' || n.type === 'link').length} references saved</small>
-                      </div>
-                      {section === 'sources' && <Check size={13} className="active-tick" />}
-                    </button>
-                    <button className={`nav-menu-item ${section === 'questions' ? 'is-active' : ''}`} onClick={() => { navigateTo('questions'); setNavMenuOpen(false); }}>
-                      <CircleHelp size={15} />
-                      <div className="nav-item-content">
-                        <strong>Open Questions</strong>
-                        <small>{nodes.filter(n => n.type === 'question').length} questions open</small>
-                      </div>
-                      {section === 'questions' && <Check size={13} className="active-tick" />}
-                    </button>
-                    <button className={`nav-menu-item ${section === 'history' ? 'is-active' : ''}`} onClick={() => { navigateTo('history'); setNavMenuOpen(false); }}>
-                      <FileClock size={15} />
-                      <div className="nav-item-content">
-                        <strong>Research History</strong>
-                        <small>{sessions.length} sessions recorded</small>
-                      </div>
-                      {pendingCount > 0 && <span className="nav-item-badge">{pendingCount} pending</span>}
-                      {section === 'history' && <Check size={13} className="active-tick" />}
-                    </button>
-                    <button className={`nav-menu-item ${section === 'revisions' ? 'is-active' : ''}`} onClick={() => { navigateTo('revisions'); setNavMenuOpen(false); }}>
-                      <History size={15} />
-                      <div className="nav-item-content">
-                        <strong>Revisions & Time-Travel</strong>
-                        <small>Point-in-time snapshots & rollback</small>
-                      </div>
-                      {section === 'revisions' && <Check size={13} className="active-tick" />}
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
+            <span className={`topbar-save ${saveState}`} role="status">{saveState === 'saving' ? 'Saving…' : saveState === 'error' ? 'Not saved' : 'Saved'}</span>
           </div>
 
-          {/* Center: Quick View Switcher Segmented Tabs */}
-          <nav className="topbar-center-nav" aria-label="Quick view switcher">
-            <button
-              className={`topbar-view-tab ${section === 'canvas' ? 'is-active' : ''}`}
-              title="Knowledge Graph"
-              aria-label="Knowledge Graph"
-              onClick={() => navigateTo('canvas')}
-            >
-              <Network size={13} />
-              <span>Canvas</span>
-            </button>
-            <button
-              className={`topbar-view-tab ${section === 'outline' ? 'is-active' : ''}`}
-              title="Structured Outline"
-              aria-label="Outline"
-              onClick={() => navigateTo('outline')}
-            >
-              <BookOpenText size={13} />
-              <span>Outline</span>
-            </button>
-            <button
-              className={`topbar-view-tab ${section === 'evidence' ? 'is-active' : ''}`}
-              title="Evidence Paths"
-              aria-label="Evidence Paths"
-              onClick={() => navigateTo('evidence')}
-            >
-              <Shapes size={13} />
-              <span>Evidence</span>
-            </button>
-            <button
-              className={`topbar-view-tab ${section === 'table' ? 'is-active' : ''}`}
-              title="Claims & Questions"
-              aria-label="Claims and Questions"
-              onClick={() => navigateTo('table')}
-            >
-              <Files size={13} />
-              <span>Table</span>
-            </button>
-          </nav>
-
-          {/* Right: Add Record, Search, Save Beacon, History Undo/Redo, Export, Chat Assistant & Research */}
-          <div className="topbar-actions">
-            {/* + Add Record Menu */}
-            <div className="menu-anchor topbar-add-anchor" ref={addRecordMenuRef}>
-              <button
-                className="topbar-add-btn"
-                aria-label="Add record to graph"
-                title="Add record (N)"
-                aria-expanded={addRecordMenuOpen}
-                onClick={() => {
-                  setAddRecordMenuOpen(v => !v);
-                  setNavMenuOpen(false);
-                  setProjectMenuOpen(false);
-                  setExportMenu(false);
-                }}
-              >
-                <Plus size={14} />
-                <span>Add</span>
-                <ChevronDown size={11} className="add-chevron" />
+          <div className="topbar-center">
+            <div className="layout-switch" role="group" aria-label="View">
+              {LAYOUTS.map(([value, label]) => (
+                <button key={value} type="button" aria-pressed={section === 'canvas' && layout === value} onClick={() => { chooseLayout(value); navigateTo('canvas'); }}>{label}</button>
+              ))}
+            </div>
+            <div className="menu-anchor" ref={navMenuRef}>
+              <button type="button" className={`more-views ${section !== 'canvas' ? 'is-active' : ''}`} aria-expanded={navMenuOpen} onClick={() => { setNavMenuOpen(v => !v); setProjectMenuOpen(false); setExportMenu(false); }}>
+                <span>{MORE_VIEWS.find(([key]) => key === section)?.[1] || 'More views'}</span>
+                <ChevronDown size={14} />
               </button>
-              {addRecordMenuOpen && (
-                <div className="menu-popover topbar-add-menu" role="menu" aria-label="Add record types">
-                  <div className="popover-heading">Create Record</div>
-                  {addableRecords.map(({ type, label, description, icon: Icon, shortcut }) => (
-                    <button
-                      key={type}
-                      className={`record-create-item type-${type}`}
-                      role="menuitem"
-                      title={`${label} (${shortcut})`}
-                      onClick={() => {
-                        addRecord(type);
-                        setAddRecordMenuOpen(false);
-                      }}
-                    >
-                      <span className="record-item-icon"><Icon size={14} /></span>
-                      <div className="record-item-text">
-                        <strong>{label}</strong>
-                        <small>{description}</small>
-                      </div>
-                      <kbd className="record-shortcut-badge">{shortcut}</kbd>
+              {navMenuOpen && (
+                <div className="menu-popover views-menu" role="menu" aria-label="More views">
+                  {MORE_VIEWS.map(([key, label, hint]) => (
+                    <button key={key} type="button" role="menuitem" className={section === key ? 'is-active' : ''} onClick={() => { navigateTo(key); setNavMenuOpen(false); }}>
+                      <strong>{label}</strong>
+                      <small>{hint}</small>
                     </button>
                   ))}
                 </div>
               )}
             </div>
+          </div>
 
+          <div className="topbar-actions">
+            <button type="button" className="icon-button" aria-label="Search the map" title="Search (Ctrl+K)" onClick={() => setModal('search')}><Search size={18} /></button>
+            <button type="button" className="icon-button" title="Undo (Ctrl+Z)" aria-label="Undo" disabled={!undoReady} onClick={undo}><Undo2 size={18} /></button>
+            <button type="button" className="icon-button" title="Redo (Ctrl+Y)" aria-label="Redo" disabled={!redoReady} onClick={redo}><Redo2 size={18} /></button>
             <button
-              className="topbar-search-btn"
-              title="Search knowledge (Ctrl+K / ⌘K)"
-              aria-label="Search knowledge"
-              onClick={() => setModal('search')}
+              type="button"
+              className={`text-button ask-button ${rightDrawerOpen && drawerTab === 'chat' ? 'is-active' : ''}`}
+              title="Ask questions about this map"
+              onClick={() => { if (rightDrawerOpen && drawerTab === 'chat') setRightDrawerOpen(false); else { setDrawerTab('chat'); setRightDrawerOpen(true); } }}
             >
-              <Search size={13} />
-              <span className="search-text">Search...</span>
-              <kbd className="topbar-kbd">Ctrl+K</kbd>
+              Ask AI
             </button>
-
-            <span className={`save-indicator ${saveState}`} title={saveState === 'saving' ? 'Saving changes' : saveState === 'error' ? 'Save issue' : 'All changes saved locally'}>
-              <i />
-              <span className="save-label">{saveState === 'saving' ? 'Saving' : saveState === 'error' ? 'Issue' : 'Saved'}</span>
-            </span>
-
-
-
-            <div className="topbar-divider" />
-
-            <button className="icon-button history-action" title="Undo (Ctrl+Z / ⌘Z)" aria-label="Undo" disabled={!undoReady} onClick={undo}>
-              <Undo2 size={15} />
-            </button>
-            <button className="icon-button history-action" title="Redo (Ctrl+Y / ⌘Shift+Z)" aria-label="Redo" disabled={!redoReady} onClick={redo}>
-              <Redo2 size={15} />
-            </button>
-            <button
-              className={`icon-button history-action ${section === 'revisions' ? 'is-active' : ''}`}
-              title="Persistent Revisions & Time-Travel (H)"
-              aria-label="Revisions and Time-Travel"
-              onClick={() => navigateTo('revisions')}
-            >
-              <History size={15} />
-            </button>
-
             <div className="menu-anchor" ref={exportMenuRef}>
-              <button
-                className="quiet-button export-trigger"
-                aria-label="Export or import knowledge graph"
-                aria-expanded={exportMenu}
-                onClick={() => { setExportMenu(v => !v); setNavMenuOpen(false); setProjectMenuOpen(false); setAddRecordMenuOpen(false); }}
-              >
-                <ArrowDownToLine size={14} />
-                <span>Export</span>
-                <ChevronDown size={12} />
+              <button type="button" className="ink-button share-button" aria-expanded={exportMenu} onClick={() => { setExportMenu(v => !v); setNavMenuOpen(false); setProjectMenuOpen(false); }}>
+                <Share size={17} /><span>Share</span>
               </button>
               {exportMenu && (
-                <div className="menu-popover export-menu">
-                  <button onClick={() => exportAs('json')}><FileJson2 size={15} /><span>Graph JSON</span><small>Full editable graph</small></button>
-                  <button onClick={() => exportAs('markdown')}><FileText size={15} /><span>Context Markdown</span><small>Readable research brief</small></button>
-                  <button onClick={() => exportAs('mermaid')}><GitBranch size={15} /><span>Mermaid diagram</span><small>Text-based graph</small></button>
-                  <button onClick={exportObsidianVault}><FolderArchive size={15} /><span>Obsidian Vault</span><small>.zip with [[wikilinks]] & canvas</small></button>
-                  <button onClick={exportPngCanvas}><ImageIcon size={15} /><span>PNG Image</span><small>High-DPI publication image</small></button>
-                  <button onClick={exportSvgCanvas}><Shapes size={15} /><span>Vector SVG</span><small>Scalable standalone vector</small></button>
-                  <div className="menu-separator" />
-                  <button onClick={() => fileRef.current?.click()}><Upload size={15} /><span>Import graph</span><small>JSON export</small></button>
-                  <button onClick={() => bibRef.current?.click()}><BookOpenText size={15} /><span>Import BibTeX</span><small>.bib academic papers</small></button>
+                <div className="menu-popover share-panel" role="dialog" aria-label="Share this map">
+                  <p className="share-title">Share this map</p>
+                  <div className="share-group">
+                    <span>Present it</span>
+                    <button type="button" onClick={exportPngCanvas}><ImageIcon size={18} /><span><strong>Image</strong><small>High-resolution PNG of the map</small></span></button>
+                    <button type="button" onClick={exportSvgCanvas}><Shapes size={18} /><span><strong>Vector image</strong><small>SVG that stays sharp in slides and print</small></span></button>
+                  </div>
+                  <div className="share-group">
+                    <span>Keep writing elsewhere</span>
+                    <button type="button" onClick={() => exportAs('markdown')}><FileText size={18} /><span><strong>Markdown brief</strong><small>The document with its sources; also works as AI context</small></span></button>
+                    <button type="button" onClick={exportObsidianVault}><FolderArchive size={18} /><span><strong>Obsidian vault</strong><small>One linked note per idea</small></span></button>
+                  </div>
+                  <div className="share-group">
+                    <span>Give it to another tool</span>
+                    <button type="button" onClick={() => exportAs('mermaid')}><GitBranch size={18} /><span><strong>Mermaid diagram</strong><small>Diagram code for docs and READMEs</small></span></button>
+                    <button type="button" onClick={() => exportAs('json')}><FileJson2 size={18} /><span><strong>JSON</strong><small>The full map, re-importable here</small></span></button>
+                  </div>
+                  <div className="share-footer">
+                    <button type="button" className="text-button" onClick={() => fileRef.current?.click()}><Upload size={15} /> Import a map</button>
+                    <button type="button" className="text-button" onClick={() => bibRef.current?.click()}><BookOpenText size={15} /> Import BibTeX</button>
+                  </div>
                 </div>
               )}
             </div>
-
-            <button
-              className={`quiet-button topbar-chat-btn ${rightDrawerOpen && drawerTab === 'chat' ? 'is-active' : ''}`}
-              title="Ask this knowledge graph (? / Shift+A)"
-              aria-label="Ask this knowledge graph"
-              onClick={() => {
-                if (rightDrawerOpen && drawerTab === 'chat') {
-                  setRightDrawerOpen(false);
-                } else {
-                  setDrawerTab('chat');
-                  setRightDrawerOpen(true);
-                }
-              }}
-            >
-              <MessageCircle size={14} />
-              <span>Ask AI</span>
-            </button>
-
-            <UserNav
-              contextCredits={userAuth?.contextCredits}
-              subscriptionTier={userAuth?.subscriptionTier}
-              onOpenCreditsModal={() => setModal('credits')}
-            />
-
-            <button className="icon-button mobile-menu" aria-label="Search knowledge" onClick={() => setModal('search')}>
-              <Search size={16} />
-            </button>
+            <UserNav contextCredits={userAuth?.contextCredits} subscriptionTier={userAuth?.subscriptionTier} onOpenCreditsModal={() => setModal('credits')} />
           </div>
           <input ref={fileRef} type="file" accept="application/json,.json" hidden onChange={handleImport} />
           <input ref={bibRef} type="file" accept=".bib,.txt" hidden onChange={handleBibImport} />
@@ -1878,10 +1761,50 @@ export default function SynthexWorkspace() {
 
         <section className={`workspace-stage ${section === 'canvas' ? 'stage-canvas' : 'stage-view'}`}>
           {section === 'canvas' ? <>
-            <div className="canvas-and-inspector">
+            <div className={`canvas-and-inspector layout-${layout}`}>
               <div className="graph-wrap">
-                {loading ? <div className="canvas-loading"><LoaderCircle size={21} className="spin" />Opening research sheet…</div> : nodes.length === 0 ? <div className="canvas-empty"><span className="empty-orbit"><Network size={24} /></span><h2>Your research sheet is ready</h2><p>Add a first idea or run grounded research to build a map of what you know.</p><div><button className="primary-button" onClick={() => setModal('research')}><Sparkles size={15} /> Start with research</button><button className="quiet-button" onClick={() => addRecord('note')}><Plus size={15} /> Add a note & idea</button></div></div> : <GraphCanvas
-                  graph={graph} selectedNodeIds={selectedIds} viewport={viewport} setViewport={setViewport} activeTool={tool} spacePressed={spacePressed}
+                {loading ? <div className="canvas-loading"><LoaderCircle size={21} className="spin" />Opening your map…</div> : Object.keys(displayGraph.nodesById).length === 0 ? <div className="map-start">
+                  <div className="map-start-inner">
+                    <h1>What are you trying to figure&nbsp;out?</h1>
+                    <p className="map-start-lede">Ask a question, dump your thoughts, or paste notes. Synthex pins it onto a map you can reshape, then share anywhere.</p>
+                    <form className="composer" onSubmit={event => { event.preventDefault(); buildMap(composerText); }}>
+                      {researching ? composerStatus : <>
+                        <label htmlFor="map-question" className="sr-only">Your question or notes</label>
+                        <textarea
+                          id="map-question"
+                          ref={element => { composerRef.current = element; }}
+                          value={composerText}
+                          onChange={event => setComposerText(event.target.value)}
+                          onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); buildMap(composerText); } }}
+                          maxLength={500}
+                          placeholder="How does sleep affect memory? What do we actually know, and what is still debated?"
+                          autoFocus
+                        />
+                        <div className="composer-row">
+                          <div><button type="button" className="line-button" onClick={() => addRecord('note')}><Plus size={16} /> Write a note instead</button></div>
+                          <div>
+                            <label htmlFor="map-depth" className="sr-only">Depth</label>
+                            <select id="map-depth" value={composerMode} onChange={event => setComposerMode(event.target.value as 'quick' | 'deep')}>
+                              <option value="quick">Quick map</option>
+                              <option value="deep">Deep research</option>
+                            </select>
+                            <button type="submit" className="ink-button" disabled={!composerText.trim()}>Build map <ArrowRight size={18} /></button>
+                          </div>
+                        </div>
+                      </>}
+                    </form>
+                    {!aiConfigured && <p className="composer-note">AI is not set up on this server yet, so maps can only be built by hand. Add OPENAI_API_KEY or GEMINI_API_KEY to enable it.</p>}
+                    <div className="map-starters">
+                      {STARTERS.map(starter => (
+                        <button key={starter.label} type="button" className="map-starter" onClick={() => { setComposerText(starter.prompt); composerRef.current?.focus(); }}>
+                          <strong>{starter.label}</strong>
+                          <span>{starter.kind}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div> : <GraphCanvas
+                  graph={displayGraph} draftIds={draftIds} detachingIds={detachingIds} selectedNodeIds={selectedIds} viewport={viewport} setViewport={setViewport} activeTool={tool} spacePressed={spacePressed}
                   linkingFromId={linkingFromId} autoFitKey={canvasFitKey} editingNoteId={editingNoteId}
                   onSelectNode={(id, additive) => {
                     setSelectedIds(current => additive ? current.includes(id) ? current.filter(value => value !== id) : [...current, id] : [id]);
@@ -1892,13 +1815,75 @@ export default function SynthexWorkspace() {
                   onDeleteNodes={deleteNodes}
                   onClearSelection={() => setSelectedIds([])} onClickAway={() => setEditingNoteId(null)} onCancelLinking={() => setLinkingFromId(null)} onMoveNodes={moveNodes} onConnect={connectNodes}
                   onStartLinking={setLinkingFromId} onToggleGroup={toggleGroup} onEditNote={setEditingNoteId}
-                  onUpdateNote={(id, content) => updateGraph(current => updateNode(current, id, { content }), false)}
+                  onUpdateNote={(id, content) => updateGraph(current => updateNode(current, id, withAutoTitle(current.nodesById[id], { content })), false)}
                   onUpdateRelationship={editRelationship} onDeleteRelationship={deleteRelationship} onResizeGroup={resizeGroup} onOpenGroup={id => { setEditingNoteId(null); setGroupCanvasId(id); }}
                   onAddRecordWithData={addRecord}
                   projectId={projectId}
                   isResizeLocked={isResizeLocked}
                 />}
+
+                {!loading && Object.keys(displayGraph.nodesById).length > 0 && (
+                  <div className="relation-legend" aria-label="How relations are drawn">
+                    <span><i />supports</span>
+                    <span><i className="challenges" />challenges</span>
+                    <span><i className="asks" />asks</span>
+                  </div>
+                )}
+
+                {!loading && draftSession && !researching && (
+                  <div className="draft-bar" role="status">
+                    <span>
+                      {plural(draftNodeCount - draftSourceCount, 'idea')}{draftSourceCount ? ` and ${plural(draftSourceCount, 'source')}` : ''} drafted · nothing joins your map until you keep it
+                    </span>
+                    <div>
+                      <button type="button" className="text-button" onClick={() => decideDrafts('rejected')}>Discard</button>
+                      <button type="button" className="line-button" onClick={() => openSession(draftSession)}>Review one by one</button>
+                      <button type="button" className="ink-button" onClick={() => decideDrafts('accepted')}>Keep all</button>
+                    </div>
+                  </div>
+                )}
+
+                {!loading && Object.keys(displayGraph.nodesById).length > 0 && (
+                  <form className="composer dock-composer" onSubmit={event => { event.preventDefault(); buildMap(selectedNode ? `${composerText.trim()} (about "${selectedNode.title}")` : composerText); }}>
+                    {researching ? composerStatus : <>
+                      {selectedNode && (
+                        <div className="composer-context">
+                          <span className="composer-target" title={selectedNode.title}>On “{selectedNode.title}”</span>
+                          <button type="button" className="line-button" onClick={() => buildMap(`Expand on "${selectedNode.title}": the key sub-ideas, mechanisms and examples.`)}>Expand</button>
+                          <button type="button" className="line-button" onClick={() => buildMap(`Find authoritative sources that support or dispute: "${selectedNode.title}".`)}>Find sources</button>
+                          <button type="button" className="line-button" onClick={() => buildMap(`What evidence or arguments challenge "${selectedNode.title}"?`)}>Challenge it</button>
+                        </div>
+                      )}
+                      <div className="composer-input">
+                        <label htmlFor="dock-question" className="sr-only">Ask to grow the map</label>
+                        <input
+                          id="dock-question"
+                          type="text"
+                          ref={element => { composerRef.current = element; }}
+                          value={composerText}
+                          onChange={event => setComposerText(event.target.value)}
+                          maxLength={400}
+                          placeholder={selectedNode ? 'Ask about this idea' : 'Ask a question to grow the map'}
+                          title="Press N anywhere on the map to write a note by hand"
+                        />
+                        <button type="submit" className="ink-button icon-send" aria-label="Grow the map" disabled={!composerText.trim()}><ArrowRight size={18} /></button>
+                      </div>
+                    </>}
+                  </form>
+                )}
               </div>
+
+              {layout !== 'map' && !loading && (
+                <DocumentPane
+                  graph={graph}
+                  title={project?.title || 'Untitled map'}
+                  selectedIds={selectedIds}
+                  draftCount={draftNodeCount}
+                  fullWidth={layout === 'doc'}
+                  onSelect={id => setSelectedIds([id])}
+                  onUpdate={(id, fields) => updateGraph(current => current.nodesById[id] ? updateNode(current, id, withAutoTitle(current.nodesById[id], fields)) : current)}
+                />
+              )}
 
               <aside className={`workspace-drawer ${rightDrawerOpen ? 'is-open' : ''}`} aria-label="Workspace tools and details">
                 <div className="drawer-header">
@@ -2291,40 +2276,10 @@ export default function SynthexWorkspace() {
           <section className="group-canvas-modal" role="dialog" aria-modal="true" aria-label={`${group.title} sub-canvas`}>
             <header className="group-canvas-header"><div><div className="group-breadcrumb"><span>Workspace</span><span>/</span><strong>{group.title}</strong></div><p>{plural(members.length, 'record')} in this knowledge cluster</p></div><button className="icon-button" aria-label="Close sub-canvas" onClick={() => setGroupCanvasId(null)}><X size={17} /></button></header>
             {members.length ? <GraphCanvas graph={containedGraph} selectedNodeIds={selectedIds.filter(id => memberIds.has(id))} viewport={groupViewport} setViewport={setGroupViewport} activeTool={tool} spacePressed={spacePressed} linkingFromId={linkingFromId} autoFitKey={canvasFitKey + 1} editingNoteId={editingNoteId}
-              onSelectNode={(id, additive) => setSelectedIds(current => additive ? current.includes(id) ? current.filter(value => value !== id) : [...current, id] : [id])} onClearSelection={() => setSelectedIds([])} onClickAway={() => setEditingNoteId(null)} onCancelLinking={() => setLinkingFromId(null)} onMoveNodes={moveNodes} onConnect={connectNodes} onStartLinking={setLinkingFromId} onToggleGroup={toggleGroup} onEditNote={setEditingNoteId} onUpdateNote={(id, content) => updateGraph(current => updateNode(current, id, { content }), false)} onUpdateRelationship={editRelationship} onDeleteRelationship={deleteRelationship} onResizeGroup={resizeGroup} onOpenGroup={id => { setEditingNoteId(null); setGroupCanvasId(id); }} onAddRecordWithData={addRecord} isResizeLocked={isResizeLocked} /> : <div className="subcanvas-empty"><Layers2 size={22} /><p>This cluster has no member records yet.</p><button className="quiet-button" onClick={() => { addRecord('note'); setGroupCanvasId(null); }}>Add a note & idea</button></div>}
+              onSelectNode={(id, additive) => setSelectedIds(current => additive ? current.includes(id) ? current.filter(value => value !== id) : [...current, id] : [id])} onClearSelection={() => setSelectedIds([])} onClickAway={() => setEditingNoteId(null)} onCancelLinking={() => setLinkingFromId(null)} onMoveNodes={moveNodes} onConnect={connectNodes} onStartLinking={setLinkingFromId} onToggleGroup={toggleGroup} onEditNote={setEditingNoteId} onUpdateNote={(id, content) => updateGraph(current => updateNode(current, id, withAutoTitle(current.nodesById[id], { content })), false)} onUpdateRelationship={editRelationship} onDeleteRelationship={deleteRelationship} onResizeGroup={resizeGroup} onOpenGroup={id => { setEditingNoteId(null); setGroupCanvasId(id); }} onAddRecordWithData={addRecord} isResizeLocked={isResizeLocked} /> : <div className="subcanvas-empty"><Layers2 size={22} /><p>This cluster has no member records yet.</p><button className="quiet-button" onClick={() => { addRecord('note'); setGroupCanvasId(null); }}>Add a note & idea</button></div>}
           </section>
         </div>;
       })()}
-
-      {modal === 'research' && <div className="modal-scrim" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setModal(null); }}>
-        <section className="work-modal research-modal" role="dialog" aria-modal="true" aria-labelledby="research-title">
-          <div className="modal-head"><span className="modal-icon"><Sparkles size={18} /></span><button className="icon-button" aria-label="Close research" onClick={() => setModal(null)}><X size={17} /></button></div>
-          <span className="panel-overline">Grounded research</span><h2 id="research-title">Extend the knowledge sheet</h2>
-          <p className="modal-intro">Explore a question against the web and this graph. New ideas and sources stay in review until you accept them.</p>
-          <form onSubmit={runResearch}>
-            <label className="field-label" htmlFor="research-question">What are you trying to understand?</label>
-            <textarea id="research-question" className="field-input research-input" value={researchQuery} onChange={event => setResearchQuery(event.target.value)} maxLength={500} placeholder="e.g. How do retrieval methods affect answer quality?" autoFocus />
-            <div className="research-mode-row"><span>Research depth</span><div className="segmented-control"><button type="button" className={researchMode === 'quick' ? 'selected' : ''} onClick={() => setResearchMode('quick')}>Quick <small>5 proposals</small></button><button type="button" className={researchMode === 'deep' ? 'selected' : ''} onClick={() => setResearchMode('deep')}>Deep <small>12 proposals</small></button></div></div>
-            {aiStatus?.configured && (
-              <div className="research-provider-banner">
-                <div className="provider-badge-group">
-                  <Sparkles size={14} className="provider-icon" />
-                  <span className="provider-model">Engine: <strong>{aiStatus.activeProvider} · {aiStatus.activeModel}</strong> ({aiStatus.reasoningEffort || 'medium'} reasoning)</span>
-                </div>
-                <span className={`fallback-indicator-pill ${aiStatus.usingFallback ? 'is-active' : aiStatus.fallbackConfigured ? 'is-ready' : 'is-standby'}`}>
-                  {aiStatus.usingFallback
-                    ? 'Fallback Active'
-                    : aiStatus.fallbackConfigured
-                      ? `Fallback: ${aiStatus.fallbackProvider} ready`
-                      : 'Fallback: Gemini standby'}
-                </span>
-              </div>
-            )}
-            {!aiConfigured && <div className="configuration-note"><CircleHelp size={15} /> Add <code>OPENAI_API_KEY</code> or <code>GEMINI_API_KEY</code> to the server environment to enable web research.</div>}
-            <div className="modal-footer"><span><i className="ai-status-dot ready" /> Proposals require your review</span><button className="primary-button" disabled={researching || !researchQuery.trim() || !aiConfigured}>{researching ? <><LoaderCircle size={15} className="spin" /> Researching…</> : <><Sparkles size={15} /> Run research <ArrowRight size={14} /></>}</button></div>
-          </form>
-        </section>
-      </div>}
 
 
       {modal === 'project' && <div className="modal-scrim" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setModal(null); }}>

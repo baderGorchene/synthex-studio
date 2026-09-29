@@ -99,7 +99,7 @@ export function getFileCategory(fileName?: string, fileType?: string): FileMetaI
       category: 'image',
       label: 'Image',
       badgeBg: 'transparent',
-      badgeColor: '#284b63',
+      badgeColor: '#111214',
       icon: Images
     };
   }

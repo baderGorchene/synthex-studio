@@ -7,7 +7,8 @@ import {
   exportMermaid,
   neighborhood,
   normalizeGraph,
-  removeNode
+  removeNode,
+  strokeForLabel
 } from '../src/lib/graph.ts';
 import { ONTOLOGY_PRESETS } from '../src/types/canvas.ts';
 import { buildVaultFiles, createZipArchive } from '../src/lib/vault-export.ts';
@@ -1151,3 +1152,26 @@ test('Context Credits Economic Engine: consumption rates, balance pre-checks, ov
 
 
 
+
+test('line grammar: relation meaning sets the stroke', () => {
+  assert.equal(strokeForLabel('supports'), 'solid');
+  assert.equal(strokeForLabel('Challenges'), 'dashed');
+  assert.equal(strokeForLabel('contradicts'), 'dashed');
+  assert.equal(strokeForLabel('asks'), 'dotted');
+  assert.equal(strokeForLabel(''), 'solid');
+});
+
+test('document: questions open sections, linked ideas follow in reading order, sources are numbered', async () => {
+  const { buildDocument } = await import('../src/lib/document.ts');
+  const n = (id, type, x, y) => ({ id, type, x, y, title: id, createdAt: 1 });
+  const graph = normalizeGraph(
+    [n('q', 'question', 0, 0), n('late', 'concept', 0, 400), n('early', 'concept', 0, 100), n('src', 'source', 0, 0), n('loose', 'note', 0, 0)],
+    [relation('e1', 'q', 'late'), relation('e2', 'q', 'early'), relation('e3', 'early', 'src', 'cites')]
+  );
+  const { sections, sources } = buildDocument(graph);
+  assert.equal(sections[0].head.id, 'q');
+  assert.deepEqual(sections[0].blocks.map(b => b.node.id), ['early', 'late']);
+  assert.deepEqual(sections[0].blocks[0].citations, [1]);
+  assert.deepEqual(sections[1].blocks.map(b => b.node.id), ['loose']);
+  assert.deepEqual(sources.map(s => s.id), ['src']);
+});

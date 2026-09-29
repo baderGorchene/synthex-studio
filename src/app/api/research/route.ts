@@ -7,7 +7,7 @@ import {
   saveResearchSession,
   userHasProjectAccess
 } from '@/lib/db';
-import { normalizeGraph } from '@/lib/graph';
+import { normalizeGraph, strokeForLabel } from '@/lib/graph';
 import { getServerAuth } from '@/lib/auth';
 import { deductCredits, refundCredits } from '@/lib/credits';
 import type { CanvasNode, Connection, ResearchChange, ResearchMode, ResearchSession } from '@/types/canvas';
@@ -94,7 +94,7 @@ function buildSessionFromResearchResult(
       color: 'neutral',
       arrowhead: 'end',
       lineStyle: 'curved',
-      strokePattern: 'solid',
+      strokePattern: strokeForLabel(label),
       animated: false,
       metadata: {
         origin: 'ai',

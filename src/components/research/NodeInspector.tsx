@@ -383,7 +383,7 @@ function ImageInspectorSection({
   return (
     <div className="inspector-media-section">
       <label className="field-label" style={{ display: 'flex', alignItems: 'center', gap: 6, margin: 0 }}>
-        <Images size={14} style={{ color: '#284b63' }} />
+        <Images size={14} style={{ color: '#111214' }} />
         <span>Figure & Media Asset</span>
       </label>
 
