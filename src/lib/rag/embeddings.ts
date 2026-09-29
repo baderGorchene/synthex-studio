@@ -10,11 +10,11 @@ export interface EmbeddingResult {
 export const EMBEDDING_DIMENSION = 1536;
 
 function openAiKey(): string {
-  return process.env.OPENAI_API_KEY || '';
+  return (process.env.OPENAI_API_KEY || '').trim().replace(/^["']|["']$/g, '');
 }
 
 function geminiKey(): string {
-  return process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '';
+  return (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '').trim().replace(/^["']|["']$/g, '');
 }
 
 export function computeContentHash(text: string): string {
@@ -44,7 +44,7 @@ export async function getQueryEmbedding(query: string): Promise<{
           model: 'text-embedding-3-small',
           input: query
         }),
-        signal: AbortSignal.timeout(15000)
+        signal: AbortSignal.timeout(8000)
       });
 
       if (response.ok) {
@@ -60,7 +60,7 @@ export async function getQueryEmbedding(query: string): Promise<{
     }
   }
 
-  // Fallback to Gemini text-embedding-004
+  // Fallback to Gemini text-embedding-004 (Google AI Studio Free Tier)
   if (gKey) {
     try {
       const url = `https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent`;
@@ -73,7 +73,7 @@ export async function getQueryEmbedding(query: string): Promise<{
         body: JSON.stringify({
           content: { parts: [{ text: query }] }
         }),
-        signal: AbortSignal.timeout(15000)
+        signal: AbortSignal.timeout(8000)
       });
 
       if (response.ok) {
@@ -98,7 +98,7 @@ export async function getQueryEmbedding(query: string): Promise<{
 
 /**
  * Batch generate embeddings for multiple texts using OpenAI text-embedding-3-small,
- * falling back to Gemini if needed.
+ * falling back to Gemini text-embedding-004 if needed.
  */
 export async function getBatchEmbeddings(
   items: Array<{ id: string; text: string; contentHash: string }>
@@ -110,8 +110,8 @@ export async function getBatchEmbeddings(
 
   if (oKey) {
     try {
-      // Chunk into batches of up to 32 items for reliable network calls
-      const batchSize = 32;
+      // Chunk into batches of up to 16 items for fast, reliable serverless execution
+      const batchSize = 16;
       const results: EmbeddingResult[] = [];
 
       for (let i = 0; i < items.length; i += batchSize) {
@@ -126,7 +126,7 @@ export async function getBatchEmbeddings(
             model: 'text-embedding-3-small',
             input: chunk.map(c => c.text)
           }),
-          signal: AbortSignal.timeout(30000)
+          signal: AbortSignal.timeout(8000)
         });
 
         if (!response.ok) {
@@ -156,7 +156,7 @@ export async function getBatchEmbeddings(
     }
   }
 
-  // Gemini Fallback
+  // Gemini Free Tier Fallback (text-embedding-004)
   if (gKey) {
     try {
       const results: EmbeddingResult[] = [];
@@ -171,7 +171,7 @@ export async function getBatchEmbeddings(
           body: JSON.stringify({
             content: { parts: [{ text: item.text }] }
           }),
-          signal: AbortSignal.timeout(10000)
+          signal: AbortSignal.timeout(6000)
         });
 
         if (response.ok) {

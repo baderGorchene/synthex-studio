@@ -101,11 +101,11 @@ export interface AIStatus {
 }
 
 function openAiKey(): string {
-  return process.env.OPENAI_API_KEY || '';
+  return (process.env.OPENAI_API_KEY || '').trim().replace(/^[\"']|[\"']$/g, '');
 }
 
 function geminiKey(): string {
-  return process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '';
+  return (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '').trim().replace(/^[\"']|[\"']$/g, '');
 }
 
 export function isAIConfigured(): boolean {
@@ -753,26 +753,40 @@ ${ragContext.markdown}`;
    Gemini Provider (gemini-3.8-flash with Google Search Grounding)
 ===================================================================== */
 class GeminiProvider {
-  readonly model = 'gemini-3.8-flash';
-  private readonly endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${this.model}:generateContent`;
+  readonly model = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
+  readonly fallbackModel = 'gemini-3.5-flash';
+
+  private getEndpoint(model: string) {
+    return `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+  }
 
   private async generate(prompt: string, schema: object, useSearch: boolean) {
     const key = geminiKey();
     if (!key) throw new Error('GEMINI_NOT_CONFIGURED');
 
-    const response = await fetch(this.endpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
-      cache: 'no-store',
-      signal: AbortSignal.timeout(120000),
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        ...(useSearch ? { tools: [{ google_search: {} }] } : {}),
-        generationConfig: {
-          responseFormat: { text: { mimeType: 'application/json', schema } }
-        }
-      })
-    });
+    const executeCall = async (model: string) => {
+      return fetch(this.getEndpoint(model), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
+        cache: 'no-store',
+        signal: AbortSignal.timeout(120000),
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          ...(useSearch ? { tools: [{ google_search: {} }] } : {}),
+          generationConfig: {
+            responseFormat: { text: { mimeType: 'application/json', schema } }
+          }
+        })
+      });
+    };
+
+    let response = await executeCall(this.model);
+
+    // Free-tier rate limit (429) or temporary capacity (503) fallback to gemini-3.5-flash
+    if (!response.ok && (response.status === 429 || response.status === 503) && this.model !== this.fallbackModel) {
+      console.warn(`Gemini Free Tier ${this.model} returned status ${response.status}. Retrying with free-tier fallback model ${this.fallbackModel}...`);
+      response = await executeCall(this.fallbackModel);
+    }
 
     if (!response.ok) {
       console.error('Gemini API returned status:', response.status);

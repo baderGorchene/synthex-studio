@@ -9,15 +9,20 @@ import {
 } from './embeddings.ts';
 
 let isVecLoaded = false;
+let vecLoadAttempted = false;
 
 function ensureVectorStore() {
   const db = getDb();
-  if (!isVecLoaded) {
+  if (!vecLoadAttempted) {
+    vecLoadAttempted = true;
     try {
-      sqliteVec.load(db);
-      isVecLoaded = true;
+      if (typeof sqliteVec?.load === 'function') {
+        sqliteVec.load(db);
+        isVecLoaded = true;
+      }
     } catch (err) {
-      console.error('Failed to load sqlite-vec:', err);
+      console.warn('sqlite-vec native extension not loaded (serverless environment):', err instanceof Error ? err.message : err);
+      isVecLoaded = false;
     }
   }
 
@@ -47,16 +52,19 @@ function ensureVectorStore() {
     );
   `);
 
-  // 3. sqlite-vec virtual table for 1536-dimensional dense vectors
-  try {
-    db.exec(`
-      CREATE VIRTUAL TABLE IF NOT EXISTS vec_nodes USING vec0(
-        node_key TEXT PRIMARY KEY,
-        embedding float[${EMBEDDING_DIMENSION}]
-      );
-    `);
-  } catch (err) {
-    console.error('Error creating vec_nodes virtual table:', err);
+  // 3. sqlite-vec virtual table for 1536-dimensional dense vectors (only if extension loaded)
+  if (isVecLoaded) {
+    try {
+      db.exec(`
+        CREATE VIRTUAL TABLE IF NOT EXISTS vec_nodes USING vec0(
+          node_key TEXT PRIMARY KEY,
+          embedding float[${EMBEDDING_DIMENSION}]
+        );
+      `);
+    } catch (err) {
+      console.warn('Could not create vec_nodes virtual table:', err);
+      isVecLoaded = false;
+    }
   }
 }
 
@@ -108,14 +116,16 @@ export async function syncGraphVectors(projectId: string, nodes: CanvasNode[]): 
   if (toDelete.length > 0) {
     const delMeta = db.prepare('DELETE FROM node_embeddings WHERE projectId = ? AND nodeId = ?');
     const delFts = db.prepare('DELETE FROM nodes_fts WHERE node_key = ?');
-    const delVec = db.prepare('DELETE FROM vec_nodes WHERE node_key = ?');
+    const delVec = isVecLoaded ? db.prepare('DELETE FROM vec_nodes WHERE node_key = ?') : null;
 
     db.transaction(() => {
       for (const item of toDelete) {
         const key = `${projectId}:${item.nodeId}`;
         delMeta.run(projectId, item.nodeId);
         try { delFts.run(key); } catch {}
-        try { delVec.run(key); } catch {}
+        if (delVec) {
+          try { delVec.run(key); } catch {}
+        }
       }
     })();
   }
@@ -155,11 +165,11 @@ export async function syncGraphVectors(projectId: string, nodes: CanvasNode[]): 
       VALUES (?, ?, ?, ?, ?, ?)
     `);
 
-    const delVec = db.prepare('DELETE FROM vec_nodes WHERE node_key = ?');
-    const insertVec = db.prepare(`
+    const delVec = isVecLoaded ? db.prepare('DELETE FROM vec_nodes WHERE node_key = ?') : null;
+    const insertVec = isVecLoaded ? db.prepare(`
       INSERT INTO vec_nodes (node_key, embedding)
       VALUES (?, ?)
-    `);
+    `) : null;
 
     const now = Date.now();
     const nodeMap = new Map(needsEmbedding.map(item => [item.id, item.node]));
@@ -177,11 +187,15 @@ export async function syncGraphVectors(projectId: string, nodes: CanvasNode[]): 
           insertFts.run(key, projectId, item.nodeId, node.title, node.content || '', node.type);
         } catch {}
 
-        try { delVec.run(key); } catch {}
-        try {
-          insertVec.run(key, item.embedding);
-        } catch (err) {
-          console.error('Failed to insert into vec_nodes:', err);
+        if (delVec) {
+          try { delVec.run(key); } catch {}
+        }
+        if (insertVec) {
+          try {
+            insertVec.run(key, item.embedding);
+          } catch (err) {
+            console.warn('Failed to insert into vec_nodes:', err);
+          }
         }
       }
     })();
@@ -207,26 +221,28 @@ export async function hybridSearch(
   const denseRanks = new Map<string, number>();
   const sparseRanks = new Map<string, number>();
 
-  // 1. Dense Vector Search (sqlite-vec KNN)
-  try {
-    const { embedding } = await getQueryEmbedding(query);
-    // Request up to topK * 4 candidates to account for other projects
-    const vecRows = db.prepare<[Float32Array, number], { node_key: string; distance: number }>(`
-      SELECT node_key, distance
-      FROM vec_nodes
-      WHERE embedding MATCH ? AND k = ?
-    `).all(embedding, topK * 4);
+  // 1. Dense Vector Search (sqlite-vec KNN, only if loaded)
+  if (isVecLoaded) {
+    try {
+      const { embedding } = await getQueryEmbedding(query);
+      // Request up to topK * 4 candidates to account for other projects
+      const vecRows = db.prepare<[Float32Array, number], { node_key: string; distance: number }>(`
+        SELECT node_key, distance
+        FROM vec_nodes
+        WHERE embedding MATCH ? AND k = ?
+      `).all(embedding, topK * 4);
 
-    let rank = 1;
-    for (const row of vecRows) {
-      if (row.node_key.startsWith(`${projectId}:`)) {
-        const nodeId = row.node_key.slice(projectId.length + 1);
-        denseRanks.set(nodeId, rank++);
-        if (rank > topK * 2) break;
+      let rank = 1;
+      for (const row of vecRows) {
+        if (row.node_key.startsWith(`${projectId}:`)) {
+          const nodeId = row.node_key.slice(projectId.length + 1);
+          denseRanks.set(nodeId, rank++);
+          if (rank > topK * 2) break;
+        }
       }
+    } catch (err) {
+      console.warn('Dense vector search step failed or unconfigured:', err instanceof Error ? err.message : err);
     }
-  } catch (err) {
-    console.warn('Dense vector search step failed or unconfigured:', err instanceof Error ? err.message : err);
   }
 
   // 2. Sparse Lexical Search (FTS5 BM25)

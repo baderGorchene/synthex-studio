@@ -114,17 +114,17 @@ export const CreativeDock: React.FC<CreativeDockProps> = ({
 
   const dockStyle: React.CSSProperties = dockPosition
     ? {
-        position: 'absolute',
-        left: `${dockPosition.x}px`,
-        top: `${dockPosition.y}px`,
-        transform: 'none'
-      }
+      position: 'absolute',
+      left: `${dockPosition.x}px`,
+      top: `${dockPosition.y}px`,
+      transform: 'none'
+    }
     : {
-        position: 'absolute',
-        left: '20px',
-        top: '50%',
-        transform: 'translateY(-50%)'
-      };
+      position: 'absolute',
+      left: '20px',
+      top: '50%',
+      transform: 'translateY(-50%)'
+    };
 
   const getNodeIcon = (type: CanvasNodeType) => {
     switch (type) {
@@ -145,9 +145,8 @@ export const CreativeDock: React.FC<CreativeDockProps> = ({
     <div
       ref={dockRef}
       style={dockStyle}
-      className={`z-30 flex flex-col items-center p-1 rounded-2xl border shadow-2xl backdrop-blur-xl space-y-1 select-none transition-shadow ${
-        themeTokens.panelBg
-      } ${isSpacePressed ? 'cursor-grab active:cursor-grabbing ring-2 ring-indigo-500/50' : ''}`}
+      className={`z-30 flex flex-col items-center p-1 rounded-2xl border shadow-2xl backdrop-blur-xl space-y-1 select-none transition-shadow ${themeTokens.panelBg
+        } ${isSpacePressed ? 'cursor-grab active:cursor-grabbing ring-2 ring-indigo-500/50' : ''}`}
       onPointerDown={(e) => {
         if (isSpacePressed) {
           startDockDrag(e);
@@ -166,11 +165,10 @@ export const CreativeDock: React.FC<CreativeDockProps> = ({
       {/* 1. HAND TOOL: Grab & Drop Elements + Pan Canvas (H) */}
       <button
         onClick={() => onSelectTool('hand')}
-        className={`group relative p-2 rounded-xl transition cursor-pointer flex items-center justify-center ${
-          activeTool === 'hand'
+        className={`group relative p-2 rounded-xl transition cursor-pointer flex items-center justify-center ${activeTool === 'hand'
             ? 'bg-indigo-600 text-white shadow-md ring-2 ring-indigo-400/50'
             : themeTokens.toolHover
-        }`}
+          }`}
         title="Hand Tool: Grab Elements & Pan Canvas (H)"
       >
         <Hand className="w-4 h-4" />
@@ -185,11 +183,10 @@ export const CreativeDock: React.FC<CreativeDockProps> = ({
       {/* 2. ARROW TOOL: Link Elements (V / C) */}
       <button
         onClick={() => onSelectTool('connect')}
-        className={`group relative p-2 rounded-xl transition cursor-pointer flex items-center justify-center ${
-          activeTool === 'connect'
+        className={`group relative p-2 rounded-xl transition cursor-pointer flex items-center justify-center ${activeTool === 'connect'
             ? 'bg-indigo-600 text-white shadow-md ring-2 ring-indigo-400/50'
             : themeTokens.toolHover
-        }`}
+          }`}
         title="Arrow Tool: Link Elements (V / C)"
       >
         <MousePointer2 className="w-4 h-4" />
@@ -205,11 +202,10 @@ export const CreativeDock: React.FC<CreativeDockProps> = ({
       <div className="relative">
         <button
           onClick={() => setShowNavigator(prev => !prev)}
-          className={`group relative p-2 rounded-xl transition cursor-pointer flex items-center justify-center ${
-            showNavigator
+          className={`group relative p-2 rounded-xl transition cursor-pointer flex items-center justify-center ${showNavigator
               ? 'bg-indigo-500 text-white shadow-md'
               : themeTokens.toolHover
-          }`}
+            }`}
           title="Element Navigator: Cycle & Focus Cards"
         >
           <Compass className="w-4 h-4" />
@@ -223,11 +219,10 @@ export const CreativeDock: React.FC<CreativeDockProps> = ({
 
         {/* Count Pill Badge */}
         <span
-          className={`absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full flex items-center justify-center text-[9px] font-bold pointer-events-none shadow-xs transition ${
-            showNavigator
+          className={`absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full flex items-center justify-center text-[9px] font-bold pointer-events-none shadow-xs transition ${showNavigator
               ? 'bg-white text-indigo-600 ring-2 ring-indigo-500'
               : 'bg-indigo-600 text-white'
-          }`}
+            }`}
         >
           {nodes.length}
         </span>
@@ -301,16 +296,15 @@ export const CreativeDock: React.FC<CreativeDockProps> = ({
       >
         <Sparkles className="w-4 h-4" />
         <span className="absolute left-14 px-2 py-1 rounded bg-zinc-900 text-white text-[10px] whitespace-nowrap pointer-events-none opacity-0 group-hover:opacity-100 transition shadow-lg z-50">
-          AI Deep Research (⌘K)
+          AI Deep Research (ctrl+k)
         </span>
       </button>
 
       {/* DEDICATED ELEMENT NAVIGATOR FLYOUT */}
       {showNavigator && (
         <div
-          className={`absolute left-14 top-0 w-72 rounded-2xl border p-2.5 shadow-2xl backdrop-blur-xl z-50 animate-in fade-in zoom-in-95 select-none ${
-            isLight ? 'bg-white/95 border-slate-200' : 'bg-[#141519]/95 border-zinc-800'
-          }`}
+          className={`absolute left-14 top-0 w-72 rounded-2xl border p-2.5 shadow-2xl backdrop-blur-xl z-50 animate-in fade-in zoom-in-95 select-none ${isLight ? 'bg-white/95 border-slate-200' : 'bg-[#141519]/95 border-zinc-800'
+            }`}
           onPointerDown={(e) => e.stopPropagation()}
         >
           {/* Navigator Header */}
@@ -341,11 +335,10 @@ export const CreativeDock: React.FC<CreativeDockProps> = ({
               placeholder="Search canvas cards..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className={`w-full pl-7 pr-2 py-1 rounded-lg text-xs outline-none border transition ${
-                isLight
+              className={`w-full pl-7 pr-2 py-1 rounded-lg text-xs outline-none border transition ${isLight
                   ? 'bg-slate-50 border-slate-200 text-slate-800 placeholder-slate-400 focus:border-indigo-500 focus:bg-white'
                   : 'bg-zinc-900 border-zinc-700/80 text-zinc-200 placeholder-zinc-500 focus:border-indigo-500 focus:bg-zinc-900/90'
-              }`}
+                }`}
             />
           </div>
 
@@ -355,9 +348,8 @@ export const CreativeDock: React.FC<CreativeDockProps> = ({
             <div className="flex items-center space-x-1">
               <button
                 onClick={onNavigatePrev}
-                className={`p-1 rounded-md border transition cursor-pointer flex items-center gap-1 ${
-                  isLight ? 'hover:bg-slate-100 border-slate-200 text-slate-700' : 'hover:bg-zinc-800 border-zinc-700 text-zinc-300'
-                }`}
+                className={`p-1 rounded-md border transition cursor-pointer flex items-center gap-1 ${isLight ? 'hover:bg-slate-100 border-slate-200 text-slate-700' : 'hover:bg-zinc-800 border-zinc-700 text-zinc-300'
+                  }`}
                 title="Previous element (← or ↑)"
               >
                 <ChevronLeft className="w-3 h-3" />
@@ -365,9 +357,8 @@ export const CreativeDock: React.FC<CreativeDockProps> = ({
               </button>
               <button
                 onClick={onNavigateNext}
-                className={`p-1 rounded-md border transition cursor-pointer flex items-center gap-1 ${
-                  isLight ? 'hover:bg-slate-100 border-slate-200 text-slate-700' : 'hover:bg-zinc-800 border-zinc-700 text-zinc-300'
-                }`}
+                className={`p-1 rounded-md border transition cursor-pointer flex items-center gap-1 ${isLight ? 'hover:bg-slate-100 border-slate-200 text-slate-700' : 'hover:bg-zinc-800 border-zinc-700 text-zinc-300'
+                  }`}
                 title="Next element (→ or ↓)"
               >
                 <span className="text-[10px] pl-0.5">Next</span>
@@ -394,13 +385,12 @@ export const CreativeDock: React.FC<CreativeDockProps> = ({
                     onClick={() => {
                       onNavigateToNode(node.id);
                     }}
-                    className={`w-full text-left px-2 py-1.5 rounded-xl text-xs transition flex items-center space-x-2 cursor-pointer ${
-                      isSelected
+                    className={`w-full text-left px-2 py-1.5 rounded-xl text-xs transition flex items-center space-x-2 cursor-pointer ${isSelected
                         ? 'bg-indigo-500/15 text-indigo-600 dark:text-indigo-300 font-semibold ring-1 ring-indigo-500/40'
                         : isLight
-                        ? 'hover:bg-indigo-50/80 hover:text-indigo-700 text-slate-700'
-                        : 'hover:bg-indigo-500/10 hover:text-indigo-300 text-zinc-300'
-                    }`}
+                          ? 'hover:bg-indigo-50/80 hover:text-indigo-700 text-slate-700'
+                          : 'hover:bg-indigo-500/10 hover:text-indigo-300 text-zinc-300'
+                      }`}
                   >
                     <span className={`w-2 h-2 rounded-full flex-shrink-0 ${swatch.badge}`} />
                     <span className="flex-shrink-0">{getNodeIcon(node.type)}</span>
@@ -416,10 +406,10 @@ export const CreativeDock: React.FC<CreativeDockProps> = ({
               node.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
               node.type.toLowerCase().includes(searchQuery.toLowerCase())
             ).length === 0 && (
-              <div className="py-6 text-center text-xs text-slate-400">
-                No matching elements found
-              </div>
-            )}
+                <div className="py-6 text-center text-xs text-slate-400">
+                  No matching elements found
+                </div>
+              )}
           </div>
         </div>
       )}
