@@ -7,6 +7,7 @@ import {
   Network, Cpu, Layers, BookOpen, ExternalLink,
   ChevronDown, ChevronUp, Share2, Compass, CheckCircle2
 } from 'lucide-react';
+import { SynthexLogo } from '@/components/brand/SynthexLogo';
 
 export default function MarketingLandingPage() {
   const [billingCycle, setBillingCycle] = useState<'monthly' | 'annual'>('monthly');
@@ -110,16 +111,14 @@ export default function MarketingLandingPage() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
           {/* Logo & Brand */}
           <Link href="/" className="flex items-center gap-2.5 group">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-[#3c6e71] to-[#284b63] p-[1px] shadow-lg shadow-[#284b63]/10 transition-transform group-hover:scale-105">
-              <div className="w-full h-full bg-[#f7f8f7] rounded-[7px] flex items-center justify-center">
-                <Sparkles size={16} className="text-[#3c6e71] group-hover:rotate-12 transition-transform duration-300" />
-              </div>
+            <div className="w-9 h-9 rounded-xl flex items-center justify-center transition-transform group-hover:scale-105">
+              <SynthexLogo size={34} />
             </div>
             <div className="flex items-center gap-2">
-              <span className="font-bold text-base tracking-tight text-[#353535] group-hover:text-[#284b63] transition-colors">
+              <span className="font-bold text-lg tracking-tight text-[#353535] group-hover:text-[#284b63] transition-colors">
                 Synthex
               </span>
-              <span className="text-[10px] font-semibold tracking-wider uppercase px-1.5 py-0.5 rounded-full bg-[#3c6e71]/10 border border-[#3c6e71]/30 text-[#3c6e71]">
+              <span className="text-[10.5px] font-semibold tracking-wider uppercase px-1.5 py-0.5 rounded-full bg-[#3c6e71]/10 border border-[#3c6e71]/30 text-[#3c6e71]">
                 Studio
               </span>
             </div>
@@ -779,9 +778,9 @@ export default function MarketingLandingPage() {
       {/* FOOTER */}
       <footer className="border-t border-[#d9d9d9] bg-[#f7f8f7] py-12 text-xs text-[#64706f] relative z-10">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-6">
-          <div className="flex items-center gap-2">
-            <div className="w-5 h-5 rounded bg-[#3c6e71] flex items-center justify-center text-white">
-              <Sparkles size={11} />
+          <div className="flex items-center gap-2.5">
+            <div className="w-6 h-6 flex items-center justify-center">
+              <SynthexLogo size={22} />
             </div>
             <span className="font-bold text-[#353535]">Synthex Studio</span>
             <span className="text-[#64706f]">·</span>

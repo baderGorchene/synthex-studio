@@ -5,6 +5,11 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "Synthex Studio — Grounded Semantic Knowledge Graph",
   description: "Build a connected knowledge graph, trace evidence, and extend research with grounded AI.",
+  icons: {
+    icon: "/logo.png",
+    shortcut: "/logo.png",
+    apple: "/logo.png",
+  },
 };
 
 export default function RootLayout({

@@ -458,11 +458,10 @@ kbd {
 .home-brand-icon {
   display: grid;
   place-items: center;
-  width: 20px;
-  height: 20px;
-  border-radius: 5px;
-  background: #284b63;
-  color: #ffffff;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: transparent;
 }
 
 .home-brand-text {

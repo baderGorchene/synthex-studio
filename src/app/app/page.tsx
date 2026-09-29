@@ -27,6 +27,7 @@ import { computeOrganizedLayout } from '@/lib/graph-organizer';
 import { auditGraphTopology } from '@/lib/graph-analyst';
 import { UserNav } from '@/components/auth/UserNav';
 import { CreditsModal } from '@/components/auth/CreditsModal';
+import { SynthexLogo } from '@/components/brand/SynthexLogo';
 
 type Viewport = { zoom: number; pan: Coordinates };
 type Tool = 'select' | 'connect' | 'hand';
@@ -1489,14 +1490,14 @@ export default function SynthexWorkspace() {
           <div className="topbar-left">
             <button
               className={`topbar-home-button ${section === 'canvas' ? 'is-active' : ''}`}
-              title="Home (Knowledge Canvas)"
-              aria-label="Home (Knowledge Canvas)"
+              title="Synthex Studio — Knowledge Canvas"
+              aria-label="Synthex Studio — Knowledge Canvas"
               onClick={() => navigateTo('canvas')}
             >
               <span className="home-brand-icon">
-                <Sparkles size={13} />
+                <SynthexLogo size={20} />
               </span>
-              <span className="home-brand-text">Home</span>
+              <span className="home-brand-text">Synthex</span>
             </button>
 
             <span className="topbar-slash" aria-hidden="true">/</span>
