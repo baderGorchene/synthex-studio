@@ -1,15 +1,19 @@
 'use client';
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { BookOpen, Check, ChevronDown, CircleHelp, ExternalLink, FileText, Images, Layers2, Lightbulb, Link2, Maximize2, Pencil, Quote, Sparkles, Trash2 } from 'lucide-react';
+import { ChevronDown, ExternalLink, Layers2, Sparkles, Trash2 } from 'lucide-react';
 import type { CanvasNode, Connection, Coordinates, SectionResizeHandle, CanvasNodeType, Viewport } from '@/types/canvas';
-import { hexToRgba, formatFileSize } from '@/types/canvas';
+import { hexToRgba } from '@/types/canvas';
 import type { KnowledgeGraph } from '@/lib/graph';
-import { MarkdownEditor } from './MarkdownEditor';
-import { MarkdownView } from './MarkdownView';
 import { RelationshipControls } from './RelationshipControls';
-import { WebsiteLogo, WebsiteImage, getWebsiteDomain, getLinkThumbnail, extractYouTubeVideoId } from './SourceMetadata';
-import { AttachedFileBadge, FileViewerModal, ImageViewerModal, getFileCategory } from './FileAndMediaModal';
+import { getLinkThumbnail, extractYouTubeVideoId } from './SourceMetadata';
+import { NodeCard, NodeGlyph } from './nodes';
+
+const RELATION_PALETTE: Record<string, string> = {
+  neutral: '#64748b', indigo: '#6366f1', emerald: '#10b981', rose: '#f43f5e',
+  amber: '#f59e0b', sky: '#0ea5e9', purple: '#a855f7'
+};
+import { FileViewerModal, ImageViewerModal } from './FileAndMediaModal';
 import { Minimap } from './Minimap';
 import { uploadFile } from '@/lib/upload';
 import { extractPageNumber, type CitationReference } from '@/utils/citation';
@@ -20,50 +24,6 @@ type Gesture =
   | { kind: 'resize'; start: Coordinates; node: CanvasNode; handle: SectionResizeHandle }
   | { kind: 'marquee'; startClient: Coordinates; currentClient: Coordinates; additive: boolean };
 
-const nodeLabel: Record<string, string> = {
-  note: 'Note & Idea', claim: 'Claim & Inquiry', source: 'Document & Source', image: 'Media & Figure', group: 'Knowledge cluster',
-  concept: 'Concept', hypothesis: 'Hypothesis', question: 'Question', link: 'Link & Website', section: 'Knowledge cluster',
-  research_result: 'Research result', task: 'Research task', ai_insight: 'AI insight'
-};
-
-const RELATION_PALETTE: Record<string, string> = {
-  neutral: '#64748b',
-  indigo: '#6366f1',
-  emerald: '#10b981',
-  rose: '#f43f5e',
-  amber: '#f59e0b',
-  sky: '#0ea5e9',
-  purple: '#a855f7'
-};
-
-function safeExternalHref(value?: string) {
-  try {
-    const url = new URL(value || '');
-    return url.protocol === 'http:' || url.protocol === 'https:' ? url.href : undefined;
-  } catch { return undefined; }
-}
-
-function NodeGlyph({ type, fileName, fileType }: { type: string; fileName?: string; fileType?: string }) {
-  const props = { size: 14, strokeWidth: 1.8 };
-  switch (type) {
-    case 'concept': return <Lightbulb {...props} />;
-    case 'claim': return <Quote {...props} />;
-    case 'question': return <CircleHelp {...props} />;
-    case 'source': case 'link': {
-      if (fileName || fileType) {
-        const meta = getFileCategory(fileName, fileType);
-        const Icon = meta.icon;
-        return <Icon {...props} />;
-      }
-      return <BookOpen {...props} />;
-    }
-    case 'note': return <FileText {...props} />;
-    case 'image': return <Images {...props} />;
-    case 'group': case 'section': return <Layers2 {...props} />;
-    case 'ai_insight': case 'research_result': return <Sparkles {...props} />;
-    default: return <Link2 {...props} />;
-  }
-}
 
 export function membersOf(group: CanvasNode, nodes: CanvasNode[]): CanvasNode[] {
   const width = group.width || 540;
@@ -158,13 +118,6 @@ export function estimateNodeHeight(node: CanvasNode): number {
   return Math.max(124, Math.round(h));
 }
 
-function toggleMarkdownTask(content: string, targetIndex: number) {
-  let taskIndex = 0;
-  return content.replace(/^([ \t]*(?:[-*+]|\d+\.)\s+\[)([ xX])(\])/gm, (match, before: string, checked: string, after: string) => {
-    const currentIndex = taskIndex++;
-    return currentIndex === targetIndex ? `${before}${checked === ' ' ? 'x' : ' '}${after}` : match;
-  });
-}
 
 export function relationPath(
   from: CanvasNode,
@@ -430,275 +383,6 @@ function GroupCard({
   );
 }
 
-function KnowledgeCard({
-  node, selected, isEditing, isGrabbed, dragTilt = 0, onToggleEdit, onUpdateContent, onPointerDown, onClick, onOpenLightbox, onOpenFileModal,
-  allNodesById, onOpenEvidenceCitation, isResizeLocked, onStartResize
-}: {
-  node: CanvasNode;
-  selected: boolean;
-  isEditing: boolean;
-  isGrabbed?: boolean;
-  dragTilt?: number;
-  onToggleEdit: () => void;
-  onUpdateContent: (content: string) => void;
-  onPointerDown: (event: React.PointerEvent, node: CanvasNode) => void;
-  onClick: (event: React.MouseEvent, node: CanvasNode) => void;
-  onOpenLightbox?: (src: string, title?: string, caption?: string) => void;
-  onOpenFileModal?: (file: { fileData?: string; fileName?: string; fileSize?: number; fileType?: string; content?: string; initialPage?: number; highlightExcerpt?: string }) => void;
-  allNodesById?: Record<string, CanvasNode>;
-  onOpenEvidenceCitation?: (evidence: CitationReference) => void;
-  isResizeLocked?: boolean;
-  onStartResize?: (event: React.PointerEvent, handle: SectionResizeHandle) => void;
-}) {
-  const customColor = node.color;
-  const isSource = node.type === 'source' || node.type === 'link';
-  const isImage = node.type === 'image';
-  const hasFile = Boolean(node.fileData || node.fileName);
-  const status = node.metadata?.claimStatus?.replaceAll('_', ' ');
-  const safeUrl = safeExternalHref(node.url);
-  const effectiveDomain = getWebsiteDomain(node.url, node.domain);
-  const websiteLogo = (node.metadata?.logo as string) || (node.metadata?.favicon as string);
-  const siteName = (node.metadata?.siteName as string);
-  const linkThumb = getLinkThumbnail(node);
-  const rawImage = isImage ? (node.fileData || node.imageUrl) : (linkThumb.thumbnailUrl || node.imageUrl || (node.metadata?.image as string) || (node.metadata?.ogImage as string));
-  const previewImage = (rawImage && !rawImage.includes('Changes icon') && !rawImage.includes('stays white')) ? rawImage : undefined;
-  const caption = (node.caption && !node.caption.includes('Changes icon') && !node.caption.includes('stays white')) ? node.caption : undefined;
-  const author = (node.metadata?.author as string);
-  const body = node.content || node.description || (!isImage ? caption : '') || '';
-
-  return (
-    <article
-      data-graph-node={node.id}
-      className={`knowledge-card type-${node.type} ${customColor ? 'has-custom-color' : ''} ${selected ? 'is-selected' : ''} ${isGrabbed ? 'is-grabbed' : ''}`}
-      style={{
-        transform: `translate3d(${node.x}px, ${node.y}px, 0) scale(${isGrabbed ? 1.035 : 1}) rotate(${isGrabbed ? dragTilt : 0}deg) translateY(${isGrabbed ? -4 : 0}px)`,
-        width: node.width || (isImage ? 320 : 280),
-        height: node.height ? `${node.height}px` : undefined,
-        minHeight: '124px',
-        maxHeight: node.height ? `${node.height}px` : undefined,
-        display: 'flex',
-        flexDirection: 'column',
-        backgroundColor: '#ffffff',
-        ...(customColor ? {
-          ['--node-custom-color' as `--${string}`]: customColor,
-          ['--node-custom-ring' as `--${string}`]: hexToRgba(customColor, 0.28),
-          borderColor: customColor,
-          borderWidth: '1.5px',
-          borderStyle: 'solid'
-        } : {}),
-        transition: isGrabbed
-          ? 'box-shadow 0.15s ease, border-color 0.15s ease, transform 0.06s ease-out'
-          : 'border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s cubic-bezier(0.16, 1, 0.3, 1)'
-      }}
-      onPointerDown={event => onPointerDown(event, node)}
-      onClick={event => onClick(event, node)}
-    >
-      <div className="knowledge-card-topline">
-        <span
-          className={`node-glyph ${isSource && !hasFile && (safeUrl || effectiveDomain) ? 'has-favicon' : ''}`}
-          style={isSource && !hasFile && (safeUrl || effectiveDomain) ? (
-            { backgroundColor: 'transparent', borderColor: 'transparent', borderWidth: 0 }
-          ) : customColor ? (
-            node.type === 'image'
-              ? { backgroundColor: 'transparent', borderColor: customColor, color: customColor }
-              : { backgroundColor: customColor, borderColor: customColor, color: '#ffffff' }
-          ) : undefined}
-        >
-          {isSource && !hasFile && (safeUrl || effectiveDomain) ? (
-            <WebsiteLogo url={safeUrl} domain={effectiveDomain} logo={websiteLogo} size={16} />
-          ) : (
-            <NodeGlyph type={node.type} fileName={node.fileName} fileType={node.fileType} />
-          )}
-        </span>
-        <span
-          className="node-kind"
-          style={customColor ? { color: customColor } : undefined}
-        >
-          {nodeLabel[node.type] || 'Knowledge'}
-        </span>
-        {siteName && <span className="source-sitename-tag" title={siteName}>{siteName}</span>}
-        {node.metadata?.origin === 'ai' && <span className="origin-label">AI proposal</span>}
-        {node.metadata?.origin === 'example' && <span className="origin-label">Example</span>}
-        {status && <span className={`claim-status status-${node.metadata?.claimStatus}`}>{status}</span>}
-        {node.type === 'note' && <button className={`note-mode-toggle ${isEditing ? 'is-editing' : ''}`} aria-label={isEditing ? 'Finish editing note' : 'Edit note'} title={isEditing ? 'Finish editing note' : 'Edit note'} onPointerDown={event => event.stopPropagation()} onClick={event => { event.stopPropagation(); onToggleEdit(); }}>{isEditing ? <Check size={13} /> : <Pencil size={12} />}<span>{isEditing ? 'Done' : 'Edit'}</span></button>}
-      </div>
-      <h2>{node.title}</h2>
-
-      <div className={`knowledge-card-body-scroll ${node.height ? 'has-custom-height' : ''}`}>
-        {/* Media & Figure preview */}
-        {isImage && (
-          <div className="figure-card-wrap">
-            {previewImage ? (
-              <div className="figure-image-container">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={previewImage}
-                  alt={caption || node.title}
-                  className="figure-card-img"
-                  loading="lazy"
-                />
-                <button
-                  type="button"
-                  className="figure-zoom-btn"
-                  title="Expand and view image"
-                  aria-label="Expand and view image"
-                  onPointerDown={event => event.stopPropagation()}
-                  onClick={event => {
-                    event.stopPropagation();
-                    onOpenLightbox?.(previewImage, node.title, caption);
-                  }}
-                >
-                  <Maximize2 size={13} />
-                </button>
-              </div>
-            ) : (
-              <div className="figure-placeholder-box">
-                <Images size={26} className="figure-placeholder-icon" />
-                <span>Select record to add image</span>
-              </div>
-            )}
-            {/* Bottom part: image name and size */}
-            {(node.fileName || node.fileSize) && (
-              <div className="figure-file-meta">
-                <span className="figure-filename" title={node.fileName}>{node.fileName || 'Image asset'}</span>
-                {node.fileSize ? <span className="figure-filesize">{formatFileSize(node.fileSize)}</span> : null}
-              </div>
-            )}
-            {caption && <figcaption className="figure-card-caption">{caption}</figcaption>}
-          </div>
-        )}
-
-        {/* Messenger-style Link Preview: Thumbnail banner (with YouTube play badge) OR clean favicon preview */}
-        {isSource && !hasFile && (safeUrl || effectiveDomain) && (
-          linkThumb.thumbnailUrl ? (
-            <WebsiteImage
-              imageUrl={linkThumb.thumbnailUrl}
-              alt={node.title}
-              maxHeight={135}
-              isYouTube={linkThumb.isYouTube}
-              linkUrl={safeUrl}
-              className="my-1.5"
-            />
-          ) : (
-            <div
-              className="link-no-thumb-preview"
-              onClick={(e) => {
-                if (safeUrl) {
-                  e.stopPropagation();
-                  window.open(safeUrl, '_blank', 'noopener,noreferrer');
-                }
-              }}
-              onPointerDown={(e) => {
-                if (safeUrl) e.stopPropagation();
-              }}
-              title={safeUrl ? `Open ${safeUrl}` : undefined}
-            >
-              <div className="link-no-thumb-favicon">
-                <WebsiteLogo url={safeUrl} domain={effectiveDomain} logo={websiteLogo} size={22} />
-              </div>
-              <div className="link-no-thumb-info">
-                <span className="link-no-thumb-domain">{effectiveDomain || 'web link'}</span>
-                {(node.description || node.content) && (
-                  <span className="link-no-thumb-desc">{node.description || node.content}</span>
-                )}
-              </div>
-              {safeUrl && <ExternalLink size={12} className="source-link-icon flex-shrink-0 text-slate-400" />}
-            </div>
-          )
-        )}
-
-        {/* File Attachment Badge for PDF, TXT, JSON, CSV, MD, Code */}
-        {hasFile && !isImage && (
-          <AttachedFileBadge
-            fileName={node.fileName}
-            fileSize={node.fileSize}
-            fileType={node.fileType}
-            fileData={node.fileData}
-            content={node.content}
-            onOpenPreview={() => onOpenFileModal?.({
-              fileData: node.fileData,
-              fileName: node.fileName,
-              fileSize: node.fileSize,
-              fileType: node.fileType,
-              content: node.content
-            })}
-          />
-        )}
-
-        {node.type === 'note' ? (
-          isEditing ? (
-            <MarkdownEditor className="card-markdown-editor" value={node.content || ''} onChange={onUpdateContent} ariaLabel="Edit note in Markdown" />
-          ) : body ? (
-            <MarkdownView content={body} className="node-summary note-markdown-preview" onToggleTask={index => onUpdateContent(toggleMarkdownTask(body, index))} />
-          ) : (
-            <p className="node-summary note-placeholder">Add a note and format it with Markdown.</p>
-          )
-        ) : body && !isImage ? (
-          <p className="node-summary">{body}</p>
-        ) : null}
-
-        {/* Website metadata: logo, domain, author and external link (shown below thumbnail) */}
-        {isSource && (safeUrl || effectiveDomain) && !hasFile && linkThumb.thumbnailUrl && (
-          <div className="source-meta-row">
-            <a
-              className="source-domain"
-              href={safeUrl || '#'}
-              target={safeUrl ? '_blank' : undefined}
-              rel="noreferrer"
-              onPointerDown={event => event.stopPropagation()}
-              onClick={event => { if (!safeUrl) event.preventDefault(); event.stopPropagation(); }}
-              title={safeUrl ? `Open ${safeUrl}` : undefined}
-            >
-              <WebsiteLogo url={safeUrl} domain={effectiveDomain} logo={websiteLogo} size={13} />
-              <span className="source-domain-text">{effectiveDomain || 'web-source'}</span>
-              {safeUrl && <ExternalLink size={11} className="source-link-icon" />}
-            </a>
-            {author && <span className="source-author" title={`By ${author}`}>By {author}</span>}
-          </div>
-        )}
-        {node.metadata?.evidence?.length ? (
-          <div className="card-evidence-list">
-            {node.metadata.evidence.map((ev, idx) => {
-              const src = allNodesById?.[ev.sourceId];
-              const pageNum = ev.page || extractPageNumber(ev.location);
-              const isContradiction = ev.relation === 'contradicts';
-              const hasPdf = Boolean(src?.fileData && (src.fileType?.includes('pdf') || src.fileName?.toLowerCase().endsWith('.pdf') || src.fileData.startsWith('data:application/pdf')));
-
-              return (
-                <button
-                  key={idx}
-                  type="button"
-                  className={`card-evidence-pill ${isContradiction ? 'contradicts' : 'supports'} ${hasPdf ? 'has-pdf' : ''}`}
-                  title={ev.excerpt ? `“${ev.excerpt}” — Click to ${hasPdf ? 'open PDF citation' : 'view source'}` : `Source: ${src?.title || ev.sourceId}`}
-                  onPointerDown={e => e.stopPropagation()}
-                  onClick={e => {
-                    e.stopPropagation();
-                    onOpenEvidenceCitation?.(ev);
-                  }}
-                >
-                  <span className="evidence-relation-dot" />
-                  <span className="evidence-source-title">{src?.title || ev.sourceId}</span>
-                  {pageNum && <span className="evidence-page-badge">p.{pageNum}</span>}
-                  {hasPdf && <FileText size={10} className="evidence-pdf-icon" />}
-                </button>
-              );
-            })}
-          </div>
-        ) : null}
-      </div>
-
-      {/* 8-point resize handles when card is selected and resize is unlocked */}
-      {selected && !isResizeLocked && !isGrabbed && (['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'] as SectionResizeHandle[]).map(handle => (
-        <span
-          key={handle}
-          className={`card-resize-handle handle-${handle}`}
-          onPointerDown={event => onStartResize?.(event, handle)}
-          title={`Resize card (${handle})`}
-        />
-      ))}
-    </article>
-  );
-}
 
 export function GraphCanvas({
   graph, selectedNodeIds, viewport, setViewport, activeTool, spacePressed, linkingFromId,
@@ -1728,7 +1412,7 @@ export function GraphCanvas({
           );
         })}
         {renderedVisibleNodes.map(node => (
-          <KnowledgeCard
+          <NodeCard
             key={node.id}
             node={node}
             selected={selectedNodeIds.includes(node.id)}
