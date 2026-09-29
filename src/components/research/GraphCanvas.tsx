@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { BookOpen, Check, ChevronDown, CircleHelp, ExternalLink, FileText, Images, Layers2, Lightbulb, Link2, Maximize2, Pencil, Quote, Sparkles, Trash2 } from 'lucide-react';
 import type { CanvasNode, Connection, Coordinates, SectionResizeHandle, CanvasNodeType, Viewport } from '@/types/canvas';
 import { hexToRgba, formatFileSize } from '@/types/canvas';
@@ -273,6 +273,48 @@ export function relationPath(
       y: orientation === 'horizontal' ? midY - 10 : midY
     }
   };
+}
+
+function DottedRelationship({ path, color, colorKey, arrowhead, animated }: {
+  path: string;
+  color: string;
+  colorKey: string;
+  arrowhead: Connection['arrowhead'];
+  animated: boolean;
+}) {
+  const measureRef = useRef<SVGPathElement>(null);
+  const [dots, setDots] = useState<Coordinates[]>([]);
+
+  useLayoutEffect(() => {
+    const measurePath = measureRef.current;
+    if (!measurePath) return;
+    const length = measurePath.getTotalLength();
+    if (length < 1) { setDots([]); return; }
+    if (length < 14) {
+      const point = measurePath.getPointAtLength(length / 2);
+      setDots([{ x: point.x, y: point.y }]);
+      return;
+    }
+    const inset = Math.min(7, length / 2);
+    const usableLength = Math.max(0, length - inset * 2);
+    const intervals = Math.max(1, Math.round(usableLength / 12));
+    const spacing = usableLength / intervals;
+    setDots(Array.from({ length: intervals + 1 }, (_, index) => {
+      const point = measurePath.getPointAtLength(inset + spacing * index);
+      return { x: point.x, y: point.y };
+    }));
+  }, [path]);
+
+  return <>
+    <path ref={measureRef} className="relationship-measure-path" d={path} />
+    {dots.map((dot, index) => <circle key={index} className={`relationship-dot ${animated ? 'animated' : ''}`} style={animated ? { animationDelay: `${index * 45}ms` } : undefined} cx={dot.x} cy={dot.y} r="1.8" fill={color} />)}
+    {(arrowhead === 'end' || arrowhead === 'both' || arrowhead === 'start') && <path
+      className="relationship-arrow-anchor"
+      d={path}
+      markerEnd={arrowhead === 'end' || arrowhead === 'both' ? `url(#relation-arrow-${colorKey})` : undefined}
+      markerStart={arrowhead === 'both' || arrowhead === 'start' ? `url(#relation-arrow-${colorKey})` : undefined}
+    />}
+  </>;
 }
 
 function GroupCard({
@@ -1589,26 +1631,23 @@ export function GraphCanvas({
               <g key={edge.id} className="relationship-mark">
                 <path className="relationship-hit" d={path} />
 
-                {/* Base vector line */}
-                <path
-                  className={`relationship-stroke ${
-                    edge.animated
-                      ? isDotted
-                        ? 'relationship-animated-dotted'
-                        : isDashed
-                        ? 'relationship-animated-dashed'
-                        : ''
-                      : ''
-                  }`}
+                {isDotted ? <DottedRelationship
+                  path={path}
+                  color={strokeColor}
+                  colorKey={edge.color || 'neutral'}
+                  arrowhead={edge.arrowhead || 'end'}
+                  animated={Boolean(edge.animated)}
+                /> : <path
+                  className={`relationship-stroke ${edge.animated && isDashed ? 'relationship-animated-dashed' : ''}`}
                   d={path}
                   stroke={strokeColor}
-                  strokeDasharray={isDotted ? '0 8' : isDashed ? '8 8' : undefined}
+                  strokeDasharray={isDashed ? '8 8' : undefined}
                   strokeLinecap="round"
                   strokeLinejoin="round"
                   opacity={edge.animated && isSolid ? 0.35 : 1}
                   markerEnd={edge.arrowhead === 'none' || edge.arrowhead === 'start' ? undefined : `url(#relation-arrow-${edge.color || 'neutral'})`}
                   markerStart={edge.arrowhead === 'both' || edge.arrowhead === 'start' ? `url(#relation-arrow-${edge.color || 'neutral'})` : undefined}
-                />
+                />}
 
                 {/* Continuous animation pulse on solid lines: travels right on the line with exact zero offset */}
                 {edge.animated && isSolid && (

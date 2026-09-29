@@ -5900,3 +5900,12 @@ button:not(.tool-button):not(.icon-button):not(.group-fold):not(.assistant-trigg
 
 
 
+
+/* Dotted relationships are discrete marks; only this hidden path is measured for their positions. */
+.relationship-measure-path { fill: none; stroke: none; pointer-events: none; }
+.relationship-dot { pointer-events: none; }
+.relationship-arrow-anchor { fill: none; stroke: transparent; stroke-width: 2; pointer-events: none; }
+.relationship-mark .relationship-measure-path { stroke: none; }
+.relationship-mark .relationship-arrow-anchor { stroke: transparent; }
+.relationship-dot.animated { animation: relationshipDotFlow 1.4s linear infinite; }
+@keyframes relationshipDotFlow { 0%, 100% { opacity: .35; } 50% { opacity: 1; } }
