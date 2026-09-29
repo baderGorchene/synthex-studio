@@ -69,13 +69,13 @@ export async function getServerAuth(): Promise<AuthContext> {
 
     let userRecord = (await getUserByClerkId(authState.userId)) as UserRecord | null;
     if (!userRecord) {
-      // First-time sign in provision: 3-day free trial with 100 Context Credits
+      // First-time sign in: requires mandatory subscription plan selection
       userRecord = (await upsertUser({
         clerkId: authState.userId,
-        subscriptionTier: 'trial',
-        subscriptionStatus: 'trialing',
-        contextCredits: 100,
-        trialEndsAt: Date.now() + 3 * 24 * 60 * 60 * 1000
+        subscriptionTier: 'none',
+        subscriptionStatus: 'unselected',
+        contextCredits: 0,
+        trialEndsAt: null
       })) as UserRecord;
     }
 

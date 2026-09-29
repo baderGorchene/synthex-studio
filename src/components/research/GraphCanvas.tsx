@@ -1,15 +1,19 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { BookOpen, Check, ChevronDown, CircleHelp, ExternalLink, FileText, Images, Layers2, Lightbulb, Link2, Maximize2, Pencil, Quote, Sparkles, Trash2 } from 'lucide-react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { ChevronDown, ExternalLink, Layers2, Sparkles, Trash2 } from 'lucide-react';
 import type { CanvasNode, Connection, Coordinates, SectionResizeHandle, CanvasNodeType, Viewport } from '@/types/canvas';
-import { hexToRgba, formatFileSize } from '@/types/canvas';
+import { hexToRgba } from '@/types/canvas';
 import type { KnowledgeGraph } from '@/lib/graph';
-import { MarkdownEditor } from './MarkdownEditor';
-import { MarkdownView } from './MarkdownView';
 import { RelationshipControls } from './RelationshipControls';
-import { WebsiteLogo, WebsiteImage, getWebsiteDomain, getLinkThumbnail, extractYouTubeVideoId } from './SourceMetadata';
-import { AttachedFileBadge, FileViewerModal, ImageViewerModal, getFileCategory } from './FileAndMediaModal';
+import { getLinkThumbnail, extractYouTubeVideoId } from './SourceMetadata';
+import { NodeCard, NodeGlyph } from './nodes';
+
+const RELATION_PALETTE: Record<string, string> = {
+  neutral: '#64748b', indigo: '#6366f1', emerald: '#10b981', rose: '#f43f5e',
+  amber: '#f59e0b', sky: '#0ea5e9', purple: '#a855f7'
+};
+import { FileViewerModal, ImageViewerModal } from './FileAndMediaModal';
 import { Minimap } from './Minimap';
 import { uploadFile } from '@/lib/upload';
 import { extractPageNumber, type CitationReference } from '@/utils/citation';
@@ -20,50 +24,6 @@ type Gesture =
   | { kind: 'resize'; start: Coordinates; node: CanvasNode; handle: SectionResizeHandle }
   | { kind: 'marquee'; startClient: Coordinates; currentClient: Coordinates; additive: boolean };
 
-const nodeLabel: Record<string, string> = {
-  note: 'Note & Idea', claim: 'Claim & Inquiry', source: 'Document & Source', image: 'Media & Figure', group: 'Knowledge cluster',
-  concept: 'Concept', hypothesis: 'Hypothesis', question: 'Question', link: 'Link & Website', section: 'Knowledge cluster',
-  research_result: 'Research result', task: 'Research task', ai_insight: 'AI insight'
-};
-
-const RELATION_PALETTE: Record<string, string> = {
-  neutral: '#64748b',
-  indigo: '#6366f1',
-  emerald: '#10b981',
-  rose: '#f43f5e',
-  amber: '#f59e0b',
-  sky: '#0ea5e9',
-  purple: '#a855f7'
-};
-
-function safeExternalHref(value?: string) {
-  try {
-    const url = new URL(value || '');
-    return url.protocol === 'http:' || url.protocol === 'https:' ? url.href : undefined;
-  } catch { return undefined; }
-}
-
-function NodeGlyph({ type, fileName, fileType }: { type: string; fileName?: string; fileType?: string }) {
-  const props = { size: 14, strokeWidth: 1.8 };
-  switch (type) {
-    case 'concept': return <Lightbulb {...props} />;
-    case 'claim': return <Quote {...props} />;
-    case 'question': return <CircleHelp {...props} />;
-    case 'source': case 'link': {
-      if (fileName || fileType) {
-        const meta = getFileCategory(fileName, fileType);
-        const Icon = meta.icon;
-        return <Icon {...props} />;
-      }
-      return <BookOpen {...props} />;
-    }
-    case 'note': return <FileText {...props} />;
-    case 'image': return <Images {...props} />;
-    case 'group': case 'section': return <Layers2 {...props} />;
-    case 'ai_insight': case 'research_result': return <Sparkles {...props} />;
-    default: return <Link2 {...props} />;
-  }
-}
 
 export function membersOf(group: CanvasNode, nodes: CanvasNode[]): CanvasNode[] {
   const width = group.width || 540;
@@ -158,13 +118,6 @@ export function estimateNodeHeight(node: CanvasNode): number {
   return Math.max(124, Math.round(h));
 }
 
-function toggleMarkdownTask(content: string, targetIndex: number) {
-  let taskIndex = 0;
-  return content.replace(/^([ \t]*(?:[-*+]|\d+\.)\s+\[)([ xX])(\])/gm, (match, before: string, checked: string, after: string) => {
-    const currentIndex = taskIndex++;
-    return currentIndex === targetIndex ? `${before}${checked === ' ' ? 'x' : ' '}${after}` : match;
-  });
-}
 
 export function relationPath(
   from: CanvasNode,
@@ -275,8 +228,50 @@ export function relationPath(
   };
 }
 
+function DottedRelationship({ path, color, colorKey, arrowhead, animated }: {
+  path: string;
+  color: string;
+  colorKey: string;
+  arrowhead: Connection['arrowhead'];
+  animated: boolean;
+}) {
+  const measureRef = useRef<SVGPathElement>(null);
+  const [dots, setDots] = useState<Coordinates[]>([]);
+
+  useLayoutEffect(() => {
+    const measurePath = measureRef.current;
+    if (!measurePath) return;
+    const length = measurePath.getTotalLength();
+    if (length < 1) { setDots([]); return; }
+    if (length < 14) {
+      const point = measurePath.getPointAtLength(length / 2);
+      setDots([{ x: point.x, y: point.y }]);
+      return;
+    }
+    const inset = Math.min(7, length / 2);
+    const usableLength = Math.max(0, length - inset * 2);
+    const intervals = Math.max(1, Math.round(usableLength / 12));
+    const spacing = usableLength / intervals;
+    setDots(Array.from({ length: intervals + 1 }, (_, index) => {
+      const point = measurePath.getPointAtLength(inset + spacing * index);
+      return { x: point.x, y: point.y };
+    }));
+  }, [path]);
+
+  return <>
+    <path ref={measureRef} className="relationship-measure-path" d={path} />
+    {dots.map((dot, index) => <circle key={index} className={`relationship-dot ${animated ? 'animated' : ''}`} style={animated ? { animationDelay: `${index * 45}ms` } : undefined} cx={dot.x} cy={dot.y} r="1.8" fill={color} />)}
+    {(arrowhead === 'end' || arrowhead === 'both' || arrowhead === 'start') && <path
+      className="relationship-arrow-anchor"
+      d={path}
+      markerEnd={arrowhead === 'end' || arrowhead === 'both' ? `url(#relation-arrow-${colorKey})` : undefined}
+      markerStart={arrowhead === 'both' || arrowhead === 'start' ? `url(#relation-arrow-${colorKey})` : undefined}
+    />}
+  </>;
+}
+
 function GroupCard({
-  node, members, relationCount, isCollapsed, selected, isGrabbed, dragTilt = 0, onToggle, onOpen, onStartResize
+  node, members, relationCount, isCollapsed, selected, isGrabbed, dragTilt = 0, onToggle, onOpen, onStartResize, isResizeLocked
 }: {
   node: CanvasNode;
   members: CanvasNode[];
@@ -288,6 +283,7 @@ function GroupCard({
   onToggle: () => void;
   onOpen: () => void;
   onStartResize: (event: React.PointerEvent, handle: SectionResizeHandle) => void;
+  isResizeLocked?: boolean;
 }) {
   const customColor = node.color;
   return (
@@ -374,7 +370,7 @@ function GroupCard({
         <div className="group-crease" aria-hidden="true"><i /><i /><i /></div>
       )}
 
-      {!isCollapsed && (['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'] as SectionResizeHandle[]).map(handle => (
+      {!isCollapsed && !isResizeLocked && (['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'] as SectionResizeHandle[]).map(handle => (
         <button
           key={handle}
           className={`group-resize-handle handle-${handle}`}
@@ -387,262 +383,12 @@ function GroupCard({
   );
 }
 
-function KnowledgeCard({
-  node, selected, isEditing, isGrabbed, dragTilt = 0, onToggleEdit, onUpdateContent, onPointerDown, onClick, onOpenLightbox, onOpenFileModal,
-  allNodesById, onOpenEvidenceCitation
-}: {
-  node: CanvasNode;
-  selected: boolean;
-  isEditing: boolean;
-  isGrabbed?: boolean;
-  dragTilt?: number;
-  onToggleEdit: () => void;
-  onUpdateContent: (content: string) => void;
-  onPointerDown: (event: React.PointerEvent, node: CanvasNode) => void;
-  onClick: (event: React.MouseEvent, node: CanvasNode) => void;
-  onOpenLightbox?: (src: string, title?: string, caption?: string) => void;
-  onOpenFileModal?: (file: { fileData?: string; fileName?: string; fileSize?: number; fileType?: string; content?: string; initialPage?: number; highlightExcerpt?: string }) => void;
-  allNodesById?: Record<string, CanvasNode>;
-  onOpenEvidenceCitation?: (evidence: CitationReference) => void;
-}) {
-  const customColor = node.color;
-  const isSource = node.type === 'source' || node.type === 'link';
-  const isImage = node.type === 'image';
-  const hasFile = Boolean(node.fileData || node.fileName);
-  const status = node.metadata?.claimStatus?.replaceAll('_', ' ');
-  const safeUrl = safeExternalHref(node.url);
-  const effectiveDomain = getWebsiteDomain(node.url, node.domain);
-  const websiteLogo = (node.metadata?.logo as string) || (node.metadata?.favicon as string);
-  const siteName = (node.metadata?.siteName as string);
-  const linkThumb = getLinkThumbnail(node);
-  const rawImage = isImage ? (node.fileData || node.imageUrl) : (linkThumb.thumbnailUrl || node.imageUrl || (node.metadata?.image as string) || (node.metadata?.ogImage as string));
-  const previewImage = (rawImage && !rawImage.includes('Changes icon') && !rawImage.includes('stays white')) ? rawImage : undefined;
-  const caption = (node.caption && !node.caption.includes('Changes icon') && !node.caption.includes('stays white')) ? node.caption : undefined;
-  const author = (node.metadata?.author as string);
-  const body = node.content || node.description || (!isImage ? caption : '') || '';
-
-  return (
-    <article
-      data-graph-node={node.id}
-      className={`knowledge-card type-${node.type} ${customColor ? 'has-custom-color' : ''} ${selected ? 'is-selected' : ''} ${isGrabbed ? 'is-grabbed' : ''}`}
-      style={{
-        transform: `translate3d(${node.x}px, ${node.y}px, 0) scale(${isGrabbed ? 1.035 : 1}) rotate(${isGrabbed ? dragTilt : 0}deg) translateY(${isGrabbed ? -4 : 0}px)`,
-        width: node.width || (isImage ? 320 : 280),
-        backgroundColor: '#ffffff',
-        ...(customColor ? {
-          ['--node-custom-color' as `--${string}`]: customColor,
-          ['--node-custom-ring' as `--${string}`]: hexToRgba(customColor, 0.28),
-          borderColor: customColor,
-          borderWidth: '1.5px',
-          borderStyle: 'solid'
-        } : {}),
-        transition: isGrabbed
-          ? 'box-shadow 0.15s ease, border-color 0.15s ease, transform 0.06s ease-out'
-          : 'border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s cubic-bezier(0.16, 1, 0.3, 1)'
-      }}
-      onPointerDown={event => onPointerDown(event, node)}
-      onClick={event => onClick(event, node)}
-    >
-      <div className="knowledge-card-topline">
-        <span
-          className={`node-glyph ${isSource && !hasFile && (safeUrl || effectiveDomain) ? 'has-favicon' : ''}`}
-          style={isSource && !hasFile && (safeUrl || effectiveDomain) ? (
-            { backgroundColor: 'transparent', borderColor: 'transparent', borderWidth: 0 }
-          ) : customColor ? (
-            node.type === 'image'
-              ? { backgroundColor: 'transparent', borderColor: customColor, color: customColor }
-              : { backgroundColor: customColor, borderColor: customColor, color: '#ffffff' }
-          ) : undefined}
-        >
-          {isSource && !hasFile && (safeUrl || effectiveDomain) ? (
-            <WebsiteLogo url={safeUrl} domain={effectiveDomain} logo={websiteLogo} size={16} />
-          ) : (
-            <NodeGlyph type={node.type} fileName={node.fileName} fileType={node.fileType} />
-          )}
-        </span>
-        <span
-          className="node-kind"
-          style={customColor ? { color: customColor } : undefined}
-        >
-          {nodeLabel[node.type] || 'Knowledge'}
-        </span>
-        {siteName && <span className="source-sitename-tag" title={siteName}>{siteName}</span>}
-        {node.metadata?.origin === 'ai' && <span className="origin-label">AI proposal</span>}
-        {node.metadata?.origin === 'example' && <span className="origin-label">Example</span>}
-        {status && <span className={`claim-status status-${node.metadata?.claimStatus}`}>{status}</span>}
-        {node.type === 'note' && <button className={`note-mode-toggle ${isEditing ? 'is-editing' : ''}`} aria-label={isEditing ? 'Finish editing note' : 'Edit note'} title={isEditing ? 'Finish editing note' : 'Edit note'} onPointerDown={event => event.stopPropagation()} onClick={event => { event.stopPropagation(); onToggleEdit(); }}>{isEditing ? <Check size={13} /> : <Pencil size={12} />}<span>{isEditing ? 'Done' : 'Edit'}</span></button>}
-      </div>
-      <h2>{node.title}</h2>
-
-      {/* Media & Figure preview */}
-      {isImage && (
-        <div className="figure-card-wrap">
-          {previewImage ? (
-            <div className="figure-image-container">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={previewImage}
-                alt={caption || node.title}
-                className="figure-card-img"
-                loading="lazy"
-              />
-              <button
-                type="button"
-                className="figure-zoom-btn"
-                title="Expand and view image"
-                aria-label="Expand and view image"
-                onPointerDown={event => event.stopPropagation()}
-                onClick={event => {
-                  event.stopPropagation();
-                  onOpenLightbox?.(previewImage, node.title, caption);
-                }}
-              >
-                <Maximize2 size={13} />
-              </button>
-            </div>
-          ) : (
-            <div className="figure-placeholder-box">
-              <Images size={26} className="figure-placeholder-icon" />
-              <span>Select record to add image</span>
-            </div>
-          )}
-          {/* Bottom part: image name and size */}
-          {(node.fileName || node.fileSize) && (
-            <div className="figure-file-meta">
-              <span className="figure-filename" title={node.fileName}>{node.fileName || 'Image asset'}</span>
-              {node.fileSize ? <span className="figure-filesize">{formatFileSize(node.fileSize)}</span> : null}
-            </div>
-          )}
-          {caption && <figcaption className="figure-card-caption">{caption}</figcaption>}
-        </div>
-      )}
-
-      {/* Messenger-style Link Preview: Thumbnail banner (with YouTube play badge) OR clean favicon preview */}
-      {isSource && !hasFile && (safeUrl || effectiveDomain) && (
-        linkThumb.thumbnailUrl ? (
-          <WebsiteImage
-            imageUrl={linkThumb.thumbnailUrl}
-            alt={node.title}
-            maxHeight={135}
-            isYouTube={linkThumb.isYouTube}
-            linkUrl={safeUrl}
-            className="my-1.5"
-          />
-        ) : (
-          <div
-            className="link-no-thumb-preview"
-            onClick={(e) => {
-              if (safeUrl) {
-                e.stopPropagation();
-                window.open(safeUrl, '_blank', 'noopener,noreferrer');
-              }
-            }}
-            onPointerDown={(e) => {
-              if (safeUrl) e.stopPropagation();
-            }}
-            title={safeUrl ? `Open ${safeUrl}` : undefined}
-          >
-            <div className="link-no-thumb-favicon">
-              <WebsiteLogo url={safeUrl} domain={effectiveDomain} logo={websiteLogo} size={22} />
-            </div>
-            <div className="link-no-thumb-info">
-              <span className="link-no-thumb-domain">{effectiveDomain || 'web link'}</span>
-              {(node.description || node.content) && (
-                <span className="link-no-thumb-desc">{node.description || node.content}</span>
-              )}
-            </div>
-            {safeUrl && <ExternalLink size={12} className="source-link-icon flex-shrink-0 text-slate-400" />}
-          </div>
-        )
-      )}
-
-      {/* File Attachment Badge for PDF, TXT, JSON, CSV, MD, Code */}
-      {hasFile && !isImage && (
-        <AttachedFileBadge
-          fileName={node.fileName}
-          fileSize={node.fileSize}
-          fileType={node.fileType}
-          fileData={node.fileData}
-          content={node.content}
-          onOpenPreview={() => onOpenFileModal?.({
-            fileData: node.fileData,
-            fileName: node.fileName,
-            fileSize: node.fileSize,
-            fileType: node.fileType,
-            content: node.content
-          })}
-        />
-      )}
-
-      {node.type === 'note' ? (
-        isEditing ? (
-          <MarkdownEditor className="card-markdown-editor" value={node.content || ''} onChange={onUpdateContent} ariaLabel="Edit note in Markdown" />
-        ) : body ? (
-          <MarkdownView content={body} className="node-summary note-markdown-preview" onToggleTask={index => onUpdateContent(toggleMarkdownTask(body, index))} />
-        ) : (
-          <p className="node-summary note-placeholder">Add a note and format it with Markdown.</p>
-        )
-      ) : body && !isImage ? (
-        <p className="node-summary">{body}</p>
-      ) : null}
-
-      {/* Website metadata: logo, domain, author and external link (shown below thumbnail) */}
-      {isSource && (safeUrl || effectiveDomain) && !hasFile && linkThumb.thumbnailUrl && (
-        <div className="source-meta-row">
-          <a
-            className="source-domain"
-            href={safeUrl || '#'}
-            target={safeUrl ? '_blank' : undefined}
-            rel="noreferrer"
-            onPointerDown={event => event.stopPropagation()}
-            onClick={event => { if (!safeUrl) event.preventDefault(); event.stopPropagation(); }}
-            title={safeUrl ? `Open ${safeUrl}` : undefined}
-          >
-            <WebsiteLogo url={safeUrl} domain={effectiveDomain} logo={websiteLogo} size={13} />
-            <span className="source-domain-text">{effectiveDomain || 'web-source'}</span>
-            {safeUrl && <ExternalLink size={11} className="source-link-icon" />}
-          </a>
-          {author && <span className="source-author" title={`By ${author}`}>By {author}</span>}
-        </div>
-      )}
-      {node.metadata?.evidence?.length ? (
-        <div className="card-evidence-list">
-          {node.metadata.evidence.map((ev, idx) => {
-            const src = allNodesById?.[ev.sourceId];
-            const pageNum = ev.page || extractPageNumber(ev.location);
-            const isContradiction = ev.relation === 'contradicts';
-            const hasPdf = Boolean(src?.fileData && (src.fileType?.includes('pdf') || src.fileName?.toLowerCase().endsWith('.pdf') || src.fileData.startsWith('data:application/pdf')));
-
-            return (
-              <button
-                key={idx}
-                type="button"
-                className={`card-evidence-pill ${isContradiction ? 'contradicts' : 'supports'} ${hasPdf ? 'has-pdf' : ''}`}
-                title={ev.excerpt ? `“${ev.excerpt}” — Click to ${hasPdf ? 'open PDF citation' : 'view source'}` : `Source: ${src?.title || ev.sourceId}`}
-                onPointerDown={e => e.stopPropagation()}
-                onClick={e => {
-                  e.stopPropagation();
-                  onOpenEvidenceCitation?.(ev);
-                }}
-              >
-                <span className="evidence-relation-dot" />
-                <span className="evidence-source-title">{src?.title || ev.sourceId}</span>
-                {pageNum && <span className="evidence-page-badge">p.{pageNum}</span>}
-                {hasPdf && <FileText size={10} className="evidence-pdf-icon" />}
-              </button>
-            );
-          })}
-        </div>
-      ) : null}
-    </article>
-  );
-}
 
 export function GraphCanvas({
   graph, selectedNodeIds, viewport, setViewport, activeTool, spacePressed, linkingFromId,
   autoFitKey, editingNoteId, onSelectNode, onSelectMultipleNodes, onClearSelection, onClickAway, onCancelLinking, onMoveNodes, onConnect,
   onStartLinking, onToggleGroup, onEditNote, onUpdateNote, onUpdateRelationship, onDeleteRelationship, onResizeGroup, onOpenGroup,
-  onAddRecordWithData, onDeleteNodes, projectId
+  onAddRecordWithData, onDeleteNodes, projectId, isResizeLocked = false
 }: {
   graph: KnowledgeGraph;
   selectedNodeIds: string[];
@@ -671,6 +417,7 @@ export function GraphCanvas({
   onAddRecordWithData?: (type: CanvasNodeType, initialData?: Partial<CanvasNode>) => void;
   onDeleteNodes?: (ids: string[]) => void;
   projectId?: string;
+  isResizeLocked?: boolean;
 }) {
   const canvasRef = useRef<HTMLDivElement>(null);
   const gesture = useRef<Gesture | null>(null);
@@ -727,11 +474,11 @@ export function GraphCanvas({
     }
     for (const node of nodes) {
       if (node.type !== 'group' && node.type !== 'section') {
-        const h = nodeHeights[node.id] || estimateNodeHeight(node);
+        const h = node.height || nodeHeights[node.id] || estimateNodeHeight(node);
         bounds[node.id] = {
           x: node.x,
           y: node.y,
-          width: node.width || 280,
+          width: node.width || (node.type === 'image' ? 320 : 280),
           height: h
         };
       }
@@ -1021,12 +768,17 @@ export function GraphCanvas({
       } else if (current.kind === 'resize') {
         const dx = (event.clientX - current.start.x) / viewport.zoom;
         const dy = (event.clientY - current.start.y) / viewport.zoom;
-        const { x, y, width = 540, height = 360 } = current.node;
+        const isGroup = current.node.type === 'group' || current.node.type === 'section';
+        const defaultWidth = isGroup ? 540 : (current.node.type === 'image' ? 320 : 280);
+        const defaultHeight = isGroup ? 360 : 130;
+        const { x, y, width = defaultWidth, height = defaultHeight } = current.node;
         const handle = current.handle;
         const nextX = handle.includes('w') ? x + dx : x;
         const nextY = handle.includes('n') ? y + dy : y;
-        const nextWidth = Math.max(300, width + (handle.includes('e') ? dx : handle.includes('w') ? -dx : 0));
-        const nextHeight = Math.max(220, height + (handle.includes('s') ? dy : handle.includes('n') ? -dy : 0));
+        const minW = isGroup ? 300 : 180;
+        const minH = isGroup ? 220 : 100;
+        const nextWidth = Math.max(minW, width + (handle.includes('e') ? dx : handle.includes('w') ? -dx : 0));
+        const nextHeight = Math.max(minH, height + (handle.includes('s') ? dy : handle.includes('n') ? -dy : 0));
         onResizeGroup(current.node.id, { x: nextX, y: nextY, width: nextWidth, height: nextHeight });
       } else {
         pendingMoveEvent.current = { clientX: event.clientX, clientY: event.clientY, shiftKey: event.shiftKey };
@@ -1311,6 +1063,13 @@ export function GraphCanvas({
   };
 
   const startGroupResize = (event: React.PointerEvent, node: CanvasNode, handle: SectionResizeHandle) => {
+    if (isResizeLocked) return;
+    event.preventDefault(); event.stopPropagation();
+    gesture.current = { kind: 'resize', start: { x: event.clientX, y: event.clientY }, node, handle };
+  };
+
+  const startNodeResize = (event: React.PointerEvent, node: CanvasNode, handle: SectionResizeHandle) => {
+    if (isResizeLocked) return;
     event.preventDefault(); event.stopPropagation();
     gesture.current = { kind: 'resize', start: { x: event.clientX, y: event.clientY }, node, handle };
   };
@@ -1488,7 +1247,7 @@ export function GraphCanvas({
 
   return (
     <div
-      className={`graph-canvas ${spacePressed || activeTool === 'hand' ? 'is-hand-tool' : ''} ${activeTool === 'connect' ? 'is-link-tool' : ''}`}
+      className={`graph-canvas ${spacePressed || activeTool === 'hand' ? 'is-hand-tool' : ''} ${activeTool === 'connect' ? 'is-link-tool' : ''} ${isResizeLocked ? 'canvas-resize-locked' : ''}`}
       ref={canvasRef}
       onPointerDownCapture={trackTouchPointer}
       onWheel={zoomAtPointer}
@@ -1546,22 +1305,53 @@ export function GraphCanvas({
               <path d="M0,0 L0,6 L7,3 z" fill="#3c6e71" />
             </marker>
           </defs>
-          {edges.map(({ edge, path, mid }) => (
-            <g key={edge.id} className="relationship-mark">
-              <path className="relationship-hit" d={path} />
-              <path
-                className={`relationship-stroke ${edge.animated && edge.strokePattern !== 'solid' ? 'relationship-animated' : ''}`}
-                d={path}
-                stroke={RELATION_PALETTE[edge.color || 'neutral'] || '#284b63'}
-                strokeDasharray={edge.strokePattern === 'dotted' ? '0 8' : edge.strokePattern === 'dashed' ? '8 8' : undefined}
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                markerEnd={edge.arrowhead === 'none' || edge.arrowhead === 'start' ? undefined : `url(#relation-arrow-${edge.color || 'neutral'})`}
-                markerStart={edge.arrowhead === 'both' || edge.arrowhead === 'start' ? `url(#relation-arrow-${edge.color || 'neutral'})` : undefined}
-              />
-              <RelationshipControls connection={edge} x={mid.x} y={mid.y} onUpdate={fields => onUpdateRelationship(edge.id, fields)} onDelete={() => onDeleteRelationship(edge.id)} />
-            </g>
-          ))}
+          {edges.map(({ edge, path, mid }) => {
+            const isDotted = edge.strokePattern === 'dotted';
+            const isDashed = edge.strokePattern === 'dashed';
+            const isSolid = !isDotted && !isDashed;
+            const strokeColor = RELATION_PALETTE[edge.color || 'neutral'] || '#284b63';
+
+            return (
+              <g key={edge.id} className="relationship-mark">
+                <path className="relationship-hit" d={path} />
+
+                {isDotted ? <DottedRelationship
+                  path={path}
+                  color={strokeColor}
+                  colorKey={edge.color || 'neutral'}
+                  arrowhead={edge.arrowhead || 'end'}
+                  animated={Boolean(edge.animated)}
+                /> : <path
+                  className={`relationship-stroke ${edge.animated && isDashed ? 'relationship-animated-dashed' : ''}`}
+                  d={path}
+                  stroke={strokeColor}
+                  strokeDasharray={isDashed ? '8 8' : undefined}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  opacity={edge.animated && isSolid ? 0.35 : 1}
+                  markerEnd={edge.arrowhead === 'none' || edge.arrowhead === 'start' ? undefined : `url(#relation-arrow-${edge.color || 'neutral'})`}
+                  markerStart={edge.arrowhead === 'both' || edge.arrowhead === 'start' ? `url(#relation-arrow-${edge.color || 'neutral'})` : undefined}
+                />}
+
+                {/* Continuous animation pulse on solid lines: travels right on the line with exact zero offset */}
+                {edge.animated && isSolid && (
+                  <path
+                    className="relationship-stroke relationship-animated-continuous"
+                    d={path}
+                    stroke={strokeColor}
+                    strokeWidth="2"
+                    strokeDasharray="40 100"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    fill="none"
+                    pointerEvents="none"
+                  />
+                )}
+
+                <RelationshipControls connection={edge} x={mid.x} y={mid.y} onUpdate={fields => onUpdateRelationship(edge.id, fields)} onDelete={() => onDeleteRelationship(edge.id)} />
+              </g>
+            );
+          })}
           {linkingFromId && cursorWorld && graph.nodesById[linkingFromId] && (() => {
             const from = graph.nodesById[linkingFromId];
             const fromBox = nodeBounds[from.id] || {
@@ -1616,12 +1406,13 @@ export function GraphCanvas({
                 onToggle={() => onToggleGroup(group.id)}
                 onOpen={() => onOpenGroup(group.id)}
                 onStartResize={(event, handle) => startGroupResize(event, group, handle)}
+                isResizeLocked={isResizeLocked}
               />
             </div>
           );
         })}
         {renderedVisibleNodes.map(node => (
-          <KnowledgeCard
+          <NodeCard
             key={node.id}
             node={node}
             selected={selectedNodeIds.includes(node.id)}
@@ -1640,6 +1431,8 @@ export function GraphCanvas({
               onSelectNode(current.id, event.ctrlKey || event.metaKey);
               if (current.type !== 'note' || editingNoteId !== current.id) onEditNote(null);
             }}
+            isResizeLocked={isResizeLocked}
+            onStartResize={(event, handle) => startNodeResize(event, node, handle)}
           />
         ))}
       </div>

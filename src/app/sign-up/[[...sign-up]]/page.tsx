@@ -1,6 +1,7 @@
 import { SignUp } from '@clerk/nextjs';
 import Link from 'next/link';
-import { Sparkles, ArrowLeft, ArrowRight, Zap, Database, ShieldAlert } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Zap, Database, ShieldAlert } from 'lucide-react';
+import { SynthexLogo } from '@/components/brand/SynthexLogo';
 
 export default function SignUpPage() {
   const isClerkEnabled = Boolean(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY);
@@ -11,10 +12,8 @@ export default function SignUpPage() {
         <Link href="/" className="inline-flex items-center gap-2 mb-3 text-sm font-medium text-[#4f5d5b] hover:text-[#284b63] transition-colors">
           <ArrowLeft size={14} /> Back to Synthex Studio
         </Link>
-        <div className="flex items-center gap-2">
-          <span className="w-8 h-8 rounded-lg bg-[#3c6e71] text-white flex items-center justify-center shadow-sm">
-            <Sparkles size={16} />
-          </span>
+        <div className="flex items-center gap-2.5">
+          <SynthexLogo size={36} />
           <span className="text-xl font-bold tracking-tight text-[#353535]">Synthex Studio</span>
         </div>
 

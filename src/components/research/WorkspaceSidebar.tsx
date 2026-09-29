@@ -1,6 +1,6 @@
 'use client';
 
-import { BookOpen, FileText, GitBranch, Grid3X3, GripVertical, Hand, Images, Layers2, LayoutGrid, MousePointer2, Network, Plus, Quote, Scan } from 'lucide-react';
+import { BookOpen, FileText, GitBranch, Grid3X3, GripVertical, Hand, Images, Layers2, LayoutGrid, Lock, MousePointer2, Network, Plus, Quote, Scan, Scaling } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import type { CanvasNodeType } from '@/types/canvas';
 
@@ -27,6 +27,8 @@ export interface CanvasToolDockProps {
   onFit?: () => void;
   onAddRecord?: (type: CanvasNodeType) => void;
   onOrganizeLayout?: (strategy: 'cluster_by_type' | 'hierarchical' | 'compact') => void;
+  isResizeLocked?: boolean;
+  onToggleResizeLock?: () => void;
   // Optional legacy props for backward compatibility
   projects?: ResearchProject[];
   projectId?: string;
@@ -46,6 +48,8 @@ export function CanvasToolDock({
   onFit,
   onAddRecord,
   onOrganizeLayout,
+  isResizeLocked = false,
+  onToggleResizeLock,
 }: CanvasToolDockProps) {
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [organizeMenuOpen, setOrganizeMenuOpen] = useState(false);
@@ -156,6 +160,19 @@ export function CanvasToolDock({
         >
           <Scan size={16} />
           <span className="tool-tooltip">Fit all records · F</span>
+        </button>
+
+        <button
+          className={`sidebar-tool-button ${isResizeLocked ? 'is-locked-btn' : ''}`}
+          aria-label={isResizeLocked ? 'Unlock component resizing' : 'Lock component resizing'}
+          aria-pressed={!isResizeLocked}
+          onClick={onToggleResizeLock}
+          title={isResizeLocked ? 'Component resizing locked (Click to unlock)' : 'Component resizing unlocked (Click to lock all components)'}
+        >
+          {isResizeLocked ? <Lock size={15} /> : <Scaling size={16} />}
+          <span className="tool-tooltip">
+            {isResizeLocked ? 'Resize: Locked (Click to unlock)' : 'Resize: Unlocked (Click to lock)'}
+          </span>
         </button>
 
         <div className="dock-add-record" ref={addMenuRef}>

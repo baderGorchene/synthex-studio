@@ -18,6 +18,21 @@ export function getGcsBucketName(): string {
   return process.env.GCS_BUCKET_NAME || 'synthex-research-vault';
 }
 
+async function getStorageClient() {
+  const { Storage } = await import('@google-cloud/storage');
+  if (process.env.GCP_SERVICE_ACCOUNT_KEY) {
+    try {
+      const credentials = typeof process.env.GCP_SERVICE_ACCOUNT_KEY === 'string'
+        ? JSON.parse(process.env.GCP_SERVICE_ACCOUNT_KEY)
+        : process.env.GCP_SERVICE_ACCOUNT_KEY;
+      return new Storage({ credentials });
+    } catch (parseErr) {
+      console.warn('Failed to parse GCP_SERVICE_ACCOUNT_KEY JSON:', parseErr);
+    }
+  }
+  return new Storage();
+}
+
 /**
  * Upload an in-memory file buffer directly to Google Cloud Storage
  */
@@ -30,8 +45,7 @@ export async function uploadBufferToGcs(
 
   // Lazy-load @google-cloud/storage to avoid runtime failure if not installed in offline mode
   try {
-    const { Storage } = await import('@google-cloud/storage');
-    const storage = new Storage();
+    const storage = await getStorageClient();
     const bucket = storage.bucket(bucketName);
     const file = bucket.file(destinationPath);
 
@@ -69,8 +83,7 @@ export async function getGcsSignedDownloadUrl(
 ): Promise<string> {
   const bucketName = getGcsBucketName();
   try {
-    const { Storage } = await import('@google-cloud/storage');
-    const storage = new Storage();
+    const storage = await getStorageClient();
     const bucket = storage.bucket(bucketName);
     const file = bucket.file(destinationPath);
 
@@ -93,8 +106,7 @@ export async function getGcsSignedDownloadUrl(
 export async function deleteGcsObject(destinationPath: string): Promise<boolean> {
   const bucketName = getGcsBucketName();
   try {
-    const { Storage } = await import('@google-cloud/storage');
-    const storage = new Storage();
+    const storage = await getStorageClient();
     const bucket = storage.bucket(bucketName);
     const file = bucket.file(destinationPath);
     await file.delete({ ignoreNotFound: true });

@@ -1,5 +1,6 @@
 import { indexGraphNodes } from '@/lib/ai-service';
-import { bulkSaveCanvasToDb, getAllConnectionsFromDb, getAllNodesFromDb, projectExistsInDb } from '@/lib/db';
+import { bulkSaveCanvasToDb, getAllConnectionsFromDb, getAllNodesFromDb, userHasProjectAccess } from '@/lib/db';
+import { getServerAuth } from '@/lib/auth';
 import { normalizeGraph } from '@/lib/graph';
 import type { CanvasNodeType, CanvasNode, Connection } from '@/types/canvas';
 
@@ -9,14 +10,22 @@ const nodeTypes = new Set<CanvasNodeType>([
 ]);
 
 function requestedProject(request: Request): string | undefined {
-  const projectId = new URL(request.url).searchParams.get('projectId') || 'default';
-  return projectId.length <= 80 ? projectId : undefined;
+  const projectId = new URL(request.url).searchParams.get('projectId');
+  return projectId && projectId.length <= 80 ? projectId : undefined;
 }
 
 export async function GET(request: Request) {
   try {
+    const auth = await getServerAuth();
+    const userId = auth.user?.id || auth.userId;
+    const orgId = auth.orgId;
+    const clerkId = auth.clerkId;
+    if (!auth.isLocal && !userId) return Response.json({ error: 'Unauthorized' }, { status: 401 });
+
     const projectId = requestedProject(request);
-    if (!projectId || !(await projectExistsInDb(projectId))) return Response.json({ error: 'Project not found.' }, { status: 404 });
+    if (!projectId || !(await userHasProjectAccess(projectId, userId, orgId, clerkId))) {
+      return Response.json({ error: 'Project not found.' }, { status: 404 });
+    }
     const rawNodes = (await getAllNodesFromDb(projectId)) as CanvasNode[];
     const rawEdges = (await getAllConnectionsFromDb(projectId)) as Connection[];
     const graph = normalizeGraph(rawNodes, rawEdges);
@@ -29,12 +38,20 @@ export async function GET(request: Request) {
 
 export async function PUT(request: Request) {
   try {
+    const auth = await getServerAuth();
+    const userId = auth.user?.id || auth.userId;
+    const orgId = auth.orgId;
+    const clerkId = auth.clerkId;
+    if (!auth.isLocal && !userId) return Response.json({ error: 'Unauthorized' }, { status: 401 });
+
     const length = Number(request.headers.get('content-length') || 0);
     if (length > 5_000_000) return Response.json({ error: 'Graph payload is too large.' }, { status: 413 });
 
     const body = await request.json();
-    const projectId = typeof body?.projectId === 'string' ? body.projectId : 'default';
-    if (projectId.length > 80 || !(await projectExistsInDb(projectId))) return Response.json({ error: 'Project not found.' }, { status: 404 });
+    const projectId = typeof body?.projectId === 'string' ? body.projectId : '';
+    if (!projectId || projectId.length > 80 || !(await userHasProjectAccess(projectId, userId, orgId, clerkId))) {
+      return Response.json({ error: 'Project not found or access denied.' }, { status: 404 });
+    }
     if (!Array.isArray(body?.nodes) || !Array.isArray(body?.relationships)) {
       return Response.json({ error: 'Expected nodes and relationships.' }, { status: 400 });
     }

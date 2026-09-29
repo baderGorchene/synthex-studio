@@ -6,14 +6,27 @@ import {
   restoreGraphRevision,
   deleteGraphRevision,
   getAllNodesFromDb,
-  getAllConnectionsFromDb
+  getAllConnectionsFromDb,
+  userHasProjectAccess
 } from '@/lib/db';
+import { getServerAuth } from '@/lib/auth';
 import { CanvasNode, Connection } from '@/types/canvas';
 
 export async function GET(request: NextRequest) {
   try {
+    const auth = await getServerAuth();
+    const userId = auth.user?.id || auth.userId;
+    const orgId = auth.orgId;
+    const clerkId = auth.clerkId;
+    if (!auth.isLocal && !userId) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
     const { searchParams } = new URL(request.url);
-    const projectId = searchParams.get('projectId') || 'default';
+    const projectId = searchParams.get('projectId') || '';
+    if (!projectId || !(await userHasProjectAccess(projectId, userId, orgId, clerkId))) {
+      return NextResponse.json({ error: 'Project not found' }, { status: 404 });
+    }
     const revisionId = searchParams.get('revisionId');
 
     if (revisionId) {
@@ -37,8 +50,19 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
+    const auth = await getServerAuth();
+    const userId = auth.user?.id || auth.userId;
+    const orgId = auth.orgId;
+    const clerkId = auth.clerkId;
+    if (!auth.isLocal && !userId) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
     const body = await request.json();
-    const projectId = body.projectId || 'default';
+    const projectId = body.projectId || '';
+    if (!projectId || !(await userHasProjectAccess(projectId, userId, orgId, clerkId))) {
+      return NextResponse.json({ error: 'Project not found or access denied' }, { status: 404 });
+    }
     const action = body.action || 'create';
 
     if (action === 'restore') {

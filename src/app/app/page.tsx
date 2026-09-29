@@ -27,6 +27,8 @@ import { computeOrganizedLayout } from '@/lib/graph-organizer';
 import { auditGraphTopology } from '@/lib/graph-analyst';
 import { UserNav } from '@/components/auth/UserNav';
 import { CreditsModal } from '@/components/auth/CreditsModal';
+import { SubscriptionOnboardingModal } from '@/components/auth/SubscriptionOnboardingModal';
+import { SynthexLogo } from '@/components/brand/SynthexLogo';
 
 type Viewport = { zoom: number; pan: Coordinates };
 type Tool = 'select' | 'connect' | 'hand';
@@ -67,7 +69,12 @@ const plural = (count: number, singular: string, many = `${singular}s`) => `${co
 
 export default function SynthexWorkspace() {
   const [projects, setProjects] = useState<ResearchProject[]>([]);
-  const [projectId, setProjectId] = useState('default');
+  const [projectId, setProjectId] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('synthex_active_project_id') || '';
+    }
+    return '';
+  });
   const [graph, setGraph] = useState<KnowledgeGraph>(blankGraph);
   const [sessions, setSessions] = useState<ResearchSession[]>([]);
   const [section, setSection] = useState<WorkspaceSection>('canvas');
@@ -76,7 +83,11 @@ export default function SynthexWorkspace() {
   const [spacePressed, setSpacePressed] = useState(false);
   const [saveState, setSaveState] = useState<'saved' | 'saving' | 'error'>('saved');
   const [aiStatus, setAiStatus] = useState<AIStatus | null>(null);
-  const [userAuth, setUserAuth] = useState<{ contextCredits?: number; subscriptionTier?: string } | null>(null);
+  const [userAuth, setUserAuth] = useState<{
+    contextCredits?: number;
+    subscriptionTier?: string;
+    hasSelectedPlan?: boolean;
+  } | null>(null);
   const aiConfigured = Boolean(aiStatus?.configured);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [viewport, setViewport] = useState<Viewport>({ zoom: 0.82, pan: { x: 76, y: 52 } });
@@ -163,6 +174,24 @@ export default function SynthexWorkspace() {
     if (noticeTimer.current) clearTimeout(noticeTimer.current);
     noticeTimer.current = setTimeout(() => setNotice(''), 3600);
   }, []);
+
+  const [isResizeLocked, setIsResizeLocked] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('synthex_resize_locked') === 'true';
+    }
+    return false;
+  });
+
+  const toggleResizeLock = useCallback(() => {
+    setIsResizeLocked(prev => {
+      const next = !prev;
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('synthex_resize_locked', String(next));
+      }
+      announce(next ? 'Component resizing locked for all components.' : 'Component resizing unlocked: Drag corner handles to resize cards.');
+      return next;
+    });
+  }, [announce]);
 
   const updateGraph = useCallback((change: (current: KnowledgeGraph) => KnowledgeGraph, recordUndo = true) => {
     let didRecord = false;
@@ -282,11 +311,22 @@ export default function SynthexWorkspace() {
 
   useEffect(() => {
     let cancelled = false;
-    fetch('/api/projects', { cache: 'no-store' }).then(response => readJson<{ projects: ResearchProject[] }>(response)).then(data => {
-      if (cancelled) return;
-      setProjects(data.projects);
-      if (!data.projects.some(project => project.id === 'default')) setProjectId(data.projects[0]?.id || 'default');
-    }).catch(error => announce(error instanceof Error ? error.message : 'Could not load projects.'));
+    fetch('/api/projects', { cache: 'no-store' })
+      .then(response => readJson<{ projects: ResearchProject[] }>(response))
+      .then(data => {
+        if (cancelled) return;
+        setProjects(data.projects);
+        if (data.projects.length > 0) {
+          const stored = typeof window !== 'undefined' ? localStorage.getItem('synthex_active_project_id') : null;
+          const matching = data.projects.find(p => p.id === stored);
+          const nextId = matching ? matching.id : data.projects[0].id;
+          setProjectId(nextId);
+          if (typeof window !== 'undefined') {
+            localStorage.setItem('synthex_active_project_id', nextId);
+          }
+        }
+      })
+      .catch(error => announce(error instanceof Error ? error.message : 'Could not load projects.'));
     fetch('/api/ai/status', { cache: 'no-store' })
       .then(response => response.json())
       .then((data: AIStatus) => {
@@ -298,10 +338,11 @@ export default function SynthexWorkspace() {
     fetch('/api/auth/me', { cache: 'no-store' })
       .then(response => response.json())
       .then(data => {
-        if (!cancelled && data?.user) {
+        if (!cancelled) {
           setUserAuth({
-            contextCredits: data.user.contextCredits,
-            subscriptionTier: data.user.subscriptionTier
+            contextCredits: data.user?.contextCredits ?? data.contextCredits ?? 0,
+            subscriptionTier: data.user?.subscriptionTier ?? data.subscriptionTier ?? 'none',
+            hasSelectedPlan: Boolean(data.hasSelectedPlan)
           });
         }
       })
@@ -310,7 +351,7 @@ export default function SynthexWorkspace() {
   }, [announce]);
 
   useEffect(() => {
-    if (projects.length) void loadProject(projectId);
+    if (projectId && projects.length) void loadProject(projectId);
   }, [projectId, projects.length, loadProject]);
 
   useEffect(() => {
@@ -690,6 +731,9 @@ export default function SynthexWorkspace() {
       }));
       setProjects(current => [...current, data.project]);
       setProjectTitleDraft(''); setModal(null); setProjectId(data.project.id);
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('synthex_active_project_id', data.project.id);
+      }
       announce('Workspace created.');
     } catch (error) { announce(error instanceof Error ? error.message : 'Could not create workspace.'); }
     finally { setCreatingProject(false); }
@@ -1454,6 +1498,8 @@ export default function SynthexWorkspace() {
           onSelectTool={value => { setTool(value); setLinkingFromId(null); }}
           onFit={() => setCanvasFitKey(value => value + 1)}
           onAddRecord={addRecord}
+          isResizeLocked={isResizeLocked}
+          onToggleResizeLock={toggleResizeLock}
           onOrganizeLayout={strategy => {
             const positions = computeOrganizedLayout(graphRef.current, strategy);
             handleApplyLayout(positions);
@@ -1469,14 +1515,14 @@ export default function SynthexWorkspace() {
           <div className="topbar-left">
             <button
               className={`topbar-home-button ${section === 'canvas' ? 'is-active' : ''}`}
-              title="Home (Knowledge Canvas)"
-              aria-label="Home (Knowledge Canvas)"
+              title="Synthex Studio — Knowledge Canvas"
+              aria-label="Synthex Studio — Knowledge Canvas"
               onClick={() => navigateTo('canvas')}
             >
               <span className="home-brand-icon">
-                <Sparkles size={13} />
+                <SynthexLogo size={20} />
               </span>
-              <span className="home-brand-text">Home</span>
+              <span className="home-brand-text">Synthex</span>
             </button>
 
             <span className="topbar-slash" aria-hidden="true">/</span>
@@ -1500,7 +1546,13 @@ export default function SynthexWorkspace() {
                     <button
                       key={p.id}
                       className={`project-menu-item ${p.id === projectId ? 'is-active' : ''}`}
-                      onClick={() => { setProjectId(p.id); setProjectMenuOpen(false); }}
+                      onClick={() => {
+                        setProjectId(p.id);
+                        if (typeof window !== 'undefined') {
+                          localStorage.setItem('synthex_active_project_id', p.id);
+                        }
+                        setProjectMenuOpen(false);
+                      }}
                     >
                       <FolderKanban size={14} />
                       <div className="project-item-text">
@@ -1844,6 +1896,7 @@ export default function SynthexWorkspace() {
                   onUpdateRelationship={editRelationship} onDeleteRelationship={deleteRelationship} onResizeGroup={resizeGroup} onOpenGroup={id => { setEditingNoteId(null); setGroupCanvasId(id); }}
                   onAddRecordWithData={addRecord}
                   projectId={projectId}
+                  isResizeLocked={isResizeLocked}
                 />}
               </div>
 
@@ -2238,7 +2291,7 @@ export default function SynthexWorkspace() {
           <section className="group-canvas-modal" role="dialog" aria-modal="true" aria-label={`${group.title} sub-canvas`}>
             <header className="group-canvas-header"><div><div className="group-breadcrumb"><span>Workspace</span><span>/</span><strong>{group.title}</strong></div><p>{plural(members.length, 'record')} in this knowledge cluster</p></div><button className="icon-button" aria-label="Close sub-canvas" onClick={() => setGroupCanvasId(null)}><X size={17} /></button></header>
             {members.length ? <GraphCanvas graph={containedGraph} selectedNodeIds={selectedIds.filter(id => memberIds.has(id))} viewport={groupViewport} setViewport={setGroupViewport} activeTool={tool} spacePressed={spacePressed} linkingFromId={linkingFromId} autoFitKey={canvasFitKey + 1} editingNoteId={editingNoteId}
-              onSelectNode={(id, additive) => setSelectedIds(current => additive ? current.includes(id) ? current.filter(value => value !== id) : [...current, id] : [id])} onClearSelection={() => setSelectedIds([])} onClickAway={() => setEditingNoteId(null)} onCancelLinking={() => setLinkingFromId(null)} onMoveNodes={moveNodes} onConnect={connectNodes} onStartLinking={setLinkingFromId} onToggleGroup={toggleGroup} onEditNote={setEditingNoteId} onUpdateNote={(id, content) => updateGraph(current => updateNode(current, id, { content }), false)} onUpdateRelationship={editRelationship} onDeleteRelationship={deleteRelationship} onResizeGroup={resizeGroup} onOpenGroup={id => { setEditingNoteId(null); setGroupCanvasId(id); }} onAddRecordWithData={addRecord} /> : <div className="subcanvas-empty"><Layers2 size={22} /><p>This cluster has no member records yet.</p><button className="quiet-button" onClick={() => { addRecord('note'); setGroupCanvasId(null); }}>Add a note & idea</button></div>}
+              onSelectNode={(id, additive) => setSelectedIds(current => additive ? current.includes(id) ? current.filter(value => value !== id) : [...current, id] : [id])} onClearSelection={() => setSelectedIds([])} onClickAway={() => setEditingNoteId(null)} onCancelLinking={() => setLinkingFromId(null)} onMoveNodes={moveNodes} onConnect={connectNodes} onStartLinking={setLinkingFromId} onToggleGroup={toggleGroup} onEditNote={setEditingNoteId} onUpdateNote={(id, content) => updateGraph(current => updateNode(current, id, { content }), false)} onUpdateRelationship={editRelationship} onDeleteRelationship={deleteRelationship} onResizeGroup={resizeGroup} onOpenGroup={id => { setEditingNoteId(null); setGroupCanvasId(id); }} onAddRecordWithData={addRecord} isResizeLocked={isResizeLocked} /> : <div className="subcanvas-empty"><Layers2 size={22} /><p>This cluster has no member records yet.</p><button className="quiet-button" onClick={() => { addRecord('note'); setGroupCanvasId(null); }}>Add a note & idea</button></div>}
           </section>
         </div>;
       })()}
@@ -2282,7 +2335,7 @@ export default function SynthexWorkspace() {
           <div className="project-form-divider"><span>Or create a new one</span></div>
           <form onSubmit={createProject}>
             <label className="field-label" htmlFor="project-name">Workspace name</label><input className="field-input" id="project-name" autoFocus value={projectTitleDraft} onChange={event => setProjectTitleDraft(event.target.value)} maxLength={80} minLength={2} placeholder="e.g. Small language models" required />
-            <span className="field-label">Start with</span><CustomSelect className="field-input project-template-select" ariaLabel="Start with" value={projectTemplate} options={[{ value: 'rag', label: 'A sample knowledge sheet' }, { value: 'blank', label: 'An empty sheet' }]} onChange={value => setProjectTemplate(value as 'blank' | 'rag')} />
+            <span className="field-label">Start with</span><CustomSelect className="field-input project-template-select" ariaLabel="Start with" value={projectTemplate} options={[{ value: 'rag', label: 'Product documentation & elements guide' }, { value: 'blank', label: 'An empty sheet' }]} onChange={value => setProjectTemplate(value as 'blank' | 'rag')} />
             <div className="modal-footer"><span>Stored in this local workspace</span><button className="primary-button" disabled={creatingProject || projectTitleDraft.trim().length < 2}>{creatingProject ? <><LoaderCircle size={15} className="spin" /> Creating…</> : <><Plus size={15} /> Create workspace</>}</button></div>
           </form>
         </section>
@@ -2303,6 +2356,30 @@ export default function SynthexWorkspace() {
         subscriptionTier={userAuth?.subscriptionTier}
         onRefillSuccess={(newBalance) => {
           setUserAuth(prev => prev ? { ...prev, contextCredits: newBalance } : { contextCredits: newBalance });
+        }}
+      />
+
+      <SubscriptionOnboardingModal
+        isOpen={userAuth !== null && userAuth.hasSelectedPlan === false}
+        onPlanSelected={({ tier, credits, project }) => {
+          setUserAuth(prev => ({
+            ...(prev || {}),
+            subscriptionTier: tier,
+            contextCredits: credits,
+            hasSelectedPlan: true
+          }));
+          if (project) {
+            setProjects(prev => {
+              if (!prev.some(p => p.id === project.id)) {
+                return [project as ResearchProject, ...prev];
+              }
+              return prev;
+            });
+            setProjectId(project.id);
+            if (typeof window !== 'undefined') {
+              localStorage.setItem('synthex_active_project_id', project.id);
+            }
+          }
         }}
       />
 

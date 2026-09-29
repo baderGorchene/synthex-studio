@@ -57,26 +57,51 @@ export async function POST(request: Request) {
           gcsPath: gcsResult.gcsPath
         });
       } catch (gcsErr) {
-        console.warn('GCS upload attempt failed, falling back to local storage:', gcsErr);
+        console.warn('GCS upload attempt failed, falling back to serverless-safe storage:', gcsErr);
       }
     }
 
-    // 2. Local disk fallback (public/uploads/{projectId})
-    const uploadsDir = path.join(process.cwd(), 'public', 'uploads', projectId);
-    await fs.mkdir(uploadsDir, { recursive: true });
+    // 2. Check if running in a Serverless environment (Vercel / AWS Lambda)
+    // Serverless runtimes have a read-only filesystem (no writable /public directory)
+    const isServerless = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
 
-    const targetFilePath = path.join(uploadsDir, fileName);
-    await fs.writeFile(targetFilePath, buffer);
+    if (!isServerless) {
+      try {
+        // Local disk storage for non-serverless local development (public/uploads/{projectId})
+        const uploadsDir = path.join(process.cwd(), 'public', 'uploads', projectId);
+        await fs.mkdir(uploadsDir, { recursive: true });
 
-    const relativeUrl = `/uploads/${projectId}/${fileName}`;
+        const targetFilePath = path.join(uploadsDir, fileName);
+        await fs.writeFile(targetFilePath, buffer);
+
+        const relativeUrl = `/uploads/${projectId}/${fileName}`;
+
+        return NextResponse.json({
+          url: relativeUrl,
+          fileName: rawName,
+          fileSize: file.size,
+          fileType,
+          mimeType: file.type,
+          storage: 'local'
+        });
+      } catch (diskErr) {
+        console.warn('Local disk write failed, falling back to inline Data URI:', diskErr);
+      }
+    }
+
+    // 3. Serverless / Resilient Fallback: Inline Base64 Data URI
+    // Eliminates ENOENT / EROFS filesystem crashes on Vercel when GCS is unconfigured
+    const mime = file.type || (fileType === 'pdf' ? 'application/pdf' : 'application/octet-stream');
+    const base64Data = buffer.toString('base64');
+    const dataUrl = `data:${mime};base64,${base64Data}`;
 
     return NextResponse.json({
-      url: relativeUrl,
+      url: dataUrl,
       fileName: rawName,
       fileSize: file.size,
       fileType,
       mimeType: file.type,
-      storage: 'local'
+      storage: 'inline'
     });
   } catch (error) {
     console.error('File upload error:', error);
