@@ -42,7 +42,7 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     console.error('Error fetching revisions:', error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Failed to fetch revisions' },
+      { error: 'Failed to fetch revisions' },
       { status: 500 }
     );
   }
@@ -102,7 +102,7 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error('Error managing revisions:', error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Failed to process revision' },
+      { error: 'Failed to process revision' },
       { status: 500 }
     );
   }

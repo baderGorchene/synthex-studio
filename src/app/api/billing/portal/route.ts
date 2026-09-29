@@ -28,7 +28,7 @@ export async function POST(req: NextRequest) {
   } catch (error) {
     console.error('Customer portal error:', error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Could not create billing portal session.' },
+      { error: 'Could not create billing portal session.' },
       { status: 500 }
     );
   }

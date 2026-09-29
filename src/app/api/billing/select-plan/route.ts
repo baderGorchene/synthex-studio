@@ -99,7 +99,7 @@ export async function POST(req: NextRequest) {
   } catch (error) {
     console.error('Plan selection error:', error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Could not activate plan.' },
+      { error: 'Could not activate plan.' },
       { status: 500 }
     );
   }

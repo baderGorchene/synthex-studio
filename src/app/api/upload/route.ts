@@ -115,7 +115,7 @@ export async function POST(request: Request) {
   } catch (error) {
     console.error('File upload error:', error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Failed to save file to server storage.' },
+      { error: 'Failed to save file to server storage.' },
       { status: 500 }
     );
   }

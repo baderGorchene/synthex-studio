@@ -55,7 +55,13 @@ This module contains the pure functions: `normalizeGraph` (which rejects duplica
 `POST /api/upload` stores a file in GCS when `GCS_BUCKET_NAME` is set (`storage-gcs.ts`). Otherwise it writes to `public/uploads/{projectId}/`. On read-only serverless filesystems it falls back to an inline data URI. Nodes store only the returned URL. `PUT /api/graph` rejects bodies over 5 MB, so large base64 payloads in nodes will break autosave.
 
 ### Security
-`/api/metadata` (OpenGraph scraper) is public and includes SSRF guards that block private, loopback and link-local addresses. Keep those guards when you change it.
+- Only `/`, sign-in/up, `/api/webhooks/*` and `/uploads/*` are public (`src/middleware.ts`). Webhooks must verify signatures (Stripe `constructEvent`, Clerk `verifyWebhook`) and return 503 when their secret is unset — never parse unsigned payloads.
+- `/api/metadata` fetches arbitrary URLs: every hop is checked against a private-range `BlockList`, and the socket uses a pinned DNS lookup (anti-rebinding). Keep both.
+- `/api/backup` touches the whole SQLite file, so it's local-mode only.
+- AI routes charge credits up front with an atomic conditional `UPDATE` (`deductCredits`) and call `refundCredits` if the AI call fails. Don't reintroduce check-then-deduct.
+- `userHasProjectAccess` / `getProjectsFromDb` fail closed when given no identity.
+- Return generic messages in 5xx responses; log the real error server-side.
+- CSP is set by `clerkMiddleware` (`contentSecurityPolicy` in `src/middleware.ts`); new external image/frame/font hosts must be added there. Other headers live in `next.config.ts`.
 
 ## Deployment
 The app runs in two targets. The `Dockerfile` and `cloudbuild.yaml` build it for Google Cloud Run (port 8080). On Vercel it uses Neon, and SQLite falls back to `/tmp/canvas.db`. `.env.example` documents all environment variables. Every integration is optional: with only `GEMINI_API_KEY` set, or with nothing at all, the app runs fully offline on SQLite.

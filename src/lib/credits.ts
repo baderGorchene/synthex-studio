@@ -3,7 +3,7 @@
  * Abstract away raw dollar/token figures into a clean, predictable research currency.
  */
 
-import { deductUserCredits, getUserById, getUserByClerkId, type UserRecord } from './db.ts';
+import { deductUserCredits, topUpUserCredits } from './db.ts';
 import { isNeonConfigured } from './neon.ts';
 
 export type CreditAction =
@@ -28,76 +28,12 @@ export const TIER_CREDIT_QUOTAS = {
   team: 5000
 };
 
-export interface CreditCheckResult {
-  hasSufficient: boolean;
-  cost: number;
-  currentBalance: number;
-  error?: string;
-}
-
 /**
  * Calculates required context credits for an action and optional units (e.g. pages)
  */
 export function getActionCost(action: Extract<CreditAction, 'chat' | 'quick_research' | 'deep_research' | 'pdf_extract'>, units = 1): number {
   const baseRate = CREDIT_RATES[action] ?? 1;
   return Math.max(1, Math.round(baseRate * units));
-}
-
-/**
- * Verifies whether a user has enough context credits before launching an AI operation.
- * Supports both sync SQLite (unit tests / local dev) and async Neon Postgres.
- */
-export function verifyCreditBalance(
-  userIdentifier: string,
-  action: Extract<CreditAction, 'chat' | 'quick_research' | 'deep_research' | 'pdf_extract'>,
-  units = 1
-): CreditCheckResult | Promise<CreditCheckResult> {
-  const cost = getActionCost(action, units);
-
-  if (isNeonConfigured()) {
-    return (async () => {
-      const user = (await getUserByClerkId(userIdentifier)) || (await getUserById(userIdentifier));
-      if (!user) {
-        return {
-          hasSufficient: false,
-          cost,
-          currentBalance: 0,
-          error: 'User profile not found.'
-        };
-      }
-      const hasSufficient = user.contextCredits >= cost;
-      return {
-        hasSufficient,
-        cost,
-        currentBalance: user.contextCredits,
-        error: hasSufficient
-          ? undefined
-          : `Insufficient Context Credits. This operation requires ${cost} credits, but your current balance is ${user.contextCredits}.`
-      };
-    })();
-  }
-
-  const user = (getUserByClerkId(userIdentifier) || getUserById(userIdentifier)) as UserRecord | null;
-
-  if (!user) {
-    return {
-      hasSufficient: false,
-      cost,
-      currentBalance: 0,
-      error: 'User profile not found.'
-    };
-  }
-
-  const hasSufficient = user.contextCredits >= cost;
-
-  return {
-    hasSufficient,
-    cost,
-    currentBalance: user.contextCredits,
-    error: hasSufficient
-      ? undefined
-      : `Insufficient Context Credits. This operation requires ${cost} credits, but your current balance is ${user.contextCredits}.`
-  };
 }
 
 /**
@@ -134,6 +70,17 @@ export function deductCredits(
     balance: result.balance,
     error: result.error
   };
+}
+
+/**
+ * Gives back credits charged up front for an AI operation that then failed.
+ */
+export async function refundCredits(
+  userIdentifier: string,
+  action: Extract<CreditAction, 'chat' | 'quick_research' | 'deep_research' | 'pdf_extract'>,
+  metadata?: string
+): Promise<void> {
+  await topUpUserCredits(userIdentifier, getActionCost(action), 'refund', metadata);
 }
 
 /**

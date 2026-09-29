@@ -70,7 +70,7 @@ export async function POST(req: NextRequest) {
   } catch (error) {
     console.error('Clerk webhook processing error:', error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Webhook handling failed.' },
+      { error: 'Webhook handling failed.' },
       { status: 500 }
     );
   }

@@ -265,18 +265,7 @@ export async function neonGetProjects(
       createdAt: Number(r.created_at)
     }));
   }
-  const rows = await sql`
-    SELECT id, title, user_id, organization_id, created_at
-    FROM projects
-    ORDER BY created_at ASC
-  `;
-  return rows.map(r => ({
-    id: String(r.id),
-    title: String(r.title),
-    userId: r.user_id ? String(r.user_id) : null,
-    organizationId: r.organization_id ? String(r.organization_id) : null,
-    createdAt: Number(r.created_at)
-  }));
+  return [];
 }
 
 export async function neonProjectExists(id: string): Promise<boolean> {
@@ -294,10 +283,8 @@ export async function neonUserHasProjectAccess(
 ): Promise<boolean> {
   await ensureNeonSchema();
   const sql = getSql();
-  if (!userId && !orgId && !clerkId) {
-    const rows = await sql`SELECT 1 FROM projects WHERE id = ${id} LIMIT 1`;
-    return rows.length > 0;
-  }
+  // No identity means no access; never fall back to "project exists".
+  if (!userId && !orgId && !clerkId) return false;
   const rows = await sql`
     SELECT 1 FROM projects
     WHERE id = ${id} AND (
@@ -1027,20 +1014,25 @@ export async function neonDeductUserCredits(
     return { success: false, balance: 0, error: 'User account not found.' };
   }
 
-  if (user.contextCredits < amount) {
+  const txId = `ctx-${globalThis.crypto?.randomUUID?.() || Math.random().toString(36).slice(2, 10)}`;
+  const now = Date.now();
+  const sql = getSql();
+
+  // Check and decrement in one statement so concurrent requests can't overspend.
+  const rows = (await sql`
+    UPDATE users SET context_credits = context_credits - ${amount}
+    WHERE id = ${user.id} AND context_credits >= ${amount}
+    RETURNING context_credits
+  `) as unknown as Array<{ context_credits: number | string }>;
+  if (rows.length === 0) {
     return {
       success: false,
       balance: user.contextCredits,
       error: `Insufficient Context Credits (${user.contextCredits} available, ${amount} required). Please refill your credits.`
     };
   }
+  const nextBalance = Number(rows[0].context_credits);
 
-  const nextBalance = user.contextCredits - amount;
-  const txId = `ctx-${globalThis.crypto?.randomUUID?.() || Math.random().toString(36).slice(2, 10)}`;
-  const now = Date.now();
-  const sql = getSql();
-
-  await sql`UPDATE users SET context_credits = ${nextBalance} WHERE id = ${user.id}`;
   await sql`
     INSERT INTO credit_transactions (id, user_id, amount, action, balance_after, metadata, created_at)
     VALUES (${txId}, ${user.id}, ${-amount}, ${action}, ${nextBalance}, ${metadata || null}, ${now})

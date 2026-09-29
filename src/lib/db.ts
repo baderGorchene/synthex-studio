@@ -766,7 +766,7 @@ export function getProjectsFromDb(
       ORDER BY createdAt ASC
     `).all(...params) as ResearchProject[];
   }
-  return db.prepare('SELECT id, title, createdAt, userId, organizationId FROM projects ORDER BY createdAt ASC').all() as ResearchProject[];
+  return [];
 }
 
 export function projectExistsInDb(id: string): boolean | Promise<boolean> {
@@ -786,9 +786,8 @@ export function userHasProjectAccess(
     return neonUserHasProjectAccess(id, userId, orgId, clerkId);
   }
   const db = getDatabase();
-  if (!userId && !orgId && !clerkId) {
-    return Boolean(db.prepare('SELECT 1 FROM projects WHERE id = ?').get(id));
-  }
+  // No identity means no access; never fall back to "project exists".
+  if (!userId && !orgId && !clerkId) return false;
   const conditions: string[] = [];
   const params: string[] = [id];
   if (userId) {
@@ -1371,27 +1370,30 @@ export function deductUserCredits(
     return { success: false, balance: 0, error: 'User account not found.' };
   }
 
-  if (user.contextCredits < amount) {
+  const txId = `ctx-${globalThis.crypto?.randomUUID?.() || Math.random().toString(36).slice(2, 10)}`;
+  const now = Date.now();
+
+  // Check and decrement in one statement so concurrent requests can't overspend.
+  const runTx = db.transaction(() => {
+    const row = db.prepare(
+      'UPDATE users SET contextCredits = contextCredits - ? WHERE id = ? AND contextCredits >= ? RETURNING contextCredits'
+    ).get(amount, user.id, amount) as { contextCredits: number } | undefined;
+    if (!row) return null;
+    db.prepare(`
+      INSERT INTO credit_transactions (id, userId, amount, action, balanceAfter, metadata, createdAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(txId, user.id, -amount, action, row.contextCredits, metadata || null, now);
+    return row.contextCredits;
+  });
+
+  const nextBalance = runTx();
+  if (nextBalance === null) {
     return {
       success: false,
       balance: user.contextCredits,
       error: `Insufficient Context Credits (${user.contextCredits} available, ${amount} required). Please refill your credits.`
     };
   }
-
-  const nextBalance = user.contextCredits - amount;
-  const txId = `ctx-${globalThis.crypto?.randomUUID?.() || Math.random().toString(36).slice(2, 10)}`;
-  const now = Date.now();
-
-  const runTx = db.transaction(() => {
-    db.prepare('UPDATE users SET contextCredits = ? WHERE id = ?').run(nextBalance, user.id);
-    db.prepare(`
-      INSERT INTO credit_transactions (id, userId, amount, action, balanceAfter, metadata, createdAt)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(txId, user.id, -amount, action, nextBalance, metadata || null, now);
-  });
-
-  runTx();
 
   return { success: true, balance: nextBalance };
 }

@@ -1088,11 +1088,11 @@ test('Context Credits Economic Engine: consumption rates, balance pre-checks, ov
     CREDIT_RATES,
     TIER_CREDIT_QUOTAS,
     getActionCost,
-    verifyCreditBalance,
+    refundCredits,
     deductCredits,
     formatCredits
   } = await import('../src/lib/credits.ts');
-  const { upsertUser } = await import('../src/lib/db.ts');
+  const { upsertUser, getUserById } = await import('../src/lib/db.ts');
 
   // 1. Verify canonical consumption rates
   assert.strictEqual(CREDIT_RATES.chat, 1, 'Graph chat costs 1 credit');
@@ -1123,22 +1123,11 @@ test('Context Credits Economic Engine: consumption rates, balance pre-checks, ov
     contextCredits: 25
   });
 
-  // 4. Pre-check: sufficient for chat (1 credit)
-  const chatCheck = verifyCreditBalance(user.id, 'chat');
-  assert.strictEqual(chatCheck.hasSufficient, true);
-  assert.strictEqual(chatCheck.cost, 1);
-  assert.strictEqual(chatCheck.currentBalance, 25);
-
-  // 5. Pre-check: sufficient for deep research (20 credits)
-  const deepCheck = verifyCreditBalance(user.id, 'deep_research');
-  assert.strictEqual(deepCheck.hasSufficient, true);
-  assert.strictEqual(deepCheck.cost, 20);
-
-  // 6. Pre-check: insufficient for 20 pages PDF extraction (40 credits)
-  const pdfOverdraftCheck = verifyCreditBalance(user.id, 'pdf_extract', 20);
-  assert.strictEqual(pdfOverdraftCheck.hasSufficient, false);
-  assert.strictEqual(pdfOverdraftCheck.cost, 40);
-  assert.ok(pdfOverdraftCheck.error?.includes('requires 40 credits'));
+  // 4. Overdraft: 20 PDF pages (40 credits) is refused and leaves the balance untouched
+  const pdfOverdraft = deductCredits(user.id, 'pdf_extract', 'Too many pages', 20);
+  assert.strictEqual(pdfOverdraft.success, false);
+  assert.strictEqual(pdfOverdraft.cost, 40);
+  assert.strictEqual(pdfOverdraft.balance, 25);
 
   // 7. Atomic deduction: execute deep research (20 credits)
   const deduction = deductCredits(user.id, 'deep_research', 'Investigated HippoRAG benchmarks');
@@ -1151,6 +1140,10 @@ test('Context Credits Economic Engine: consumption rates, balance pre-checks, ov
   assert.strictEqual(failedDeduction.success, false);
   assert.strictEqual(failedDeduction.balance, 5, 'Balance protected at 5 credits');
   assert.ok(failedDeduction.error?.includes('Insufficient Context Credits'));
+
+  // 9. A failed AI run gets its up-front charge refunded
+  await refundCredits(user.id, 'deep_research', 'Refund: Investigated HippoRAG benchmarks');
+  assert.strictEqual(getUserById(user.id).contextCredits, 25);
 });
 
 

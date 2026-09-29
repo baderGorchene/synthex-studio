@@ -2,7 +2,7 @@ import { askGraph, askGraphStream } from '@/lib/ai-service';
 import { getAllConnectionsFromDb, getAllNodesFromDb, userHasProjectAccess } from '@/lib/db';
 import { normalizeGraph } from '@/lib/graph';
 import { getServerAuth } from '@/lib/auth';
-import { verifyCreditBalance, deductCredits } from '@/lib/credits';
+import { deductCredits, refundCredits } from '@/lib/credits';
 import type { CanvasNode, Connection } from '@/types/canvas';
 
 export async function POST(request: Request) {
@@ -26,25 +26,30 @@ export async function POST(request: Request) {
       return Response.json({ error: 'Project not found.' }, { status: 404 });
     }
 
-    // Check Context Credits balance
-    const creditUserId = auth.user?.id || auth.clerkId;
-    if (creditUserId) {
-      const check = await verifyCreditBalance(creditUserId, 'chat');
-      if (!check.hasSufficient) {
-        return Response.json({
-          error: 'INSUFFICIENT_CREDITS',
-          message: check.error || 'Insufficient Context Credits. Please top up to continue.',
-          requiredCredits: check.cost,
-          currentBalance: check.currentBalance
-        }, { status: 402 });
-      }
-    }
-
     const [rawNodes, rawEdges] = await Promise.all([
       getAllNodesFromDb(projectId),
       getAllConnectionsFromDb(projectId)
     ]);
     const graph = normalizeGraph(rawNodes as CanvasNode[], rawEdges as Connection[]);
+
+    // Charge Context Credits up front (atomic), refund if the answer fails.
+    const creditNote = `Asked: "${question.slice(0, 50)}..."`;
+    let creditsRemaining: number | undefined;
+    if (userId) {
+      const charge = await deductCredits(userId, 'chat', creditNote);
+      if (!charge.success) {
+        return Response.json({
+          error: 'INSUFFICIENT_CREDITS',
+          message: charge.error || 'Insufficient Context Credits. Please top up to continue.',
+          requiredCredits: charge.cost,
+          currentBalance: charge.balance
+        }, { status: 402 });
+      }
+      creditsRemaining = charge.balance;
+    }
+    const refund = async () => {
+      if (userId) await refundCredits(userId, 'chat', `Refund: ${creditNote}`).catch(err => console.error('Credit refund failed:', err));
+    };
     const wantsStream = request.headers.get('accept')?.includes('text/event-stream') || body?.stream === true;
 
     if (wantsStream) {
@@ -55,13 +60,16 @@ export async function POST(request: Request) {
             for await (const event of askGraphStream(question, graph, selectedNodeId, projectId)) {
               controller.enqueue(encoder.encode(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`));
             }
-            if (userId) {
-              const deduction = (await deductCredits(userId, 'chat', `Asked: "${question.slice(0, 50)}..."`)) as { success: boolean; cost: number; balance: number; error?: string };
-              controller.enqueue(encoder.encode(`event: credits\ndata: ${JSON.stringify({ creditsRemaining: deduction.balance })}\n\n`));
+            if (creditsRemaining !== undefined) {
+              controller.enqueue(encoder.encode(`event: credits\ndata: ${JSON.stringify({ creditsRemaining })}\n\n`));
             }
             controller.close();
           } catch (err) {
-            const errorMsg = err instanceof Error ? err.message : 'The graph assistant could not answer.';
+            console.error('Graph chat stream failed:', err);
+            await refund();
+            const errorMsg = err instanceof Error && err.message === 'AI_NOT_CONFIGURED'
+              ? 'AI is not configured on the server.'
+              : 'The graph assistant could not answer. Your credit was refunded.';
             controller.enqueue(encoder.encode(`event: error\ndata: ${JSON.stringify({ error: errorMsg })}\n\n`));
             controller.close();
           }
@@ -77,11 +85,12 @@ export async function POST(request: Request) {
       });
     }
 
-    const result = await askGraph(question, graph, selectedNodeId, projectId);
-    let creditsRemaining: number | undefined;
-    if (userId) {
-      const deduction = (await deductCredits(userId, 'chat', `Asked: "${question.slice(0, 50)}..."`)) as { success: boolean; cost: number; balance: number; error?: string };
-      creditsRemaining = deduction.balance;
+    let result: Awaited<ReturnType<typeof askGraph>>;
+    try {
+      result = await askGraph(question, graph, selectedNodeId, projectId);
+    } catch (err) {
+      await refund();
+      throw err;
     }
 
     return Response.json({ ...result, creditsRemaining });

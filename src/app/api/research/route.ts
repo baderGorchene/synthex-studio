@@ -9,7 +9,7 @@ import {
 } from '@/lib/db';
 import { normalizeGraph } from '@/lib/graph';
 import { getServerAuth } from '@/lib/auth';
-import { verifyCreditBalance, deductCredits } from '@/lib/credits';
+import { deductCredits, refundCredits } from '@/lib/credits';
 import type { CanvasNode, Connection, ResearchChange, ResearchMode, ResearchSession } from '@/types/canvas';
 
 const nodeTypes = new Set(['concept', 'note', 'claim', 'question', 'hypothesis', 'ai_insight']);
@@ -165,25 +165,30 @@ export async function POST(request: Request) {
     }
     if (body?.mode !== 'quick' && body?.mode !== 'deep') return Response.json({ error: 'Choose quick or deep research.' }, { status: 400 });
 
-    // Check Context Credits balance
-    const creditAction = mode === 'deep' ? 'deep_research' : 'quick_research';
-    if (userId) {
-      const check = await verifyCreditBalance(userId, creditAction);
-      if (!check.hasSufficient) {
-        return Response.json({
-          error: 'INSUFFICIENT_CREDITS',
-          message: check.error || `Insufficient Context Credits for ${mode} research. Please top up to continue.`,
-          requiredCredits: check.cost,
-          currentBalance: check.currentBalance
-        }, { status: 402 });
-      }
-    }
-
     const [rawNodes, rawEdges] = await Promise.all([
       getAllNodesFromDb(projectId),
       getAllConnectionsFromDb(projectId)
     ]);
     const graph = normalizeGraph(rawNodes as CanvasNode[], rawEdges as Connection[]);
+
+    // Charge Context Credits up front (atomic), refund if the run fails.
+    const creditAction = mode === 'deep' ? 'deep_research' : 'quick_research';
+    const creditNote = `${mode === 'deep' ? 'Deep' : 'Quick'} research: "${query.slice(0, 50)}..."`;
+    let creditsRemaining: number | undefined;
+    if (userId) {
+      const charge = await deductCredits(userId, creditAction, creditNote);
+      if (!charge.success) {
+        return Response.json({
+          error: 'INSUFFICIENT_CREDITS',
+          message: charge.error || `Insufficient Context Credits for ${mode} research. Please top up to continue.`,
+          requiredCredits: charge.cost,
+          currentBalance: charge.balance
+        }, { status: 402 });
+      }
+      creditsRemaining = charge.balance;
+    }
+    const refund = async () => { if (userId) await refundCredits(userId, creditAction, `Refund: ${creditNote}`); };
+
     const wantsStream = request.headers.get('accept')?.includes('text/event-stream') || body?.stream === true;
 
     if (wantsStream) {
@@ -195,11 +200,6 @@ export async function POST(request: Request) {
               if (event.type === 'done') {
                 const session = buildSessionFromResearchResult(query, mode, graph, event.result);
                 await saveResearchSession(session, projectId);
-                let creditsRemaining: number | undefined;
-                if (userId) {
-                  const deduction = (await deductCredits(userId, creditAction, `${mode === 'deep' ? 'Deep' : 'Quick'} research: "${query.slice(0, 50)}..."`)) as { success: boolean; cost: number; balance: number; error?: string };
-                  creditsRemaining = deduction.balance;
-                }
                 controller.enqueue(encoder.encode(`event: done\ndata: ${JSON.stringify({ session, result: event.result, creditsRemaining })}\n\n`));
               } else {
                 controller.enqueue(encoder.encode(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`));
@@ -207,7 +207,11 @@ export async function POST(request: Request) {
             }
             controller.close();
           } catch (err) {
-            const errorMsg = err instanceof Error ? err.message : 'Research run could not complete.';
+            console.error('Research stream failed:', err);
+            await refund().catch(refundErr => console.error('Credit refund failed:', refundErr));
+            const errorMsg = err instanceof Error && err.message === 'AI_NOT_CONFIGURED'
+              ? 'AI is not configured on the server.'
+              : 'Research run could not complete. Your credits were refunded.';
             controller.enqueue(encoder.encode(`event: error\ndata: ${JSON.stringify({ error: errorMsg })}\n\n`));
             controller.close();
           }
@@ -223,14 +227,14 @@ export async function POST(request: Request) {
       });
     }
 
-    const resultPayload = await researchGraph(query, mode, graph, projectId);
-    const session = buildSessionFromResearchResult(query, mode, graph, resultPayload);
-    await saveResearchSession(session, projectId);
-
-    let creditsRemaining: number | undefined;
-    if (userId) {
-      const deduction = (await deductCredits(userId, creditAction, `${mode === 'deep' ? 'Deep' : 'Quick'} research: "${query.slice(0, 50)}..."`)) as { success: boolean; cost: number; balance: number; error?: string };
-      creditsRemaining = deduction.balance;
+    let session: ResearchSession;
+    try {
+      const resultPayload = await researchGraph(query, mode, graph, projectId);
+      session = buildSessionFromResearchResult(query, mode, graph, resultPayload);
+      await saveResearchSession(session, projectId);
+    } catch (err) {
+      await refund().catch(refundErr => console.error('Credit refund failed:', refundErr));
+      throw err;
     }
 
     return Response.json({ session, creditsRemaining }, { status: 201 });
