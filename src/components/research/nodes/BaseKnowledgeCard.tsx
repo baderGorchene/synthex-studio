@@ -237,16 +237,16 @@ export function BaseKnowledgeCard({
           />
         )}
 
-        {node.type === 'note' ? (
-          isEditing ? (
-            <MarkdownEditor className="card-markdown-editor" value={node.content || ''} onChange={onUpdateContent} ariaLabel="Edit note in Markdown" />
-          ) : body ? (
-            <MarkdownView content={body} className="node-summary note-markdown-preview" onToggleTask={index => onUpdateContent(toggleMarkdownTask(body, index))} />
-          ) : (
-            <p className="node-summary note-placeholder">Add a note and format it with Markdown.</p>
-          )
+        {node.type === 'note' && isEditing ? (
+          <MarkdownEditor className="card-markdown-editor" value={node.content || ''} onChange={onUpdateContent} ariaLabel="Edit note in Markdown" />
         ) : body && !isImage ? (
-          <p className="node-summary">{body}</p>
+          <MarkdownView
+            content={body}
+            className="node-summary note-markdown-preview"
+            onToggleTask={node.type === 'note' ? index => onUpdateContent(toggleMarkdownTask(body, index)) : undefined}
+          />
+        ) : node.type === 'note' ? (
+          <p className="node-summary note-placeholder">Add a note and format it with Markdown.</p>
         ) : null}
 
         {/* Website metadata: logo, domain, author and external link (shown below thumbnail) */}
