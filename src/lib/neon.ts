@@ -222,17 +222,40 @@ export async function ensureNeonSchema(): Promise<void> {
 // Projects
 // ============================================================================
 
-export async function neonGetProjects(): Promise<ResearchProject[]> {
+export async function neonGetProjects(
+  userId?: string | null,
+  orgId?: string | null,
+  clerkId?: string | null
+): Promise<ResearchProject[]> {
   await ensureNeonSchema();
   const sql = getSql();
+  if (userId || orgId || clerkId) {
+    const rows = await sql`
+      SELECT id, title, user_id, organization_id, created_at
+      FROM projects
+      WHERE (${userId || null}::varchar IS NOT NULL AND user_id = ${userId || null})
+         OR (${clerkId || null}::varchar IS NOT NULL AND user_id = ${clerkId || null})
+         OR (${orgId || null}::varchar IS NOT NULL AND organization_id = ${orgId || null})
+      ORDER BY created_at ASC
+    `;
+    return rows.map(r => ({
+      id: String(r.id),
+      title: String(r.title),
+      userId: r.user_id ? String(r.user_id) : null,
+      organizationId: r.organization_id ? String(r.organization_id) : null,
+      createdAt: Number(r.created_at)
+    }));
+  }
   const rows = await sql`
-    SELECT id, title, created_at
+    SELECT id, title, user_id, organization_id, created_at
     FROM projects
     ORDER BY created_at ASC
   `;
   return rows.map(r => ({
     id: String(r.id),
     title: String(r.title),
+    userId: r.user_id ? String(r.user_id) : null,
+    organizationId: r.organization_id ? String(r.organization_id) : null,
     createdAt: Number(r.created_at)
   }));
 }
@@ -244,17 +267,43 @@ export async function neonProjectExists(id: string): Promise<boolean> {
   return rows.length > 0;
 }
 
+export async function neonUserHasProjectAccess(
+  id: string,
+  userId?: string | null,
+  orgId?: string | null,
+  clerkId?: string | null
+): Promise<boolean> {
+  await ensureNeonSchema();
+  const sql = getSql();
+  if (!userId && !orgId && !clerkId) {
+    const rows = await sql`SELECT 1 FROM projects WHERE id = ${id} LIMIT 1`;
+    return rows.length > 0;
+  }
+  const rows = await sql`
+    SELECT 1 FROM projects
+    WHERE id = ${id} AND (
+      (${userId || null}::varchar IS NOT NULL AND user_id = ${userId || null}) OR
+      (${clerkId || null}::varchar IS NOT NULL AND user_id = ${clerkId || null}) OR
+      (${orgId || null}::varchar IS NOT NULL AND organization_id = ${orgId || null})
+    )
+    LIMIT 1
+  `;
+  return rows.length > 0;
+}
+
 export async function neonCreateProject(
   id: string,
   title: string,
-  template: 'blank' | 'rag' = 'blank'
+  template: 'blank' | 'rag' = 'blank',
+  userId?: string | null,
+  organizationId?: string | null
 ): Promise<ResearchProject> {
   await ensureNeonSchema();
   const sql = getSql();
   const createdAt = Date.now();
   await sql`
-    INSERT INTO projects (id, title, created_at)
-    VALUES (${id}, ${title}, ${createdAt})
+    INSERT INTO projects (id, title, user_id, organization_id, created_at)
+    VALUES (${id}, ${title}, ${userId || null}, ${organizationId || null}, ${createdAt})
   `;
 
   if (template === 'rag') {
@@ -273,7 +322,7 @@ export async function neonCreateProject(
     await neonBulkSaveCanvas(nodes, connections, id);
   }
 
-  return { id, title, createdAt };
+  return { id, title, userId: userId || null, organizationId: organizationId || null, createdAt };
 }
 
 // ============================================================================
@@ -973,7 +1022,7 @@ export async function neonUpsertUser(user: Partial<UserRecord> & { clerkId: stri
   }
 
   const id = `usr-${globalThis.crypto?.randomUUID?.() || Math.random().toString(36).slice(2, 10)}`;
-  const trialEnds = user.trialEndsAt !== undefined ? user.trialEndsAt : (now + 3 * 24 * 60 * 60 * 1000);
+  const trialEnds = user.trialEndsAt !== undefined ? user.trialEndsAt : null;
   const newUser: UserRecord = {
     id,
     clerkId: user.clerkId,
@@ -981,12 +1030,12 @@ export async function neonUpsertUser(user: Partial<UserRecord> & { clerkId: stri
     name: user.name || null,
     stripeCustomerId: user.stripeCustomerId || null,
     stripeSubscriptionId: user.stripeSubscriptionId || null,
-    subscriptionTier: user.subscriptionTier || 'trial',
-    subscriptionStatus: user.subscriptionStatus || 'trialing',
+    subscriptionTier: user.subscriptionTier || 'none',
+    subscriptionStatus: user.subscriptionStatus || 'unselected',
     seatCount: user.seatCount || 1,
     billingInterval: user.billingInterval || 'month',
     currentPeriodEnd: user.currentPeriodEnd || null,
-    contextCredits: typeof user.contextCredits === 'number' ? user.contextCredits : 100,
+    contextCredits: typeof user.contextCredits === 'number' ? user.contextCredits : 0,
     trialEndsAt: trialEnds,
     createdAt: now
   };

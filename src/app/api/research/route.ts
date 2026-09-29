@@ -5,7 +5,7 @@ import {
   getAllNodesFromDb,
   getResearchSessions,
   saveResearchSession,
-  projectExistsInDb
+  userHasProjectAccess
 } from '@/lib/db';
 import { normalizeGraph } from '@/lib/graph';
 import { getServerAuth } from '@/lib/auth';
@@ -127,8 +127,16 @@ function buildSessionFromResearchResult(
 
 export async function GET(request: Request) {
   try {
-    const projectId = new URL(request.url).searchParams.get('projectId') || 'default';
-    if (projectId.length > 80 || !(await projectExistsInDb(projectId))) return Response.json({ error: 'Project not found.' }, { status: 404 });
+    const auth = await getServerAuth();
+    const userId = auth.user?.id || auth.userId;
+    const orgId = auth.orgId;
+    const clerkId = auth.clerkId;
+    if (!auth.isLocal && !userId) return Response.json({ error: 'Unauthorized' }, { status: 401 });
+
+    const projectId = new URL(request.url).searchParams.get('projectId') || '';
+    if (!projectId || projectId.length > 80 || !(await userHasProjectAccess(projectId, userId, orgId, clerkId))) {
+      return Response.json({ error: 'Project not found.' }, { status: 404 });
+    }
     const sessions = await getResearchSessions(projectId);
     return Response.json({ sessions });
   } catch (error) {
@@ -139,19 +147,25 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
+    const auth = await getServerAuth();
+    const userId = auth.user?.id || auth.userId;
+    const orgId = auth.orgId;
+    const clerkId = auth.clerkId;
+    if (!auth.isLocal && !userId) return Response.json({ error: 'Unauthorized' }, { status: 401 });
+
     const length = Number(request.headers.get('content-length') || 0);
     if (length > 20_000) return Response.json({ error: 'Research request is too large.' }, { status: 413 });
     const body = await request.json();
     const query = typeof body?.query === 'string' ? body.query.trim() : '';
-    const projectId = typeof body?.projectId === 'string' ? body.projectId : 'default';
+    const projectId = typeof body?.projectId === 'string' ? body.projectId : '';
     const mode: ResearchMode = body?.mode === 'deep' ? 'deep' : 'quick';
     if (!query || query.length > 500) return Response.json({ error: 'Enter a research question under 500 characters.' }, { status: 400 });
-    if (projectId.length > 80 || !(await projectExistsInDb(projectId))) return Response.json({ error: 'Project not found.' }, { status: 404 });
+    if (!projectId || projectId.length > 80 || !(await userHasProjectAccess(projectId, userId, orgId, clerkId))) {
+      return Response.json({ error: 'Project not found.' }, { status: 404 });
+    }
     if (body?.mode !== 'quick' && body?.mode !== 'deep') return Response.json({ error: 'Choose quick or deep research.' }, { status: 400 });
 
     // Check Context Credits balance
-    const auth = await getServerAuth();
-    const userId = auth.user?.id || auth.clerkId;
     const creditAction = mode === 'deep' ? 'deep_research' : 'quick_research';
     if (userId) {
       const check = await verifyCreditBalance(userId, creditAction);

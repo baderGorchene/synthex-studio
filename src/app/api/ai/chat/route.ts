@@ -1,5 +1,5 @@
 import { askGraph, askGraphStream } from '@/lib/ai-service';
-import { getAllConnectionsFromDb, getAllNodesFromDb, projectExistsInDb } from '@/lib/db';
+import { getAllConnectionsFromDb, getAllNodesFromDb, userHasProjectAccess } from '@/lib/db';
 import { normalizeGraph } from '@/lib/graph';
 import { getServerAuth } from '@/lib/auth';
 import { verifyCreditBalance, deductCredits } from '@/lib/credits';
@@ -7,6 +7,12 @@ import type { CanvasNode, Connection } from '@/types/canvas';
 
 export async function POST(request: Request) {
   try {
+    const auth = await getServerAuth();
+    const userId = auth.user?.id || auth.userId;
+    const orgId = auth.orgId;
+    const clerkId = auth.clerkId;
+    if (!auth.isLocal && !userId) return Response.json({ error: 'Unauthorized' }, { status: 401 });
+
     const length = Number(request.headers.get('content-length') || 0);
     if (length > 20_000) return Response.json({ error: 'Question is too large.' }, { status: 413 });
     const body = await request.json();
@@ -15,14 +21,15 @@ export async function POST(request: Request) {
       return Response.json({ error: 'Enter a question under 2,000 characters.' }, { status: 400 });
     }
     const selectedNodeId = typeof body.selectedNodeId === 'string' ? body.selectedNodeId.slice(0, 200) : undefined;
-    const projectId = typeof body.projectId === 'string' ? body.projectId : 'default';
-    if (projectId.length > 80 || !(await projectExistsInDb(projectId))) return Response.json({ error: 'Project not found.' }, { status: 404 });
+    const projectId = typeof body.projectId === 'string' ? body.projectId : '';
+    if (!projectId || projectId.length > 80 || !(await userHasProjectAccess(projectId, userId, orgId, clerkId))) {
+      return Response.json({ error: 'Project not found.' }, { status: 404 });
+    }
 
     // Check Context Credits balance
-    const auth = await getServerAuth();
-    const userId = auth.user?.id || auth.clerkId;
-    if (userId) {
-      const check = await verifyCreditBalance(userId, 'chat');
+    const creditUserId = auth.user?.id || auth.clerkId;
+    if (creditUserId) {
+      const check = await verifyCreditBalance(creditUserId, 'chat');
       if (!check.hasSufficient) {
         return Response.json({
           error: 'INSUFFICIENT_CREDITS',

@@ -1,14 +1,23 @@
-import { getResearchSession, reviewResearchSession, projectExistsInDb } from '@/lib/db';
+import { getResearchSession, reviewResearchSession, userHasProjectAccess } from '@/lib/db';
+import { getServerAuth } from '@/lib/auth';
 
 export async function PATCH(
   request: Request,
   context: { params: Promise<{ sessionId: string }> }
 ) {
   try {
+    const auth = await getServerAuth();
+    const userId = auth.user?.id || auth.userId;
+    const orgId = auth.orgId;
+    const clerkId = auth.clerkId;
+    if (!auth.isLocal && !userId) return Response.json({ error: 'Unauthorized' }, { status: 401 });
+
     const { sessionId } = await context.params;
     const body = await request.json();
-    const projectId = typeof body?.projectId === 'string' ? body.projectId : 'default';
-    if (projectId.length > 80 || !(await projectExistsInDb(projectId))) return Response.json({ error: 'Project not found.' }, { status: 404 });
+    const projectId = typeof body?.projectId === 'string' ? body.projectId : '';
+    if (!projectId || projectId.length > 80 || !(await userHasProjectAccess(projectId, userId, orgId, clerkId))) {
+      return Response.json({ error: 'Project not found.' }, { status: 404 });
+    }
     const session = await getResearchSession(sessionId, projectId);
     if (!session) return Response.json({ error: 'Research session not found.' }, { status: 404 });
     if (!Array.isArray(body?.decisions) || body.decisions.length > 100) {

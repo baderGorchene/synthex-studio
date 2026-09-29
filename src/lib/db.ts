@@ -23,6 +23,7 @@ import {
   isNeonConfigured,
   neonGetProjects,
   neonProjectExists,
+  neonUserHasProjectAccess,
   neonCreateProject,
   neonGetAllNodes,
   neonSaveNode,
@@ -842,13 +843,42 @@ export interface ResearchProject {
   id: string;
   title: string;
   createdAt: number;
+  userId?: string | null;
+  organizationId?: string | null;
 }
 
-export function getProjectsFromDb(): ResearchProject[] | Promise<ResearchProject[]> {
+export function getProjectsFromDb(
+  userId?: string | null,
+  orgId?: string | null,
+  clerkId?: string | null
+): ResearchProject[] | Promise<ResearchProject[]> {
   if (isNeonConfigured()) {
-    return neonGetProjects();
+    return neonGetProjects(userId, orgId, clerkId);
   }
-  return getDatabase().prepare('SELECT id, title, createdAt FROM projects ORDER BY createdAt ASC').all() as ResearchProject[];
+  const db = getDatabase();
+  if (userId || orgId || clerkId) {
+    const conditions: string[] = [];
+    const params: string[] = [];
+    if (userId) {
+      conditions.push('userId = ?');
+      params.push(userId);
+    }
+    if (clerkId) {
+      conditions.push('userId = ?');
+      params.push(clerkId);
+    }
+    if (orgId) {
+      conditions.push('organizationId = ?');
+      params.push(orgId);
+    }
+    return db.prepare(`
+      SELECT id, title, createdAt, userId, organizationId
+      FROM projects
+      WHERE ${conditions.join(' OR ')}
+      ORDER BY createdAt ASC
+    `).all(...params) as ResearchProject[];
+  }
+  return db.prepare('SELECT id, title, createdAt, userId, organizationId FROM projects ORDER BY createdAt ASC').all() as ResearchProject[];
 }
 
 export function projectExistsInDb(id: string): boolean | Promise<boolean> {
@@ -858,12 +888,61 @@ export function projectExistsInDb(id: string): boolean | Promise<boolean> {
   return Boolean(getDatabase().prepare('SELECT 1 FROM projects WHERE id = ?').get(id));
 }
 
-export function createProjectInDb(id: string, title: string, template: 'blank' | 'rag' = 'blank'): ResearchProject | Promise<ResearchProject> {
+export function userHasProjectAccess(
+  id: string,
+  userId?: string | null,
+  orgId?: string | null,
+  clerkId?: string | null
+): boolean | Promise<boolean> {
   if (isNeonConfigured()) {
-    return neonCreateProject(id, title, template);
+    return neonUserHasProjectAccess(id, userId, orgId, clerkId);
   }
-  const project = { id, title, createdAt: Date.now() };
-  getDatabase().prepare('INSERT INTO projects (id, title, createdAt) VALUES (@id, @title, @createdAt)').run(project);
+  const db = getDatabase();
+  if (!userId && !orgId && !clerkId) {
+    return Boolean(db.prepare('SELECT 1 FROM projects WHERE id = ?').get(id));
+  }
+  const conditions: string[] = [];
+  const params: string[] = [id];
+  if (userId) {
+    conditions.push('userId = ?');
+    params.push(userId);
+  }
+  if (clerkId) {
+    conditions.push('userId = ?');
+    params.push(clerkId);
+  }
+  if (orgId) {
+    conditions.push('organizationId = ?');
+    params.push(orgId);
+  }
+  const row = db.prepare(`
+    SELECT 1 FROM projects
+    WHERE id = ? AND (${conditions.join(' OR ')})
+  `).get(...params);
+  return Boolean(row);
+}
+
+export function createProjectInDb(
+  id: string,
+  title: string,
+  template: 'blank' | 'rag' = 'blank',
+  userId?: string | null,
+  organizationId?: string | null
+): ResearchProject | Promise<ResearchProject> {
+  if (isNeonConfigured()) {
+    return neonCreateProject(id, title, template, userId, organizationId);
+  }
+  const project: ResearchProject = {
+    id,
+    title,
+    createdAt: Date.now(),
+    userId: userId || null,
+    organizationId: organizationId || null
+  };
+  getDatabase().prepare(`
+    INSERT INTO projects (id, title, createdAt, userId, organizationId)
+    VALUES (@id, @title, @createdAt, @userId, @organizationId)
+  `).run(project);
   if (template === 'rag') {
     const ids = new Map(SEED_NODES.map(node => [node.id, `${id}-${node.id}`]));
     const nodes = SEED_NODES.map(node => ({ ...node, id: ids.get(node.id)!, metadata: node.metadata ? { ...node.metadata } : undefined }));
@@ -1223,8 +1302,8 @@ export interface UserRecord {
   name: string | null;
   stripeCustomerId: string | null;
   stripeSubscriptionId?: string | null;
-  subscriptionTier: 'trial' | 'byok' | 'pro' | 'team';
-  subscriptionStatus: 'active' | 'past_due' | 'canceled' | 'trialing';
+  subscriptionTier: 'none' | 'trial' | 'byok' | 'pro' | 'team';
+  subscriptionStatus: 'unselected' | 'active' | 'past_due' | 'canceled' | 'trialing';
   seatCount?: number | null;
   billingInterval?: 'month' | 'year' | null;
   currentPeriodEnd?: number | null;
@@ -1357,7 +1436,7 @@ export function upsertUser(user: Partial<UserRecord> & { clerkId: string }): Use
   }
 
   const id = `usr-${globalThis.crypto?.randomUUID?.() || Math.random().toString(36).slice(2, 10)}`;
-  const trialEnds = user.trialEndsAt || (now + 3 * 24 * 60 * 60 * 1000); // 3 days trial
+  const trialEnds = user.trialEndsAt !== undefined ? user.trialEndsAt : null;
   const newUser: UserRecord = {
     id,
     clerkId: user.clerkId,
@@ -1365,12 +1444,12 @@ export function upsertUser(user: Partial<UserRecord> & { clerkId: string }): Use
     name: user.name || null,
     stripeCustomerId: user.stripeCustomerId || null,
     stripeSubscriptionId: user.stripeSubscriptionId || null,
-    subscriptionTier: user.subscriptionTier || 'trial',
-    subscriptionStatus: user.subscriptionStatus || 'trialing',
+    subscriptionTier: user.subscriptionTier || 'none',
+    subscriptionStatus: user.subscriptionStatus || 'unselected',
     seatCount: user.seatCount || 1,
     billingInterval: user.billingInterval || 'month',
     currentPeriodEnd: user.currentPeriodEnd || null,
-    contextCredits: typeof user.contextCredits === 'number' ? user.contextCredits : 100,
+    contextCredits: typeof user.contextCredits === 'number' ? user.contextCredits : 0,
     trialEndsAt: trialEnds,
     createdAt: now
   };
