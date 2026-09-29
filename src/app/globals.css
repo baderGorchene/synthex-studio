@@ -846,7 +846,7 @@ kbd {
 .canvas-rules { position: absolute; z-index: 1; top: 16px; left: 18px; right: 18px; display: flex; justify-content: space-between; pointer-events: none; color: #353535; opacity: 0.45; font-size: 8px; font-weight: 610; letter-spacing: .12em; }
 .graph-world { position: absolute; inset: 0 auto auto 0; transform-origin: 0 0; width: 100000px; height: 100000px; }
 .relationship-layer { position: absolute; z-index: 1; inset: 0; overflow: visible; pointer-events: none; }
-.relationship-mark path { fill: none; stroke: #284b63; stroke-width: 1.7; }
+.relationship-mark .relationship-stroke { fill: none; stroke: #284b63; stroke-width: 1.7; }
 .relationship-mark text { fill: #353535; font: 10px var(--font-ui); text-anchor: middle; paint-order: stroke; stroke: #ffffff; stroke-width: 5px; stroke-linejoin: round; }
 .graph-group-position {
   position: absolute;
@@ -1724,7 +1724,7 @@ kbd {
   color: #3c6e71;
 }
 .field-input::placeholder, .search-input-row > input::placeholder, .chat-compose input::placeholder { color: #3c6e71; }
-.relationship-mark path { stroke: #3c6e71; }
+.relationship-mark .relationship-stroke { stroke: #3c6e71; }
 .relationship-mark text { fill: #3c6e71; }
 
 @keyframes spin { to { transform: rotate(360deg); } }
@@ -2592,7 +2592,7 @@ button:not(.tool-button):not(.icon-button):not(.group-fold):not(.assistant-trigg
 /* Final palette and responsive dock/editor positions. */
 .graph-canvas { background-color: #ffffff; background-image: radial-gradient(circle, #d9d9d9 1px, transparent 1px); }
 .canvas-empty { background-image: radial-gradient(circle, #d9d9d9 .7px, transparent .8px); }
-.relationship-mark path { stroke: #284b63; }
+.relationship-mark .relationship-stroke { stroke: #284b63; }
 .relationship-preview { stroke: #3c6e71; }
 .brand-mark i { border-color: #284b63; }
 .source-domain { color: #284b63; }

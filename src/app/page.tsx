@@ -272,31 +272,29 @@ export default function MarketingLandingPage() {
             </div>
           </div>
 
-          {/* Canvas Work Area with Cards and SVG Connectors */}
           {(() => {
-            // --- Graph layout constants ---
-            const CARD_W = 220;
-            const CARD_H = 140;
-            const PAD = 24; // internal canvas padding
+            // --- Responsive graph layout ---
+            // Use a viewBox-based approach so the graph scales to fit the container
+            const VB_W = 920; // viewBox width
+            const VB_H = 380; // viewBox height
+            const CARD_W = 200;
+            const CARD_H = 130;
 
-            // Positions: staggered 2-row layout for a proper graph feel
+            // Positions: 3-column directed graph layout (concept → claims → source)
             const nodePositions: Record<string, { x: number; y: number }> = {
-              'node-rag':     { x: PAD,            y: 100 },
-              'node-claim-1': { x: PAD + 280,      y: PAD },
-              'node-claim-2': { x: PAD + 280,      y: PAD + CARD_H + 50 },
-              'node-source':  { x: PAD + 280 + 280, y: 80 },
+              'node-rag':     { x: 20,  y: (VB_H - CARD_H) / 2 },       // centered-left
+              'node-claim-1': { x: 280, y: 20 },                         // top-center
+              'node-claim-2': { x: 280, y: VB_H - CARD_H - 20 },        // bottom-center
+              'node-source':  { x: 700, y: (VB_H - CARD_H) / 2 },       // centered-right
             };
 
-            // Edge definitions with labels
+            // Edge definitions with semantic labels
             const demoEdges = [
               { from: 'node-rag', to: 'node-claim-1', label: 'generates', color: '#284b63', dashed: true },
               { from: 'node-rag', to: 'node-claim-2', label: 'generates', color: '#284b63', dashed: false },
               { from: 'node-claim-1', to: 'node-source', label: 'cited by', color: '#3c6e71', dashed: true },
               { from: 'node-claim-2', to: 'node-source', label: 'grounded in', color: '#8a5a00', dashed: false },
             ];
-
-            const CANVAS_W = PAD + 280 + 280 + CARD_W + PAD;
-            const CANVAS_H = PAD + CARD_H + 50 + CARD_H + PAD + 20;
 
             // Filter visible nodes
             const visibleNodes = demoNodes.filter(n => {
@@ -305,152 +303,156 @@ export default function MarketingLandingPage() {
               return true;
             });
             const visibleIds = new Set(visibleNodes.map(n => n.id));
-
-            // Filter visible edges (both endpoints must be visible)
             const visibleEdges = demoEdges.filter(e => visibleIds.has(e.from) && visibleIds.has(e.to));
 
             return (
-              <div className="landing-sheet-frame relative bg-white rounded-xl border border-[#d9d9d9] overflow-x-auto">
-                <div className="relative" style={{ width: CANVAS_W, height: CANVAS_H, minWidth: CANVAS_W }}>
-                  {/* Subtle dot grid background */}
-                  <svg className="absolute inset-0 w-full h-full pointer-events-none opacity-[0.35]">
-                    <defs>
-                      <pattern id="demo-dot-grid" x="0" y="0" width="20" height="20" patternUnits="userSpaceOnUse">
-                        <circle cx="1" cy="1" r="0.8" fill="#9ca3af" />
-                      </pattern>
-                    </defs>
-                    <rect width="100%" height="100%" fill="url(#demo-dot-grid)" />
-                  </svg>
+              <div className="landing-sheet-frame relative bg-[#fafbfb] rounded-xl border border-[#d9d9d9] overflow-hidden">
+                {/* Responsive SVG canvas — scales to fill container width */}
+                <svg
+                  className="w-full h-auto block"
+                  viewBox={`0 0 ${VB_W} ${VB_H}`}
+                  preserveAspectRatio="xMidYMid meet"
+                  xmlns="http://www.w3.org/2000/svg"
+                >
+                  {/* Dot grid background */}
+                  <defs>
+                    <pattern id="demo-dot-grid" x="0" y="0" width="20" height="20" patternUnits="userSpaceOnUse">
+                      <circle cx="10" cy="10" r="0.8" fill="#c0c5c4" />
+                    </pattern>
+                    <marker id="demo-arrow-dark" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
+                      <path d="M 0 0 L 8 3 L 0 6 Z" fill="#284b63" />
+                    </marker>
+                    <marker id="demo-arrow-teal" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
+                      <path d="M 0 0 L 8 3 L 0 6 Z" fill="#3c6e71" />
+                    </marker>
+                    <marker id="demo-arrow-amber" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
+                      <path d="M 0 0 L 8 3 L 0 6 Z" fill="#8a5a00" />
+                    </marker>
+                    {/* Card drop shadow */}
+                    <filter id="card-shadow" x="-6%" y="-6%" width="112%" height="118%">
+                      <feDropShadow dx="0" dy="2" stdDeviation="4" floodColor="#284b63" floodOpacity="0.08" />
+                    </filter>
+                    <filter id="card-shadow-active" x="-6%" y="-6%" width="112%" height="118%">
+                      <feDropShadow dx="0" dy="4" stdDeviation="8" floodColor="#3c6e71" floodOpacity="0.15" />
+                    </filter>
+                  </defs>
 
-                  {/* SVG Connector Overlay */}
-                  <svg className="absolute inset-0 pointer-events-none z-[1]" width={CANVAS_W} height={CANVAS_H} viewBox={`0 0 ${CANVAS_W} ${CANVAS_H}`}>
-                    <defs>
-                      <marker id="demo-arrow-dark" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
-                        <path d="M 0 0 L 8 3 L 0 6 Z" fill="#284b63" />
-                      </marker>
-                      <marker id="demo-arrow-teal" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
-                        <path d="M 0 0 L 8 3 L 0 6 Z" fill="#3c6e71" />
-                      </marker>
-                      <marker id="demo-arrow-amber" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
-                        <path d="M 0 0 L 8 3 L 0 6 Z" fill="#8a5a00" />
-                      </marker>
-                    </defs>
+                  <rect width={VB_W} height={VB_H} fill="url(#demo-dot-grid)" />
 
-                    {visibleEdges.map((edge, i) => {
-                      const from = nodePositions[edge.from];
-                      const to = nodePositions[edge.to];
-                      if (!from || !to) return null;
+                  {/* Edges */}
+                  {visibleEdges.map((edge, i) => {
+                    const from = nodePositions[edge.from];
+                    const to = nodePositions[edge.to];
+                    if (!from || !to) return null;
 
-                      // Connection points: right edge of source card → left edge of target card
-                      const x1 = from.x + CARD_W;
-                      const y1 = from.y + CARD_H / 2;
-                      const x2 = to.x;
-                      const y2 = to.y + CARD_H / 2;
+                    const x1 = from.x + CARD_W;
+                    const y1 = from.y + CARD_H / 2;
+                    const x2 = to.x;
+                    const y2 = to.y + CARD_H / 2;
 
-                      // Bézier control points for smooth curves
-                      const dx = (x2 - x1) * 0.5;
-                      const cx1 = x1 + dx;
-                      const cy1 = y1;
-                      const cx2 = x2 - dx;
-                      const cy2 = y2;
+                    const dx = (x2 - x1) * 0.45;
+                    const pathD = `M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`;
 
-                      const pathD = `M ${x1} ${y1} C ${cx1} ${cy1}, ${cx2} ${cy2}, ${x2} ${y2}`;
+                    const labelX = (x1 + x2) / 2;
+                    const labelY = (y1 + y2) / 2;
 
-                      // Label position at the midpoint of the curve
-                      const labelX = (x1 + x2) / 2;
-                      const labelY = (y1 + y2) / 2 - 8;
+                    const markerId = edge.color === '#284b63' ? 'demo-arrow-dark' : edge.color === '#3c6e71' ? 'demo-arrow-teal' : 'demo-arrow-amber';
 
-                      const markerId = edge.color === '#284b63' ? 'demo-arrow-dark' : edge.color === '#3c6e71' ? 'demo-arrow-teal' : 'demo-arrow-amber';
+                    return (
+                      <g key={`edge-${i}`}>
+                        <path
+                          d={pathD}
+                          fill="none"
+                          stroke={edge.color}
+                          strokeWidth="1.5"
+                          strokeDasharray={edge.dashed ? '5 3' : 'none'}
+                          strokeOpacity="0.55"
+                          markerEnd={`url(#${markerId})`}
+                          className="landing-edge-flow"
+                        />
+                        {/* Edge label */}
+                        <rect x={labelX - 30} y={labelY - 9} width="60" height="16" rx="8" fill="white" fillOpacity="0.92" stroke={edge.color} strokeWidth="0.8" strokeOpacity="0.25" />
+                        <text x={labelX} y={labelY + 3} textAnchor="middle" fill={edge.color} fontSize="8" fontWeight="600" letterSpacing="0.3" opacity="0.85">
+                          {edge.label}
+                        </text>
+                      </g>
+                    );
+                  })}
 
-                      return (
-                        <g key={`edge-${i}`}>
-                          <path
-                            d={pathD}
-                            fill="none"
-                            stroke={edge.color}
-                            strokeWidth="2"
-                            strokeDasharray={edge.dashed ? '6 4' : 'none'}
-                            strokeOpacity="0.7"
-                            markerEnd={`url(#${markerId})`}
-                            className="landing-edge-flow"
-                          />
-                          {/* Edge label pill */}
-                          <rect
-                            x={labelX - 32}
-                            y={labelY - 8}
-                            width="64"
-                            height="16"
-                            rx="8"
-                            fill="white"
-                            stroke={edge.color}
-                            strokeWidth="1"
-                            strokeOpacity="0.3"
-                          />
-                          <text
-                            x={labelX}
-                            y={labelY + 4}
-                            textAnchor="middle"
-                            fill={edge.color}
-                            fontSize="9"
-                            fontWeight="600"
-                            fontFamily="inherit"
-                            opacity="0.9"
-                          >
-                            {edge.label}
-                          </text>
-                        </g>
-                      );
-                    })}
-                  </svg>
-
-                  {/* Absolutely positioned cards */}
+                  {/* Card nodes rendered as SVG foreignObject for proper text wrapping */}
                   {visibleNodes.map(node => {
                     const pos = nodePositions[node.id];
                     if (!pos) return null;
                     const isSelected = selectedDemoNode === node.id;
 
                     return (
-                      <div
-                        key={node.id}
-                        onClick={() => setSelectedDemoNode(node.id)}
-                        onKeyDown={event => {
-                          if (event.key === 'Enter' || event.key === ' ') {
-                            event.preventDefault();
-                            setSelectedDemoNode(node.id);
-                          }
-                        }}
-                        role="button"
-                        tabIndex={0}
-                        aria-pressed={isSelected}
-                        aria-label={`Inspect ${node.title}`}
-                        className={`absolute z-10 cursor-pointer p-4 rounded-xl border transition-all duration-200 select-none bg-white shadow-lg ${
-                          isSelected
-                            ? 'border-[#3c6e71] ring-2 ring-[#3c6e71]/25 -translate-y-1 shadow-xl shadow-[#284b63]/10'
-                            : 'border-[#d9d9d9] hover:border-[#b8c2bf] hover:-translate-y-0.5 hover:shadow-xl'
-                        }`}
-                        style={{ left: pos.x, top: pos.y, width: CARD_W, minHeight: CARD_H }}
-                      >
-                        <div className="flex items-center justify-between mb-2">
-                          <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-[#f7f8f7] text-[#4f5d5b]">
-                            {node.badge}
-                          </span>
-                          {node.status === 'supported' && (
-                            <span className="flex items-center gap-1 text-[11px] font-semibold text-[#167256]">
-                              <CheckCircle2 size={12} /> Supported
-                            </span>
-                          )}
-                        </div>
-                        <h4 className="text-[13px] font-semibold text-[#353535] leading-snug">{node.title}</h4>
-                        <p className="text-[11px] text-[#64706f] mt-1 leading-normal line-clamp-2">{node.subtitle}</p>
+                      <g key={node.id}>
+                        {/* Card background rect */}
+                        <rect
+                          x={pos.x}
+                          y={pos.y}
+                          width={CARD_W}
+                          height={CARD_H}
+                          rx="12"
+                          fill="white"
+                          stroke={isSelected ? '#3c6e71' : '#d9d9d9'}
+                          strokeWidth={isSelected ? '2' : '1'}
+                          filter={isSelected ? 'url(#card-shadow-active)' : 'url(#card-shadow)'}
+                          className="cursor-pointer transition-all"
+                          onClick={() => setSelectedDemoNode(node.id)}
+                        />
+                        {/* Selection ring */}
+                        {isSelected && (
+                          <rect
+                            x={pos.x - 3}
+                            y={pos.y - 3}
+                            width={CARD_W + 6}
+                            height={CARD_H + 6}
+                            rx="14"
+                            fill="none"
+                            stroke="#3c6e71"
+                            strokeWidth="1"
+                            strokeOpacity="0.2"
+                          />
+                        )}
+                        {/* Card content via foreignObject */}
+                        <foreignObject
+                          x={pos.x}
+                          y={pos.y}
+                          width={CARD_W}
+                          height={CARD_H}
+                          className="cursor-pointer"
+                          onClick={() => setSelectedDemoNode(node.id)}
+                        >
+                          <div
+                            className="w-full h-full p-3 flex flex-col justify-between"
+                            style={{ fontFamily: 'inherit' }}
+                          >
+                            <div>
+                              <div className="flex items-center justify-between mb-1.5">
+                                <span className="text-[8px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded-full bg-[#f0f1f0] text-[#4f5d5b]">
+                                  {node.badge}
+                                </span>
+                                {node.status === 'supported' && (
+                                  <span className="flex items-center gap-0.5 text-[8px] font-semibold text-[#167256]">
+                                    <CheckCircle2 size={9} /> Supported
+                                  </span>
+                                )}
+                              </div>
+                              <h4 className="text-[11px] font-semibold text-[#353535] leading-tight line-clamp-2">{node.title}</h4>
+                              <p className="text-[9px] text-[#64706f] mt-0.5 leading-snug line-clamp-2">{node.subtitle}</p>
+                            </div>
 
-                        <div className="mt-auto pt-2.5 border-t border-[#d9d9d9] flex items-center justify-between text-[11px] text-[#64706f]">
-                          <span>Click to inspect</span>
-                          <ArrowRight size={11} className={isSelected ? 'text-[#3c6e71]' : 'text-[#64706f]'} />
-                        </div>
-                      </div>
+                            <div className="pt-1.5 border-t border-[#e5e5e5] flex items-center justify-between text-[8px] text-[#64706f]">
+                              <span>Click to inspect</span>
+                              <ArrowRight size={9} className={isSelected ? 'text-[#3c6e71]' : 'text-[#64706f]'} />
+                            </div>
+                          </div>
+                        </foreignObject>
+                      </g>
                     );
                   })}
-                </div>
+                </svg>
               </div>
             );
           })()}
