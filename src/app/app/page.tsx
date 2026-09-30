@@ -7,7 +7,7 @@ import {
   Image as ImageIcon, LoaderCircle, MoreHorizontal, Plus, Redo2,
   Search, Shapes, Share, Square, Undo2, Upload, X
 } from 'lucide-react';
-import { GraphCanvas, membersOf } from '@/components/research/GraphCanvas';
+import { GraphCanvas, adoptLegacyClusterMembers, membersOf } from '@/components/research/GraphCanvas';
 import { KnowledgeViews } from '@/components/research/KnowledgeViews';
 import { NodeInspector } from '@/components/research/NodeInspector';
 import { NoteEditor } from '@/components/research/NoteEditor';
@@ -317,7 +317,7 @@ export default function SynthexWorkspace() {
       });
       const data = await readJson<{ success: boolean; nodes: CanvasNode[]; relationships: Connection[]; revision: GraphRevisionSummary }>(res);
       if (data.nodes) {
-        updateGraph(() => normalizeGraph(data.nodes, data.relationships || []));
+        updateGraph(() => normalizeGraph(adoptLegacyClusterMembers(data.nodes), data.relationships || []));
         setCanvasFitKey(v => v + 1);
         setSelectedIds([]);
         announce(`Restored snapshot: ${data.revision.title}`);
@@ -369,7 +369,7 @@ export default function SynthexWorkspace() {
         readJson<{ sessions: ResearchSession[] }>(historyResponse)
       ]);
       if (requestId !== loadRequest.current) return;
-      setGraph(normalizeGraph(graphBody.nodes, graphBody.relationships));
+      setGraph(normalizeGraph(adoptLegacyClusterMembers(graphBody.nodes), graphBody.relationships));
       setCanvasFitKey(value => value + 1);
       setSessions(historyBody.sessions);
       setLoadedProject(id);
@@ -702,54 +702,32 @@ export default function SynthexWorkspace() {
     };
   }, [undo, redo, selectedIds, deleteSelected, addRecord, announce, editorId, draftIds]);
 
+  // Moving only moves. Cluster membership changes when the user drops a note in or out (assignCluster).
   const moveNodes = useCallback((positions: Record<string, Coordinates>) => {
     updateGraph(current => {
       let next = current;
-      const allGroups = Object.values(next.nodesById).filter(n => n.type === 'group' || n.type === 'section');
-
       for (const [id, point] of Object.entries(positions)) {
-        const node = next.nodesById[id];
-        if (!node) continue;
-
-        const updates: Partial<CanvasNode> = { ...point };
-
-        // If not a cluster itself, check if dragged inside or outside any cluster
-        if (node.type !== 'group' && node.type !== 'section') {
-          const nodeWidth = node.width || 280;
-          const nodeHeight = node.height || 150;
-          const centerX = point.x + nodeWidth / 2;
-          const centerY = point.y + nodeHeight / 2;
-
-          let targetGroupId: string | undefined = undefined;
-          for (const g of allGroups) {
-            const gw = Math.max(340, g.width || 560);
-            const gh = Math.max(240, g.height || 360);
-            if (centerX >= g.x && centerX <= g.x + gw && centerY >= g.y && centerY <= g.y + gh) {
-              targetGroupId = g.id;
-              break;
-            }
-          }
-
-          if (targetGroupId && node.sectionId !== targetGroupId) {
-            updates.sectionId = targetGroupId;
-          } else if (!targetGroupId && node.sectionId) {
-            const currentGroup = next.nodesById[node.sectionId];
-            if (currentGroup) {
-              const gw = Math.max(340, currentGroup.width || 560);
-              const gh = Math.max(240, currentGroup.height || 360);
-              if (centerX < currentGroup.x - 70 || centerX > currentGroup.x + gw + 70 ||
-                centerY < currentGroup.y - 70 || centerY > currentGroup.y + gh + 70) {
-                updates.sectionId = undefined;
-              }
-            }
-          }
-        }
-
-        next = updateNode(next, id, updates);
+        if (next.nodesById[id]) next = updateNode(next, id, point);
       }
       return next;
     }, false);
   }, [updateGraph]);
+
+  const assignCluster = useCallback((ids: string[], clusterId: string | null) => {
+    const current = graphRef.current;
+    const cluster = clusterId ? current.nodesById[clusterId] : undefined;
+    const leftFrom = !clusterId && ids.length ? current.nodesById[ids[0]]?.sectionId : undefined;
+    updateGraph(graph => {
+      let next = graph;
+      for (const id of ids) {
+        if (next.nodesById[id]) next = updateNode(next, id, { sectionId: clusterId ?? undefined });
+      }
+      return next;
+    }, false);
+    const what = ids.length === 1 ? `“${current.nodesById[ids[0]]?.title || 'Note'}”` : plural(ids.length, 'note');
+    if (cluster) announce(`Added ${what} to “${cluster.title}”.`);
+    else if (leftFrom) announce(`Took ${what} out of its cluster.`);
+  }, [updateGraph, announce]);
 
   const resizeGroup = useCallback((id: string, fields: Partial<CanvasNode>) => {
     updateGraph(current => updateNode(current, id, fields), false);
@@ -834,7 +812,7 @@ export default function SynthexWorkspace() {
 
   const reloadGraph = useCallback(async () => {
     const data = await readJson<{ nodes: CanvasNode[]; relationships: Connection[] }>(await fetch(`/api/graph?projectId=${encodeURIComponent(projectId)}`, { cache: 'no-store' }));
-    setGraph(normalizeGraph(data.nodes, data.relationships));
+    setGraph(normalizeGraph(adoptLegacyClusterMembers(data.nodes), data.relationships));
     setCanvasFitKey(value => value + 1);
   }, [projectId]);
 
@@ -1478,7 +1456,7 @@ export default function SynthexWorkspace() {
     reader.onload = () => {
       try {
         const parsed = JSON.parse(String(reader.result));
-        const imported = normalizeGraph(parsed.nodes, parsed.relationships || parsed.connections || []);
+        const imported = normalizeGraph(adoptLegacyClusterMembers(parsed.nodes), parsed.relationships || parsed.connections || []);
         fetch('/api/backup', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -1866,7 +1844,7 @@ export default function SynthexWorkspace() {
                   onPlaced={markPlaced}
                   onSelectMultipleNodes={selectMultipleNodes}
                   onDeleteNodes={deleteNodes}
-                  onClearSelection={() => setSelectedIds([])} onClickAway={() => setEditingNoteId(null)} onCancelLinking={() => setLinkingFromId(null)} onMoveNodes={moveNodes} onConnect={connectNodes}
+                  onClearSelection={() => setSelectedIds([])} onClickAway={() => setEditingNoteId(null)} onCancelLinking={() => setLinkingFromId(null)} onMoveNodes={moveNodes} onAssignCluster={assignCluster} onConnect={connectNodes}
                   onStartLinking={setLinkingFromId} onToggleGroup={toggleGroup} onEditNote={setEditingNoteId}
                   onUpdateNote={(id, content) => updateGraph(current => updateNode(current, id, withAutoTitle(current.nodesById[id], { content })), false)}
                   onUpdateRelationship={editRelationship} onDeleteRelationship={deleteRelationship} onResizeGroup={resizeGroup} onOpenGroup={id => { setEditingNoteId(null); setGroupCanvasId(id); }}

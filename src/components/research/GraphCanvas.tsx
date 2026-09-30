@@ -23,26 +23,50 @@ import { extractPageNumber, type CitationReference } from '@/utils/citation';
 type Gesture =
   | { kind: 'pan'; start: Coordinates; origin: Coordinates }
   | { kind: 'pinch'; startDistance: number; startZoom: number; anchor: Coordinates }
-  | { kind: 'drag'; start: Coordinates; origins: Record<string, Coordinates>; primaryId?: string }
+  | { kind: 'drag'; start: Coordinates; origins: Record<string, Coordinates>; primaryId?: string; noteIds: string[] }
   | { kind: 'resize'; start: Coordinates; node: CanvasNode; handle: SectionResizeHandle }
   | { kind: 'marquee'; startClient: Coordinates; currentClient: Coordinates; additive: boolean };
 
 
+const isCluster = (node: CanvasNode) => node.type === 'group' || node.type === 'section';
+
+/** Template maps store the unprefixed cluster id ("guide-section-x") while the cluster itself is
+ *  "project-…-guide-section-x"; a reference matches either. */
+function refersTo(sectionId: string | undefined, group: CanvasNode) {
+  return Boolean(sectionId && (sectionId === group.id || group.id.endsWith(`-${sectionId}`)));
+}
+
+/** A cluster holds exactly the notes the user dropped into it. Position alone never makes a note a member,
+ *  so dragging a cluster across the board doesn't sweep up the notes it passes over. */
 export function membersOf(group: CanvasNode, nodes: CanvasNode[]): CanvasNode[] {
-  const width = group.width || 540;
-  const height = group.height || 360;
-  return nodes.filter(node => {
-    if (node.id === group.id || node.type === 'group' || node.type === 'section') return false;
-    // Template maps store the unprefixed cluster id ("guide-section-x") while the cluster itself is
-    // "project-…-guide-section-x"; accept that suffix match too.
-    if (node.sectionId && (node.sectionId === group.id || group.id.endsWith(`-${node.sectionId}`))) return true;
-    // No reference, or a reference to a cluster that doesn't exist: membership is "inside the loop".
-    const sectionExists = node.sectionId && nodes.some(other => other.id === node.sectionId || other.id.endsWith(`-${node.sectionId}`));
-    if (!sectionExists) {
+  return nodes.filter(node => node.id !== group.id && !isCluster(node) && refersTo(node.sectionId, group));
+}
+
+/** The cluster a note belongs to, if any. */
+export function clusterIdOf(node: CanvasNode, nodes: CanvasNode[]): string | null {
+  if (!node.sectionId || isCluster(node)) return null;
+  return nodes.find(other => isCluster(other) && refersTo(node.sectionId, other))?.id ?? null;
+}
+
+/** Maps saved before membership was explicit relied on position: a note with no (valid) cluster reference that
+ *  sat inside a cluster's area belonged to it. Record that as an explicit reference once, when a map is loaded. */
+export function adoptLegacyClusterMembers(nodes: CanvasNode[]): CanvasNode[] {
+  if (!Array.isArray(nodes)) return nodes;
+  const clusters = nodes.filter(isCluster);
+  if (!clusters.length) return nodes;
+  let changed = false;
+  const next = nodes.map(node => {
+    if (isCluster(node) || clusterIdOf(node, nodes)) return node;
+    const home = clusters.find(group => {
+      const width = group.width || 540;
+      const height = group.height || 360;
       return node.x >= group.x && node.y >= group.y && node.x < group.x + width && node.y < group.y + height;
-    }
-    return false;
+    });
+    if (!home) return node;
+    changed = true;
+    return { ...node, sectionId: home.id };
   });
+  return changed ? next : nodes;
 }
 
 type Box = { x: number; y: number; width: number; height: number };
@@ -329,7 +353,7 @@ function penOutline(width: number, height: number, seedText: string, pass: numbe
 }
 
 function GroupCard({
-  node, members, relationCount, isCollapsed, selected, isGrabbed, dragTilt = 0, width, height, onEdit, onToggle, onOpen, onStartResize, isResizeLocked
+  node, members, relationCount, isCollapsed, selected, isGrabbed, dragTilt = 0, width, height, onEdit, onToggle, onOpen, onStartResize, isResizeLocked, dropState
 }: {
   node: CanvasNode;
   members: CanvasNode[];
@@ -345,6 +369,8 @@ function GroupCard({
   onOpen: () => void;
   onStartResize: (event: React.PointerEvent, handle: SectionResizeHandle) => void;
   isResizeLocked?: boolean;
+  /** A note is being carried: 'available' while it could be dropped here, 'target' while it's over this cluster. */
+  dropState?: 'available' | 'target';
 }) {
   // Open: a pen loop drawn round its notes, titled on a strip of tape. Folded: a sheet of paper taped to the board.
   // A cluster may carry the user's colour (pen line and a tint of washi tape) and a line weight, set in Properties.
@@ -352,7 +378,7 @@ function GroupCard({
   const count = `${members.length} ${members.length === 1 ? 'idea' : 'ideas'}${relationCount ? ` · ${relationCount} ${relationCount === 1 ? 'relation' : 'relations'}` : ''}`;
   return (
     <article
-      className={`graph-group ${isCollapsed ? 'is-folded' : ''} ${selected ? 'is-selected' : ''} ${isGrabbed ? 'is-grabbed' : ''} ${color ? 'has-color' : ''}`}
+      className={`graph-group ${isCollapsed ? 'is-folded' : ''} ${selected ? 'is-selected' : ''} ${isGrabbed ? 'is-grabbed' : ''} ${color ? 'has-color' : ''} ${dropState ? `is-drop-${dropState}` : ''}`}
       style={{
         ...(isGrabbed ? { transform: `scale(1.012) rotate(${dragTilt * 0.35}deg)` } : {}),
         ...(color ? { ['--cluster-ink' as `--${string}`]: color } : {}),
@@ -403,6 +429,12 @@ function GroupCard({
         </button>
       </div>
 
+      {dropState && (dropState === 'target' || members.length === 0) && (
+        <p className="group-drop-hint" role="status">
+          {dropState === 'target' ? `Release to add it to “${node.title}”` : 'Empty cluster: drop a note here to add it'}
+        </p>
+      )}
+
       {isCollapsed && (
         <ul className="group-folded-list" aria-label="Notes in this cluster">
           {members.map(member => <li key={member.id} title={member.title}><span>{member.title}</span></li>)}
@@ -428,7 +460,7 @@ export function GraphCanvas({
   graph, selectedNodeIds, viewport, setViewport, activeTool, spacePressed, linkingFromId,
   autoFitKey, editingNoteId, onSelectNode, onSelectMultipleNodes, onClearSelection, onClickAway, onCancelLinking, onMoveNodes, onConnect,
   onStartLinking, onToggleGroup, onEditNote, onUpdateNote, onUpdateRelationship, onDeleteRelationship, onResizeGroup, onOpenGroup,
-  onAddRecordWithData, onDeleteNodes, projectId, isResizeLocked = false, draftIds, detachingIds, keptIds, sketch, sketchStyle, onSketchChange, onOpenEditor, placingIds, onPlaced
+  onAddRecordWithData, onDeleteNodes, onAssignCluster, projectId, isResizeLocked = false, draftIds, detachingIds, keptIds, sketch, sketchStyle, onSketchChange, onOpenEditor, placingIds, onPlaced
 }: {
   graph: KnowledgeGraph;
   selectedNodeIds: string[];
@@ -456,6 +488,8 @@ export function GraphCanvas({
   onOpenGroup: (id: string) => void;
   onAddRecordWithData?: (type: CanvasNodeType, initialData?: Partial<CanvasNode>) => void;
   onDeleteNodes?: (ids: string[]) => void;
+  /** Notes were dropped into a cluster (id) or out of every cluster (null). Without it, membership never changes. */
+  onAssignCluster?: (ids: string[], clusterId: string | null) => void;
   projectId?: string;
   isResizeLocked?: boolean;
   /** Node and edge ids that are AI drafts: rendered in proof blue, read-only until kept. */
@@ -479,6 +513,10 @@ export function GraphCanvas({
   const [cursorWorld, setCursorWorld] = useState<Coordinates | null>(null);
   const [nodeHeights, setNodeHeights] = useState<Record<string, number>>({});
   const [draggedNodeIds, setDraggedNodeIds] = useState<string[]>([]);
+  // Notes the user is carrying by hand (not the notes a dragged cluster brings along), and the cluster under them.
+  const [carriedNoteIds, setCarriedNoteIds] = useState<string[]>([]);
+  const [dropTargetId, setDropTargetId] = useState<string | null>(null);
+  const dropTargetRef = useRef<string | null>(null);
   const [dragTilt, setDragTilt] = useState<number>(0);
   const [marqueeBox, setMarqueeBox] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
   const [isOverTrash, setIsOverTrash] = useState(false);
@@ -1025,6 +1063,23 @@ export function GraphCanvas({
             const hits = collidingIds(movingBoxes, nodes, nodeBounds, visibleIds);
             if (hits.join() !== blockedRef.current.join()) { blockedRef.current = hits; setBlockedIds(hits); }
 
+            // Which cluster would take the carried notes if they were dropped now: the one under the grabbed card's centre.
+            if (cur.noteIds.length && onAssignCluster) {
+              const primary = cur.primaryId ? movingBoxes[cur.primaryId] : undefined;
+              let target: string | null = null;
+              if (primary) {
+                const cx = primary.x + primary.width / 2;
+                const cy = primary.y + primary.height / 2;
+                for (let i = groups.length - 1; i >= 0; i--) {
+                  const group = groups[i];
+                  if (!visibleIds.has(group.id)) continue;
+                  const area = groupBounds(group, membersOf(group, nodes).filter(member => !cur.noteIds.includes(member.id)));
+                  if (cx >= area.x && cx <= area.x + area.width && cy >= area.y && cy <= area.y + area.height) { target = group.id; break; }
+                }
+              }
+              if (target !== dropTargetRef.current) { dropTargetRef.current = target; setDropTargetId(target); }
+            }
+
             onMoveNodes(
               Object.fromEntries(
                 Object.entries(cur.origins).map(([id, point]) => [id, { x: point.x + finalDx, y: point.y + finalDy }])
@@ -1055,7 +1110,11 @@ export function GraphCanvas({
       } else if (gesture.current?.kind === 'drag') {
         const isTrashDrop = isOverTrash;
         const nodesToDelete = [...draggedNodeIds];
+        const carried = gesture.current.noteIds;
+        const target = dropTargetRef.current;
         setDraggedNodeIds([]);
+        setCarriedNoteIds([]);
+        dropTargetRef.current = null; setDropTargetId(null);
         setDragTilt(0);
         setIsOverTrash(false);
 
@@ -1067,6 +1126,14 @@ export function GraphCanvas({
         }
         // Dropped on another note: everything that moved goes back to where it started.
         if (blockedRef.current.length) onMoveNodes(gesture.current.origins);
+        else if (carried.length && onAssignCluster) {
+          // Dropped: into the cluster under it, or out of the one it came from.
+          const changed = carried.filter(id => {
+            const note = graph.nodesById[id];
+            return note && clusterIdOf(note, nodes) !== target;
+          });
+          if (changed.length) onAssignCluster(changed, target);
+        }
       } else if (gesture.current?.kind === 'resize' && blockedRef.current.length) {
         const { id, x, y, width, height } = gesture.current.node;
         onResizeGroup(id, { x, y, width, height });
@@ -1083,6 +1150,8 @@ export function GraphCanvas({
       lastClientX.current = null;
       setAlignmentGuides([]);
       setDraggedNodeIds([]);
+      setCarriedNoteIds([]);
+      dropTargetRef.current = null; setDropTargetId(null);
       setDragTilt(0);
       setIsOverTrash(false);
       setMarqueeBox(null);
@@ -1101,7 +1170,7 @@ export function GraphCanvas({
       window.removeEventListener('pointerup', up);
       window.removeEventListener('pointercancel', cancel);
     };
-  }, [onMoveNodes, onResizeGroup, onSelectMultipleNodes, onDeleteNodes, setViewport, viewport.zoom, viewport.pan, nodes, visibleIds, nodeHeights, isOverTrash, draggedNodeIds, onClearSelection, onClickAway, graph.nodesById, nodeBounds]);
+  }, [onMoveNodes, onResizeGroup, onSelectMultipleNodes, onDeleteNodes, setViewport, viewport.zoom, viewport.pan, nodes, visibleIds, nodeHeights, isOverTrash, draggedNodeIds, onClearSelection, onClickAway, graph.nodesById, nodeBounds, groups, onAssignCluster]);
 
   const trackTouchPointer = (event: React.PointerEvent<HTMLDivElement>) => {
     if (event.pointerType !== 'touch') return;
@@ -1195,17 +1264,21 @@ export function GraphCanvas({
     const additive = event.ctrlKey || event.metaKey;
     onSelectNode(node.id, additive);
     const movingIds = additive && selectedNodeIds.includes(node.id) ? selectedNodeIds : [node.id];
-    const moveNodes = node.type === 'group' || node.type === 'section'
+    const grabbedCluster = node.type === 'group' || node.type === 'section';
+    const moveNodes = grabbedCluster
       ? [...new Set([...movingIds, ...membersOf(node, nodes).map(member => member.id)])]
       : movingIds;
+    // Only notes picked up by hand can change cluster. A cluster carries its members without re-homing them.
+    const noteIds = grabbedCluster ? [] : movingIds.filter(id => graph.nodesById[id] && !isCluster(graph.nodesById[id]));
     setDraggedNodeIds(moveNodes);
+    setCarriedNoteIds(noteIds);
     setDragTilt(0);
     lastClientX.current = event.clientX;
     const origins = Object.fromEntries(moveNodes.map(id => {
       const found = graph.nodesById[id];
       return [id, { x: found.x, y: found.y }];
     }));
-    gesture.current = { kind: 'drag', start: { x: event.clientX, y: event.clientY }, origins, primaryId: node.id };
+    gesture.current = { kind: 'drag', start: { x: event.clientX, y: event.clientY }, origins, primaryId: node.id, noteIds };
     event.stopPropagation();
   };
 
@@ -1457,7 +1530,10 @@ export function GraphCanvas({
           ))}
         </svg>
         {renderedGroups.map(group => {
-          const members = membersOf(group, nodes);
+          // A note carried away from its cluster stops stretching the loop, so leaving reads as leaving.
+          const carrying = carriedNoteIds.length > 0 && Boolean(onAssignCluster);
+          const allMembers = membersOf(group, nodes);
+          const members = carrying && dropTargetId !== group.id ? allMembers.filter(member => !carriedNoteIds.includes(member.id)) : allMembers;
           const bounds = groupBounds(group, members);
           const relationshipCount = Object.values(graph.edgesById).filter(edge => members.some(member => member.id === edge.from || member.id === edge.to)).length;
           return (
@@ -1485,6 +1561,7 @@ export function GraphCanvas({
                 onOpen={() => onOpenGroup(group.id)}
                 onStartResize={(event, handle) => startGroupResize(event, group, handle)}
                 isResizeLocked={isResizeLocked}
+                dropState={carrying ? (dropTargetId === group.id ? 'target' : 'available') : undefined}
               />
             </div>
           );
