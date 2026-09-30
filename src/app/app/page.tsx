@@ -18,7 +18,7 @@ import { extractYouTubeVideoId } from '@/components/research/SourceMetadata';
 import { addNode, addRelationship, exportContextMarkdown, exportGraphJson, exportMermaid, normalizeGraph, removeNode, strokeForLabel, updateNode, updateRelationship, type KnowledgeGraph } from '@/lib/graph';
 import { parseBibTeX, bibEntriesToCanvasNodes } from '@/lib/bibtex';
 import { generateStandaloneSvg, exportGraphToPng } from '@/lib/canvas-export';
-import type { CanvasNode, CanvasNodeType, Connection, Coordinates, GraphRevisionSummary, ResearchChange, ResearchSession } from '@/types/canvas';
+import { RESEARCH_INPUT_LIMITS, RESEARCH_MODE_LABELS, type CanvasNode, type CanvasNodeType, type Connection, type Coordinates, type GraphRevisionSummary, type ResearchChange, type ResearchMode, type ResearchSession } from '@/types/canvas';
 import type { AIStatus } from '@/lib/ai-service';
 import { ChatToolCard } from '@/components/research/ChatToolCard';
 import { ToolComposer, type ComposerTool } from '@/components/research/ToolComposer';
@@ -946,11 +946,18 @@ export default function SynthexWorkspace() {
     finally { setCreatingProject(false); }
   }
 
-  const executeStreamingResearch = useCallback(async (query: string, mode: 'quick' | 'deep') => {
+  const executeStreamingResearch = useCallback(async (query: string, mode: ResearchMode) => {
     setResearching(true);
     setChatBusy(true);
 
-    const initialSteps = mode === 'deep' ? [
+    const initialSteps = mode === 'organize' ? [
+      { id: 'read', label: 'Reading your notes', status: 'running' as const },
+      { id: 'synthesis', label: 'Sorting ideas, questions and links into draft cards', status: 'pending' as const }
+    ] : mode === 'check' ? [
+      { id: 'read', label: 'Organizing your notes into ideas and questions', status: 'running' as const },
+      { id: 'hop1', label: 'Searching for outdated details and better alternatives', status: 'pending' as const },
+      { id: 'synthesis', label: 'Staging the map and what the check found', status: 'pending' as const }
+    ] : mode === 'deep' ? [
       { id: 'axes', label: 'Decomposing inquiry across analytical axes', status: 'running' as const },
       { id: 'queries', label: 'Formulating web search queries', status: 'pending' as const },
       { id: 'hop1', label: 'Hop 1: Exploring foundational literature & landscape', status: 'pending' as const },
@@ -966,7 +973,9 @@ export default function SynthexWorkspace() {
       ...current,
       {
         role: 'assistant',
-        text: `### Grounded ${mode === 'deep' ? 'Deep' : 'Quick'} Research\nInquiry: **"${query}"**\nStreaming live intermediate steps and discovered sources...`,
+        text: mode === 'organize' || mode === 'check'
+          ? `### ${RESEARCH_MODE_LABELS[mode]}\n${mode === 'organize' ? 'Sorting your notes into a map. No web search.' : 'Organizing your notes, then checking them against the web.'}`
+          : `### Grounded ${mode === 'deep' ? 'Deep' : 'Quick'} Research\nInquiry: **"${query}"**\nStreaming live intermediate steps and discovered sources...`,
         model: aiStatus?.activeModel || (aiStatus?.activeProvider === 'OpenAI' ? 'gpt-6-luna' : 'gemini-3.8-flash'),
         provider: aiStatus?.activeProvider as 'OpenAI' | 'Gemini' | undefined,
         isStreaming: true,
@@ -1110,7 +1119,7 @@ export default function SynthexWorkspace() {
                     const steps = last.researchProgress.steps.map(s => {
                       if (s.id === `hop${eventData.hop}`) return { ...s, status: 'running' as const };
                       if (eventData.hop === 2 && s.id === 'hop1') return { ...s, status: 'done' as const };
-                      if (eventData.hop >= 1 && (s.id === 'axes' || s.id === 'queries')) return { ...s, status: 'done' as const };
+                      if (eventData.hop >= 1 && (s.id === 'axes' || s.id === 'queries' || s.id === 'read')) return { ...s, status: 'done' as const };
                       return s;
                     });
                     updated[lastIdx] = {
@@ -1131,10 +1140,15 @@ export default function SynthexWorkspace() {
                     const completedSteps = last.researchProgress.steps.map(s => ({ ...s, status: 'done' as const }));
                     const nodesCount = session.changes.filter(c => c.kind === 'node').length;
                     const relsCount = session.changes.filter(c => c.kind === 'relationship').length;
-                    const finalText = `### Research Proposals Ready\n` +
-                      `Completed ${last.researchProgress.mode === 'deep' ? 'deep multi-hop' : 'quick'} research for **"${query}"**.\n\n` +
-                      `Staged **${nodesCount} nodes** and **${relsCount} relationships** for human review across ${last.researchProgress.sources.length} grounded sources.\n\n` +
-                      `> ${session.summary || 'Summary synthesized from web citations and knowledge graph context.'}`;
+                    const doneMode = last.researchProgress.mode;
+                    const finalText = doneMode === 'organize' || doneMode === 'check'
+                      ? `### ${doneMode === 'organize' ? 'Your thinking, organized' : 'Plan checked'}\n` +
+                        `Drafted **${nodesCount} cards** and **${relsCount} links**${doneMode === 'check' ? ` using ${last.researchProgress.sources.length} sources` : ''}. Keep the ones that are right.\n\n` +
+                        `${session.summary}`
+                      : `### Research Proposals Ready\n` +
+                        `Completed ${doneMode === 'deep' ? 'deep multi-hop' : 'quick'} research for **"${query}"**.\n\n` +
+                        `Staged **${nodesCount} nodes** and **${relsCount} relationships** for human review across ${last.researchProgress.sources.length} grounded sources.\n\n` +
+                        `> ${session.summary || 'Summary synthesized from web citations and knowledge graph context.'}`;
 
                     updated[lastIdx] = {
                       ...last,
@@ -1382,14 +1396,20 @@ export default function SynthexWorkspace() {
     }
   }
 
-  const handleExecuteResearch = useCallback(async (query: string, mode: 'quick' | 'deep') => {
+  const handleExecuteResearch = useCallback(async (query: string, mode: ResearchMode) => {
     setChatLines(current => [...current, { role: 'user', text: query }]);
     await executeStreamingResearch(query, mode);
   }, [executeStreamingResearch]);
 
-  const buildMap = useCallback((query: string, mode: 'quick' | 'deep' = 'quick') => {
-    const trimmed = query.trim().slice(0, 500);
+  const buildMap = useCallback((query: string, mode: ResearchMode = 'quick') => {
+    const trimmed = query.trim();
     if (!trimmed || researching) return;
+    if (trimmed.length > RESEARCH_INPUT_LIMITS[mode]) {
+      announce(mode === 'organize' || mode === 'check'
+        ? `That is too long to organize in one go. Keep it under ${RESEARCH_INPUT_LIMITS[mode].toLocaleString()} characters.`
+        : `Research questions must be under ${RESEARCH_INPUT_LIMITS[mode]} characters. For longer notes, use /organize or /check.`);
+      return;
+    }
     if (!aiConfigured) { announce('AI is not set up on this server yet. Add OPENAI_API_KEY or GEMINI_API_KEY to build maps.'); return; }
     setComposerText('');
     setComposerTool(null);
@@ -1750,6 +1770,8 @@ export default function SynthexWorkspace() {
   const composerTools = useMemo<ComposerTool[]>(() => [
     { id: 'quick', command: 'quick', label: 'Quick research', hint: 'Search the web and draft cards to review', cost: credits(CREDIT_RATES.quick_research), sticky: true },
     { id: 'deep', command: 'deep', label: 'Deep research', hint: 'Several rounds of search, more sources', cost: credits(CREDIT_RATES.deep_research), sticky: true },
+    { id: 'organize', command: 'organize', label: 'Organize my thinking', hint: 'Sort raw notes into ideas, questions and links. No web search', cost: credits(CREDIT_RATES.organize_thinking), sticky: true },
+    { id: 'check', command: 'check', label: 'Check my plan', hint: 'Organize it, then search for outdated info and better options', cost: credits(CREDIT_RATES.check_plan), sticky: true },
     ...(selectedTitle ? [
       { id: 'expand', command: 'expand', label: 'Expand this idea', hint: 'Sub-ideas, mechanisms and examples', cost: credits(CREDIT_RATES.quick_research) },
       { id: 'sources', command: 'sources', label: 'Find sources', hint: 'Sources that support or dispute it', cost: credits(CREDIT_RATES.quick_research) },
@@ -1769,6 +1791,10 @@ export default function SynthexWorkspace() {
   function submitComposer(text: string, toolId: string | null) {
     if (toolId === 'quick' || toolId === 'deep') {
       buildMap(selectedTitle ? `${text} (about "${selectedTitle}")` : text, toolId);
+      return;
+    }
+    if (toolId === 'organize' || toolId === 'check') {
+      buildMap(text, toolId);
       return;
     }
     void sendQuestion(text);
@@ -1791,7 +1817,7 @@ export default function SynthexWorkspace() {
     <div className="composer-status" role="status">
       <div>
         <strong>{thinkingStep || 'Reading your question…'}</strong>
-        <small>{plural(liveProgress?.sources.length ?? 0, 'source')} found · {liveProgress?.mode === 'deep' ? 'Deep research' : 'Quick map'} · nothing joins your map until you keep it</small>
+        <small>{plural(liveProgress?.sources.length ?? 0, 'source')} found · {liveProgress ? RESEARCH_MODE_LABELS[liveProgress.mode] : 'Quick research'} · nothing joins your map until you keep it</small>
       </div>
       <button type="button" className="line-button" onClick={() => researchAbort.current?.abort()}><Square size={12} fill="currentColor" /> Stop</button>
     </div>
@@ -2024,8 +2050,8 @@ export default function SynthexWorkspace() {
                         onActiveToolChange={setStartTool}
                         onRunTool={runComposerTool}
                         inputRef={element => { composerRef.current = element; }}
-                        maxLength={500}
-                        placeholder="How does sleep affect memory? Type / for tools"
+                        maxLength={RESEARCH_INPUT_LIMITS.organize}
+                        placeholder={startTool === 'organize' || startTool === 'check' ? 'Paste or type your raw thinking. Messy is fine.' : 'How does sleep affect memory? Type / for tools'}
                         busy={chatBusy}
                         sendLabel="Build map"
                         autoFocus
@@ -2091,8 +2117,8 @@ export default function SynthexWorkspace() {
                       onActiveToolChange={setComposerTool}
                       onRunTool={runComposerTool}
                       inputRef={element => { composerRef.current = element; }}
-                      maxLength={400}
-                      placeholder={selectedTitle ? `Ask about “${selectedTitle.slice(0, 32)}”, or type /` : 'Ask about your map, or type /'}
+                      maxLength={RESEARCH_INPUT_LIMITS.organize}
+                      placeholder={composerTool === 'organize' || composerTool === 'check' ? 'Paste or type your raw thinking. Messy is fine.' : selectedTitle ? `Ask about “${selectedTitle.slice(0, 32)}”, or type /` : 'Ask about your map, or type /'}
                       sendLabel="Grow the map"
                     />
                   )
@@ -2293,7 +2319,7 @@ export default function SynthexWorkspace() {
           <div className="review-head">
             <div>
               <h2 id="review-title">{activeSession.query}</h2>
-              <p className="note-meta">{activeSession.mode === 'deep' ? 'Deep research' : 'Quick research'} · {new Date(activeSession.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} · {plural(activeSession.changes.length, 'draft')}</p>
+              <p className="note-meta">{RESEARCH_MODE_LABELS[activeSession.mode] ?? 'Research'} · {new Date(activeSession.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} · {plural(activeSession.changes.length, 'draft')}</p>
             </div>
             <button className="icon-button" aria-label="Close review" onClick={closeSession}><X size={18} strokeWidth={1.75} /></button>
           </div>

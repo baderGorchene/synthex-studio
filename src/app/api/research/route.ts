@@ -10,7 +10,19 @@ import {
 import { normalizeGraph, strokeForLabel } from '@/lib/graph';
 import { getServerAuth } from '@/lib/auth';
 import { deductCredits, refundCredits } from '@/lib/credits';
-import type { CanvasNode, Connection, ResearchChange, ResearchMode, ResearchSession } from '@/types/canvas';
+import { RESEARCH_INPUT_LIMITS, RESEARCH_MODE_LABELS, type CanvasNode, type Connection, type ResearchChange, type ResearchMode, type ResearchSession } from '@/types/canvas';
+import type { MeteredAction } from '@/lib/plans';
+
+const MODES: Record<ResearchMode, { credit: MeteredAction; maxNodes: number; maxEdges: number; trail: string }> = {
+  quick: { credit: 'quick_research', maxNodes: 6, maxEdges: 12, trail: 'Quick Single-Shot Research' },
+  deep: { credit: 'deep_research', maxNodes: 14, maxEdges: 18, trail: 'Recursive Multi-Step Deep Research (Multi-Hop Grounding)' },
+  organize: { credit: 'organize_thinking', maxNodes: 16, maxEdges: 24, trail: 'Organize thinking: the user\'s own notes sorted into a map, no web search' },
+  check: { credit: 'check_plan', maxNodes: 22, maxEdges: 32, trail: 'Plan check: notes organized, then searched for outdated information and better alternatives' }
+};
+
+function isResearchMode(value: unknown): value is ResearchMode {
+  return typeof value === 'string' && Object.hasOwn(MODES, value);
+}
 
 const nodeTypes = new Set(['concept', 'note', 'claim', 'question', 'hypothesis', 'ai_insight']);
 const edgeLabels = new Set([
@@ -39,7 +51,7 @@ function buildSessionFromResearchResult(
   const baseX = Math.max(200, ...Object.values(graph.nodesById).map(node => node.x + (node.width || 280))) + 120;
   const baseY = Math.min(220, ...Object.values(graph.nodesById).map(node => node.y));
 
-  for (const [index, item] of result.nodes.slice(0, mode === 'deep' ? 14 : 6).entries()) {
+  for (const [index, item] of result.nodes.slice(0, MODES[mode].maxNodes).entries()) {
     if (!item || !nodeTypes.has(item.type) || typeof item.tempId !== 'string' || typeof item.title !== 'string') continue;
     const id = `research-${randomUUID()}`;
     idByTempId.set(item.tempId, id);
@@ -83,7 +95,7 @@ function buildSessionFromResearchResult(
   });
 
   const newNodeIds = new Set([...idByTempId.values()]);
-  const newEdges: Connection[] = result.relationships.slice(0, mode === 'deep' ? 18 : 12).flatMap(item => {
+  const newEdges: Connection[] = result.relationships.slice(0, MODES[mode].maxEdges).flatMap(item => {
     const from = idByTempId.get(item.fromTempId);
     const to = idByTempId.get(item.toTempId);
     if (!from || !to || !newNodeIds.has(from) || !newNodeIds.has(to) || from === to) return [];
@@ -114,8 +126,8 @@ function buildSessionFromResearchResult(
     summary: result.summary.slice(0, 6000),
     trail: [
       `Engine: ${provider} · ${model}${usedFallback ? ' (Automatic Fallback Triggered)' : ''}`,
-      `Research Mode: ${mode === 'deep' ? 'Recursive Multi-Step Deep Research (Multi-Hop Grounding)' : 'Quick Single-Shot Research'}`,
-      `Research question: ${query}`,
+      `Research Mode: ${MODES[mode].trail}`,
+      `${mode === 'organize' || mode === 'check' ? 'Notes' : 'Research question'}: ${query.length > 300 ? `${query.slice(0, 300)}…` : query}`,
       ...searchQueries.map(text => `Search: ${text.slice(0, 500)}`),
       `Grounded sources discovered: ${sources.length}`,
       ...(groundingNote ? [groundingNote] : []),
@@ -160,12 +172,17 @@ export async function POST(request: Request) {
     const body = await request.json();
     const query = typeof body?.query === 'string' ? body.query.trim() : '';
     const projectId = typeof body?.projectId === 'string' ? body.projectId : '';
-    const mode: ResearchMode = body?.mode === 'deep' ? 'deep' : 'quick';
-    if (!query || query.length > 500) return Response.json({ error: 'Enter a research question under 500 characters.' }, { status: 400 });
+    if (!isResearchMode(body?.mode)) return Response.json({ error: 'Choose quick, deep, organize or check.' }, { status: 400 });
+    const mode: ResearchMode = body.mode;
+    const maxLength = RESEARCH_INPUT_LIMITS[mode];
+    if (!query || query.length > maxLength) {
+      return Response.json({ error: mode === 'organize' || mode === 'check'
+        ? `Keep your notes under ${maxLength.toLocaleString('en-US')} characters.`
+        : `Enter a research question under ${maxLength} characters.` }, { status: 400 });
+    }
     if (!projectId || projectId.length > 80 || !(await userHasProjectAccess(projectId, userId, orgId, clerkId))) {
       return Response.json({ error: 'Project not found.' }, { status: 404 });
     }
-    if (body?.mode !== 'quick' && body?.mode !== 'deep') return Response.json({ error: 'Choose quick or deep research.' }, { status: 400 });
 
     const [rawNodes, rawEdges] = await Promise.all([
       getAllNodesFromDb(projectId),
@@ -174,15 +191,15 @@ export async function POST(request: Request) {
     const graph = normalizeGraph(rawNodes as CanvasNode[], rawEdges as Connection[]);
 
     // Charge Context Credits up front (atomic), refund if the run fails.
-    const creditAction = mode === 'deep' ? 'deep_research' : 'quick_research';
-    const creditNote = `${mode === 'deep' ? 'Deep' : 'Quick'} research: "${query.slice(0, 50)}..."`;
+    const creditAction = MODES[mode].credit;
+    const creditNote = `${RESEARCH_MODE_LABELS[mode]}: "${query.slice(0, 50)}..."`;
     let creditsRemaining: number | undefined;
     if (userId) {
       const charge = await deductCredits(userId, creditAction, creditNote);
       if (!charge.success) {
         return Response.json({
           error: 'INSUFFICIENT_CREDITS',
-          message: charge.error || `Insufficient Context Credits for ${mode} research. Please top up to continue.`,
+          message: charge.error || `Insufficient Context Credits for ${RESEARCH_MODE_LABELS[mode].toLowerCase()}. Please top up to continue.`,
           requiredCredits: charge.cost,
           currentBalance: charge.balance
         }, { status: 402 });

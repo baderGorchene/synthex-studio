@@ -23,7 +23,7 @@ import {
    Types
 ===================================================================== */
 const NODE_TYPES = ['concept', 'note', 'claim', 'question', 'hypothesis', 'ai_insight'] as const;
-const RELATION_LABELS = ['supports', 'contradicts', 'depends_on', 'answers', 'derived_from', 'extends'] as const;
+const RELATION_LABELS = ['supports', 'contradicts', 'depends_on', 'answers', 'derived_from', 'extends', 'replaces'] as const;
 
 // Every field is required: OpenAI strict structured outputs reject optional fields.
 const researchOutputSchema = z.object({
@@ -246,6 +246,25 @@ Give each axis one specific web search query. Also list 2-3 testable preliminary
   }, signal);
 }
 
+/** One schema-checked call with no tools: used where the model must work only from what it is given. */
+async function structuredCall(provider: ProviderName, label: string, system: string, prompt: string, signal?: AbortSignal) {
+  return withModelFallback(provider, async modelId => {
+    const result = await generateText({
+      model: languageModel(provider, modelId),
+      system,
+      prompt,
+      output: Output.object({ schema: researchOutputSchema, name: 'thinking_map' }),
+      providerOptions: PROVIDER_OPTIONS,
+      maxRetries: 0,
+      timeout: SEARCH_TIMEOUT_MS,
+      abortSignal: signal
+    });
+    const usage = { inputTokens: result.totalUsage.inputTokens, outputTokens: result.totalUsage.outputTokens };
+    logUsage(label, provider, modelId, usage);
+    return { output: result.output, model: modelId, usage };
+  }, signal);
+}
+
 /* =====================================================================
    Prompts
 ===================================================================== */
@@ -258,6 +277,45 @@ const RESEARCH_RULES = `Rules:
 
 const SYSTEM_PROMPT = `You are Synthex Studio's AI Research Engine. You turn research questions into structured, evidence-grounded knowledge graph proposals that a human will review.
 ${RESEARCH_RULES}`;
+
+const ORGANIZE_SYSTEM_PROMPT = `You are Synthex Studio's thinking organizer. The user pasted raw, unordered thinking: notes, fragments, plans, worries. Turn it into a clear map of cards and links that a human will review. You do not research.
+Rules:
+- Every card must come from what the user wrote. Never add outside facts, numbers, tools, names or recommendations. A gap you notice becomes an open question, not an answer.
+- Sort the thinking into card types:
+  - concept: the overall goal and each main idea or theme.
+  - claim: something the user states as fact or assumes; phrase it so it can be checked.
+  - hypothesis: a hunch or bet the user is not sure of.
+  - question: something that must be answered or decided before moving on, whether the user asked it or it is implied (a missing decision, missing information, two statements that conflict).
+  - note: a concrete detail, constraint or to-do.
+- Merge repeats. Keep the user's wording where it is clear. Titles are short (at most 8 words); content is 1-3 plain sentences.
+- Link every card to at least one other. Relationships are directional:
+  - extends: an idea (from) builds out the goal or a bigger idea (to).
+  - derived_from: a detail or claim (from) comes out of an idea (to).
+  - depends_on: a card (from) cannot be settled until a question or claim (to) is.
+  - supports / contradicts: one statement (from) backs or conflicts with another (to).
+  - answers: something the user wrote (from) already answers a question (to).
+- Leave "sources" empty.
+- In "summary", write a short markdown outline: the goal, the main threads, and what is still unresolved.
+- In "subquestions", list the questions that most need answering, most important first.`;
+
+function checkPrompt(query: string, organized: ResearchOutput, today: string) {
+  const cards = organized.nodes.map(n => `- ${n.tempId}: [${n.type}] ${n.title}: ${n.content}`).join('\n');
+  return `Research mode: check. Today is ${today}.
+The user is starting something and wrote these notes:
+---
+${query}
+---
+
+Cards already made from the notes (reference their tempIds; do not propose them again):
+${cards}
+
+Find every specific, checkable item in the notes: tools, libraries, frameworks and their versions, services and platforms, prices and plans, laws and regulations, statistics, dates, and recommended practices. Search the web for the current state of each and report only what the search shows:
+- It is outdated, deprecated, discontinued, renamed or changed: an ai_insight card titled "Outdated: ..." saying what changed and since when, with a "contradicts" relationship from it to the user's card.
+- A better or more current option exists: a concept card titled "Alternative: ..." with the trade-off in one or two sentences, and a "replaces" relationship from it to the user's card.
+- It is confirmed current and it matters to the plan: an ai_insight card titled "Still current: ..." with a "supports" relationship to the user's card. Skip trivial confirmations.
+- A risk or decision the search surfaced that the notes miss: a question card, with a "depends_on" relationship from the user's card to it.
+Propose up to 10 new cards and up to 14 relationships. In "summary", list what is outdated, what has a better alternative and what still holds. List only pages the search returned in "sources".`;
+}
 
 /* =====================================================================
    Research flows
@@ -291,6 +349,93 @@ ${contextMarkdown}`,
     model: call.model,
     searched: call.searched,
     usage: call.usage
+  };
+}
+
+async function organizeNotes(provider: ProviderName, query: string, contextMarkdown: string, maxCards: number, signal?: AbortSignal) {
+  return structuredCall(
+    provider,
+    'organize',
+    ORGANIZE_SYSTEM_PROMPT,
+    `Raw thinking from the user:
+---
+${query}
+---
+
+Propose up to ${maxCards} cards and up to ${maxCards + 8} relationships.
+
+Already on the user's map (do not repeat these cards):
+${contextMarkdown}`,
+    signal
+  );
+}
+
+/** Sorts the user's own thinking into a map. No web search, no outside facts. */
+async function runOrganize(provider: ProviderName, query: string, contextMarkdown: string, options: ResearchOptions) {
+  const progress = options.onProgress ?? (() => {});
+  progress({ type: 'step', stepId: 'read', step: 'Reading your notes...' });
+  const call = await organizeNotes(provider, query, contextMarkdown, 16, options.signal);
+  const { summary, subquestions, nodes, relationships } = call.output;
+  progress({ type: 'step', stepId: 'synthesis', step: `Sorted into ${nodes.length} cards and ${relationships.length} links...` });
+  return {
+    result: { summary, subquestions, nodes, relationships },
+    sources: [],
+    searchQueries: [],
+    model: call.model,
+    searched: null,
+    usage: call.usage
+  };
+}
+
+/** Organizes a plan, then searches whether its specifics are outdated or have better alternatives. */
+async function runCheck(provider: ProviderName, query: string, contextMarkdown: string, options: ResearchOptions) {
+  const progress = options.onProgress ?? (() => {});
+  let usage: TokenUsage = {};
+
+  progress({ type: 'step', stepId: 'read', step: 'Organizing your notes...' });
+  const organized = await organizeNotes(provider, query, contextMarkdown, 12, options.signal);
+  usage = addUsage(usage, organized.usage);
+
+  progress({ type: 'hop', hop: 1, description: 'Checking what is outdated and what has better alternatives...' });
+  let check: SearchCallResult | null = null;
+  try {
+    check = await groundedCall(provider, SYSTEM_PROMPT, checkPrompt(query, organized.output, new Date().toISOString().slice(0, 10)), options.signal);
+    usage = addUsage(usage, check.usage);
+    for (const q of check.queries) progress({ type: 'query', query: q });
+  } catch (err) {
+    if (isAbort(err, options.signal)) throw err;
+    console.warn('Plan check search failed, keeping the organized notes:', err instanceof Error ? err.message : err);
+    progress({ type: 'step', step: 'The web check failed; keeping your organized notes...' });
+  }
+
+  // Check cards are namespaced; relationships may point at the organized cards by their own tempIds.
+  const nodes = [...organized.output.nodes];
+  const relationships = [...organized.output.relationships];
+  if (check) {
+    const ownIds = new Set(organized.output.nodes.map(n => n.tempId));
+    const resolve = (tempId: string) => ownIds.has(tempId) ? tempId : `check-${tempId}`;
+    for (const node of check.output.nodes) {
+      if (!ownIds.has(node.tempId)) nodes.push({ ...node, tempId: `check-${node.tempId}` });
+    }
+    for (const rel of check.output.relationships) {
+      relationships.push({ ...rel, fromTempId: resolve(rel.fromTempId), toTempId: resolve(rel.toTempId) });
+    }
+  }
+
+  const sources = check ? verifiedSources(check.output.sources, check.seen, 12) : [];
+  const summary = check
+    ? `${organized.output.summary}\n\n**What the check found:**\n${check.output.summary}`
+    : organized.output.summary;
+  const subquestions = [...new Set([...organized.output.subquestions, ...(check?.output.subquestions ?? [])])].slice(0, 8);
+  progress({ type: 'step', stepId: 'synthesis', step: `Staging ${nodes.length} cards and ${sources.length} verified sources...` });
+
+  return {
+    result: { summary, subquestions, nodes, relationships },
+    sources,
+    searchQueries: check?.queries ?? [],
+    model: organized.model,
+    searched: check ? check.searched : false,
+    usage
   };
 }
 
@@ -441,7 +586,7 @@ export async function researchGraph(
   return runWithFallback(
     'research',
     async provider => {
-      const run = mode === 'deep' ? runDeep : runQuick;
+      const run = mode === 'deep' ? runDeep : mode === 'organize' ? runOrganize : mode === 'check' ? runCheck : runQuick;
       const outcome = await run(provider, query, context.markdown, options);
       return {
         result: outcome.result,
@@ -452,7 +597,8 @@ export async function researchGraph(
         ...(provider === 'OpenAI' ? { reasoningEffort: 'medium' as const } : {}),
         usedFallback: false,
         usage: outcome.usage,
-        ...(outcome.searched ? {} : { groundingNote: 'Web search was unavailable for this model; no sources were attached.' })
+        // organize never searches (searched is null), so it gets no grounding note
+        ...(outcome.searched === false ? { groundingNote: 'Web search was unavailable for this run; no sources were attached.' } : {})
       };
     },
     provider => options.onProgress?.({ type: 'step', step: `Primary provider failed; retrying research with ${provider}...` }),
@@ -480,8 +626,10 @@ export async function* researchGraphStream(
 
   queue.push({
     type: 'step',
-    stepId: mode === 'deep' ? 'axes' : 'queries',
-    step: `Initializing ${mode === 'deep' ? 'deep multi-step' : 'quick'} research...`
+    stepId: mode === 'deep' ? 'axes' : mode === 'organize' || mode === 'check' ? 'read' : 'queries',
+    step: mode === 'organize' ? 'Getting ready to sort your thinking...'
+      : mode === 'check' ? 'Getting ready to check your plan...'
+      : `Initializing ${mode === 'deep' ? 'deep multi-step' : 'quick'} research...`
   });
 
   researchGraph(query, mode, graph, { ...options, onProgress: event => { queue.push(event); signal(); } })

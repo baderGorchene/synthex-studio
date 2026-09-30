@@ -84,14 +84,20 @@ export type CreditAction =
   | 'chat'
   | 'quick_research'
   | 'deep_research'
+  | 'organize_thinking'
+  | 'check_plan'
   | 'pdf_extract'
   | 'refill'
   | 'bonus';
 
-export const CREDIT_RATES: Record<Extract<CreditAction, 'chat' | 'quick_research' | 'deep_research' | 'pdf_extract'>, number> = {
+export type MeteredAction = Extract<CreditAction, 'chat' | 'quick_research' | 'deep_research' | 'organize_thinking' | 'check_plan' | 'pdf_extract'>;
+
+export const CREDIT_RATES: Record<MeteredAction, number> = {
   chat: 1,                 // 1 credit per Graph Chat question
   quick_research: 5,       // 5 credits per Quick Web-Grounded Research session
   deep_research: 20,       // 20 credits per Recursive Multi-Hop Deep Research run
+  organize_thinking: 2,    // 2 credits to organize raw thinking into a map (no web search)
+  check_plan: 10,          // 10 credits to organize a plan, then search for outdated info and alternatives
   pdf_extract: 2           // 2 credits per page for Document AI / layout extraction
 };
 

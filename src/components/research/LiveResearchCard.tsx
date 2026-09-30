@@ -1,8 +1,8 @@
 import React from 'react';
-import type { ResearchSession } from '@/types/canvas';
+import { RESEARCH_MODE_LABELS, type ResearchMode, type ResearchSession } from '@/types/canvas';
 
 export interface ResearchLiveProgress {
-  mode: 'quick' | 'deep';
+  mode: ResearchMode;
   query: string;
   steps: Array<{ id: string; label: string; status: 'pending' | 'running' | 'done' }>;
   queries: string[];
@@ -29,7 +29,7 @@ export const LiveResearchCard: React.FC<LiveResearchCardProps> = ({ progress, on
 
   return (
     <section className="ai-card">
-      <h4>{progress.mode === 'deep' ? 'Deep research' : 'Quick research'}</h4>
+      <h4>{RESEARCH_MODE_LABELS[progress.mode]}</h4>
       <p className="note-meta">
         {progress.isComplete ? 'Done' : `Step ${Math.min(completedSteps + 1, totalSteps)} of ${totalSteps}`} · “{progress.query}”
       </p>
