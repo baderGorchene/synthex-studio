@@ -1,71 +1,53 @@
-import * as sqliteVec from 'sqlite-vec';
-import { getDb } from '../db.ts';
 import type { CanvasNode } from '../../types/canvas';
+import { isNeonConfigured } from '../neon.ts';
 import {
   computeContentHash,
+  configuredEmbeddingProviders,
   getBatchEmbeddings,
   getQueryEmbedding,
-  EMBEDDING_DIMENSION
+  type EmbeddingProvider,
+  type EmbeddingResult
 } from './embeddings.ts';
+import { sqliteSearchIndex } from './search-index-sqlite.ts';
+import { neonSearchIndex } from './search-index-neon.ts';
 
-let isVecLoaded = false;
-let vecLoadAttempted = false;
+/** Index bookkeeping for one node: the keyword index is current when textHash matches; the vector when embeddingHash does. */
+export interface IndexStateRow {
+  nodeId: string;
+  textHash: string;
+  embeddingHash: string | null;
+  provider: EmbeddingProvider | null;
+}
 
-function ensureVectorStore() {
-  const db = getDb();
-  if (!vecLoadAttempted) {
-    vecLoadAttempted = true;
-    try {
-      if (typeof sqliteVec?.load === 'function') {
-        sqliteVec.load(db);
-        isVecLoaded = true;
-      }
-    } catch (err) {
-      console.warn('sqlite-vec native extension not loaded (serverless environment):', err instanceof Error ? err.message : err);
-      isVecLoaded = false;
-    }
-  }
+export interface KeywordDocument {
+  nodeId: string;
+  textHash: string;
+  title: string;
+  body: string;
+  nodeType: string;
+}
 
-  // 1. Metadata tracking table for cached embeddings
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS node_embeddings (
-      projectId TEXT NOT NULL,
-      nodeId TEXT NOT NULL,
-      contentHash TEXT NOT NULL,
-      provider TEXT NOT NULL,
-      dimensions INTEGER NOT NULL,
-      updatedAt INTEGER NOT NULL,
-      PRIMARY KEY (projectId, nodeId)
-    );
-    CREATE INDEX IF NOT EXISTS node_embeddings_proj_idx ON node_embeddings(projectId);
-  `);
+/**
+ * Storage for the hybrid search index. SQLite (FTS5 + sqlite-vec) in local mode,
+ * Postgres (tsvector + pgvector) when Neon is configured, so the index is as durable
+ * as the graph it describes.
+ */
+export interface SearchIndexBackend {
+  listIndexState(projectId: string): Promise<IndexStateRow[]>;
+  /** Providers that produced at least one stored vector in this project. */
+  listEmbeddingProviders(projectId: string): Promise<EmbeddingProvider[]>;
+  deleteNodes(projectId: string, nodeIds: string[]): Promise<void>;
+  upsertKeywordDocuments(projectId: string, docs: KeywordDocument[]): Promise<void>;
+  /** Returns false when the backend has no vector support (extension unavailable). */
+  saveEmbeddings(projectId: string, embeddings: EmbeddingResult[]): Promise<boolean>;
+  /** Nearest node IDs among vectors of this project embedded by this provider, closest first. */
+  denseSearch(projectId: string, provider: EmbeddingProvider, embedding: Float32Array, k: number): Promise<string[]>;
+  /** Best keyword matches for this project, best first. Tokens contain only letters, digits and underscores. */
+  sparseSearch(projectId: string, tokens: string[], k: number): Promise<string[]>;
+}
 
-  // 2. FTS5 Virtual table for lexical BM25 search
-  db.exec(`
-    CREATE VIRTUAL TABLE IF NOT EXISTS nodes_fts USING fts5(
-      node_key UNINDEXED,
-      projectId UNINDEXED,
-      nodeId UNINDEXED,
-      title,
-      content,
-      nodeType
-    );
-  `);
-
-  // 3. sqlite-vec virtual table for 1536-dimensional dense vectors (only if extension loaded)
-  if (isVecLoaded) {
-    try {
-      db.exec(`
-        CREATE VIRTUAL TABLE IF NOT EXISTS vec_nodes USING vec0(
-          node_key TEXT PRIMARY KEY,
-          embedding float[${EMBEDDING_DIMENSION}]
-        );
-      `);
-    } catch (err) {
-      console.warn('Could not create vec_nodes virtual table:', err);
-      isVecLoaded = false;
-    }
-  }
+function getBackend(): SearchIndexBackend {
+  return isNeonConfigured() ? neonSearchIndex : sqliteSearchIndex;
 }
 
 export interface HybridSearchResult {
@@ -91,183 +73,106 @@ function getNodeText(node: CanvasNode): string {
 }
 
 /**
- * Synchronize node embeddings and FTS5 search index with the latest graph nodes.
- * Uses content hashing to only generate embeddings for new or modified nodes.
+ * Synchronize the keyword index and node embeddings with the latest graph nodes.
+ * The keyword index is always written, so retrieval works without any AI key;
+ * embeddings are generated only for new or changed nodes, when a provider is configured.
  */
 export async function syncGraphVectors(projectId: string, nodes: CanvasNode[]): Promise<{
   indexedCount: number;
+  embeddedCount: number;
   skippedCount: number;
   deletedCount: number;
 }> {
-  ensureVectorStore();
-  const db = getDb();
-
+  const backend = getBackend();
   const validNodes = nodes.filter(n => n.id && n.title);
   const activeIds = new Set(validNodes.map(n => n.id));
 
-  // 1. Check existing embeddings
-  const existingRows = db.prepare<[string], { nodeId: string; contentHash: string }>(
-    'SELECT nodeId, contentHash FROM node_embeddings WHERE projectId = ?'
-  ).all(projectId);
-  const existingMap = new Map(existingRows.map(r => [r.nodeId, r.contentHash]));
+  const existingRows = await backend.listIndexState(projectId);
+  const existing = new Map(existingRows.map(r => [r.nodeId, r]));
 
-  // 2. Find deleted nodes
-  const toDelete = existingRows.filter(r => !activeIds.has(r.nodeId));
-  if (toDelete.length > 0) {
-    const delMeta = db.prepare('DELETE FROM node_embeddings WHERE projectId = ? AND nodeId = ?');
-    const delFts = db.prepare('DELETE FROM nodes_fts WHERE node_key = ?');
-    const delVec = isVecLoaded ? db.prepare('DELETE FROM vec_nodes WHERE node_key = ?') : null;
+  const toDelete = existingRows.filter(r => !activeIds.has(r.nodeId)).map(r => r.nodeId);
+  if (toDelete.length > 0) await backend.deleteNodes(projectId, toDelete);
 
-    db.transaction(() => {
-      for (const item of toDelete) {
-        const key = `${projectId}:${item.nodeId}`;
-        delMeta.run(projectId, item.nodeId);
-        try { delFts.run(key); } catch {}
-        if (delVec) {
-          try { delVec.run(key); } catch {}
-        }
-      }
-    })();
-  }
-
-  // 3. Find modified or new nodes
-  const needsEmbedding: Array<{ id: string; text: string; contentHash: string; node: CanvasNode }> = [];
+  const keywordDocs: KeywordDocument[] = [];
+  const needsEmbedding: Array<{ id: string; text: string; contentHash: string }> = [];
   let skippedCount = 0;
 
   for (const node of validNodes) {
     const text = getNodeText(node);
     const hash = computeContentHash(text);
-    if (existingMap.get(node.id) === hash) {
-      skippedCount++;
-    } else {
-      needsEmbedding.push({ id: node.id, text, contentHash: hash, node });
+    const row = existing.get(node.id);
+    const keywordCurrent = row?.textHash === hash;
+    const embeddingCurrent = row?.embeddingHash === hash;
+
+    if (!keywordCurrent) {
+      keywordDocs.push({
+        nodeId: node.id,
+        textHash: hash,
+        title: node.title,
+        body: [node.content, node.description].filter(Boolean).join('\n'),
+        nodeType: node.type
+      });
+    }
+    if (!embeddingCurrent) needsEmbedding.push({ id: node.id, text, contentHash: hash });
+    if (keywordCurrent && embeddingCurrent) skippedCount++;
+  }
+
+  if (keywordDocs.length > 0) await backend.upsertKeywordDocuments(projectId, keywordDocs);
+
+  let embeddedCount = 0;
+  if (needsEmbedding.length > 0 && configuredEmbeddingProviders().length > 0) {
+    try {
+      const embeddings = await getBatchEmbeddings(needsEmbedding);
+      if (await backend.saveEmbeddings(projectId, embeddings)) embeddedCount = embeddings.length;
+    } catch (err) {
+      console.warn('Embedding generation skipped during sync:', err instanceof Error ? err.message : err);
     }
   }
 
-  if (needsEmbedding.length === 0) {
-    return { indexedCount: 0, skippedCount, deletedCount: toDelete.length };
-  }
-
-  // 4. Batch generate embeddings for changed nodes
-  try {
-    const embeddings = await getBatchEmbeddings(
-      needsEmbedding.map(n => ({ id: n.id, text: n.text, contentHash: n.contentHash }))
-    );
-
-    const upsertMeta = db.prepare(`
-      INSERT OR REPLACE INTO node_embeddings (projectId, nodeId, contentHash, provider, dimensions, updatedAt)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `);
-
-    const delFts = db.prepare('DELETE FROM nodes_fts WHERE node_key = ?');
-    const insertFts = db.prepare(`
-      INSERT INTO nodes_fts (node_key, projectId, nodeId, title, content, nodeType)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `);
-
-    const delVec = isVecLoaded ? db.prepare('DELETE FROM vec_nodes WHERE node_key = ?') : null;
-    const insertVec = isVecLoaded ? db.prepare(`
-      INSERT INTO vec_nodes (node_key, embedding)
-      VALUES (?, ?)
-    `) : null;
-
-    const now = Date.now();
-    const nodeMap = new Map(needsEmbedding.map(item => [item.id, item.node]));
-
-    db.transaction(() => {
-      for (const item of embeddings) {
-        const key = `${projectId}:${item.nodeId}`;
-        const node = nodeMap.get(item.nodeId);
-        if (!node) continue;
-
-        upsertMeta.run(projectId, item.nodeId, item.contentHash, item.provider, EMBEDDING_DIMENSION, now);
-
-        try { delFts.run(key); } catch {}
-        try {
-          insertFts.run(key, projectId, item.nodeId, node.title, node.content || '', node.type);
-        } catch {}
-
-        if (delVec) {
-          try { delVec.run(key); } catch {}
-        }
-        if (insertVec) {
-          try {
-            insertVec.run(key, item.embedding);
-          } catch (err) {
-            console.warn('Failed to insert into vec_nodes:', err);
-          }
-        }
-      }
-    })();
-
-    return { indexedCount: embeddings.length, skippedCount, deletedCount: toDelete.length };
-  } catch (err) {
-    console.warn('Embedding generation skipped during sync:', err instanceof Error ? err.message : err);
-    return { indexedCount: 0, skippedCount, deletedCount: toDelete.length };
-  }
+  return { indexedCount: keywordDocs.length, embeddedCount, skippedCount, deletedCount: toDelete.length };
 }
 
 /**
- * Hybrid Search combining dense vector cosine similarity and sparse BM25 (FTS5)
- * using Reciprocal Rank Fusion (RRF).
+ * Hybrid Search combining dense vector cosine similarity and sparse keyword ranking
+ * using Reciprocal Rank Fusion (RRF). Dense search runs once per embedding provider
+ * present in the project, each against only that provider's vectors.
  */
 export async function hybridSearch(
   projectId: string,
   query: string,
   topK = 10
 ): Promise<HybridSearchResult[]> {
-  ensureVectorStore();
-  const db = getDb();
-  const denseRanks = new Map<string, number>();
-  const sparseRanks = new Map<string, number>();
+  const backend = getBackend();
+  const rankedLists: Array<{ kind: 'dense' | 'sparse'; ids: string[] }> = [];
 
-  // 1. Dense Vector Search (sqlite-vec KNN, only if loaded)
-  if (isVecLoaded) {
-    try {
-      const { embedding } = await getQueryEmbedding(query);
-      // Request up to topK * 4 candidates to account for other projects
-      const vecRows = db.prepare<[Float32Array, number], { node_key: string; distance: number }>(`
-        SELECT node_key, distance
-        FROM vec_nodes
-        WHERE embedding MATCH ? AND k = ?
-      `).all(embedding, topK * 4);
-
-      let rank = 1;
-      for (const row of vecRows) {
-        if (row.node_key.startsWith(`${projectId}:`)) {
-          const nodeId = row.node_key.slice(projectId.length + 1);
-          denseRanks.set(nodeId, rank++);
-          if (rank > topK * 2) break;
-        }
+  // 1. Dense vector search, per provider that has vectors in this project
+  try {
+    const storedProviders = new Set(await backend.listEmbeddingProviders(projectId));
+    const providers = configuredEmbeddingProviders().filter(p => storedProviders.has(p));
+    for (const provider of providers) {
+      try {
+        const embedding = await getQueryEmbedding(query, provider);
+        const ids = await backend.denseSearch(projectId, provider, embedding, topK * 2);
+        if (ids.length > 0) rankedLists.push({ kind: 'dense', ids });
+      } catch (err) {
+        console.warn(`Dense vector search (${provider}) failed:`, err instanceof Error ? err.message : err);
       }
-    } catch (err) {
-      console.warn('Dense vector search step failed or unconfigured:', err instanceof Error ? err.message : err);
     }
+  } catch (err) {
+    console.warn('Dense vector search step failed:', err instanceof Error ? err.message : err);
   }
 
-  // 2. Sparse Lexical Search (FTS5 BM25)
+  // 2. Sparse lexical search
   try {
-    // Sanitize query for FTS5 tokens
     const tokens = query
-      .replace(/[^\w\s]/g, ' ')
+      .replace(/[^\p{L}\p{N}_\s]/gu, ' ')
       .trim()
       .split(/\s+/)
-      .filter(t => t.length > 1);
-
+      .filter(t => t.length > 1)
+      .slice(0, 32);
     if (tokens.length > 0) {
-      const ftsQuery = tokens.map(t => `"${t}"*`).join(' OR ');
-      const ftsRows = db.prepare<[string, string, number], { nodeId: string; rank: number }>(`
-        SELECT nodeId, rank
-        FROM nodes_fts
-        WHERE nodes_fts MATCH ? AND projectId = ?
-        ORDER BY rank
-        LIMIT ?
-      `).all(ftsQuery, projectId, topK * 2);
-
-      let rank = 1;
-      for (const row of ftsRows) {
-        sparseRanks.set(row.nodeId, rank++);
-      }
+      const ids = await backend.sparseSearch(projectId, tokens, topK * 2);
+      if (ids.length > 0) rankedLists.push({ kind: 'sparse', ids });
     }
   } catch (err) {
     console.warn('Sparse lexical search step failed:', err instanceof Error ? err.message : err);
@@ -275,29 +180,17 @@ export async function hybridSearch(
 
   // 3. Reciprocal Rank Fusion (RRF) with constant k=60
   const RRF_K = 60;
-  const allNodeIds = new Set([...denseRanks.keys(), ...sparseRanks.keys()]);
-  const results: HybridSearchResult[] = [];
-
-  for (const nodeId of allNodeIds) {
-    const dRank = denseRanks.get(nodeId) ?? null;
-    const sRank = sparseRanks.get(nodeId) ?? null;
-
-    let rrfScore = 0;
-    if (dRank !== null) {
-      rrfScore += 1 / (RRF_K + dRank);
-    }
-    if (sRank !== null) {
-      rrfScore += 1 / (RRF_K + sRank);
-    }
-
-    results.push({
-      nodeId,
-      rrfScore,
-      denseRank: dRank,
-      sparseRank: sRank
+  const byId = new Map<string, HybridSearchResult>();
+  for (const list of rankedLists) {
+    list.ids.forEach((nodeId, index) => {
+      const rank = index + 1;
+      const entry = byId.get(nodeId) ?? { nodeId, rrfScore: 0, denseRank: null, sparseRank: null };
+      entry.rrfScore += 1 / (RRF_K + rank);
+      if (list.kind === 'dense') entry.denseRank = Math.min(entry.denseRank ?? rank, rank);
+      else entry.sparseRank = rank;
+      byId.set(nodeId, entry);
     });
   }
 
-  results.sort((a, b) => b.rrfScore - a.rrfScore);
-  return results.slice(0, topK);
+  return [...byId.values()].sort((a, b) => b.rrfScore - a.rrfScore).slice(0, topK);
 }

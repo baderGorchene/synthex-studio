@@ -29,9 +29,10 @@ function buildSessionFromResearchResult(
     provider: string;
     model: string;
     usedFallback: boolean;
+    groundingNote?: string;
   }
 ): ResearchSession {
-  const { result, sources, searchQueries, provider, model, usedFallback } = resultPayload;
+  const { result, sources, searchQueries, provider, model, usedFallback, groundingNote } = resultPayload;
   const existingSourceUrls = new Set(Object.values(graph.nodesById).map(node => node.url).filter(Boolean));
   const idByTempId = new Map<string, string>();
   const changes: ResearchChange[] = [];
@@ -117,6 +118,7 @@ function buildSessionFromResearchResult(
       `Research question: ${query}`,
       ...searchQueries.map(text => `Search: ${text.slice(0, 500)}`),
       `Grounded sources discovered: ${sources.length}`,
+      ...(groundingNote ? [groundingNote] : []),
       `Staged ${changes.filter(c => c.kind === 'node').length} nodes and ${changes.filter(c => c.kind === 'relationship').length} relationships for human review`,
       'Generated knowledge is unverified and remains pending until reviewed.'
     ],

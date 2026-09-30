@@ -1,13 +1,24 @@
 import crypto from 'crypto';
 
+export type EmbeddingProvider = 'openai' | 'gemini';
+
 export interface EmbeddingResult {
   nodeId: string;
   embedding: Float32Array;
   contentHash: string;
-  provider: 'openai' | 'gemini';
+  provider: EmbeddingProvider;
 }
 
+/**
+ * Both providers emit 1536-dimensional vectors so they fit one index schema.
+ * Vectors from different providers live in different embedding spaces, so every
+ * stored row is tagged with its provider and queries only compare like with like.
+ */
 export const EMBEDDING_DIMENSION = 1536;
+export const OPENAI_EMBEDDING_MODEL = 'text-embedding-3-small';
+export const GEMINI_EMBEDDING_MODEL = 'gemini-embedding-001';
+
+const GEMINI_EMBED_BASE = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_EMBEDDING_MODEL}`;
 
 function openAiKey(): string {
   return (process.env.OPENAI_API_KEY || '').trim().replace(/^["']|["']$/g, '');
@@ -21,179 +32,122 @@ export function computeContentHash(text: string): string {
   return crypto.createHash('sha256').update(text.trim()).digest('hex');
 }
 
-/**
- * Generate 1536-dimensional vector embedding for a single text query using OpenAI text-embedding-3-small,
- * with automatic fallback to Gemini text-embedding-004 (normalized & padded to 1536d) if OpenAI is unavailable or fails.
- */
-export async function getQueryEmbedding(query: string): Promise<{
-  embedding: Float32Array;
-  provider: 'openai' | 'gemini';
-}> {
-  const oKey = openAiKey();
-  const gKey = geminiKey();
+/** Providers that have an API key, in preference order. */
+export function configuredEmbeddingProviders(): EmbeddingProvider[] {
+  const providers: EmbeddingProvider[] = [];
+  if (openAiKey()) providers.push('openai');
+  if (geminiKey()) providers.push('gemini');
+  return providers;
+}
 
-  if (oKey) {
-    try {
-      const response = await fetch('https://api.openai.com/v1/embeddings', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${oKey}`
-        },
-        body: JSON.stringify({
-          model: 'text-embedding-3-small',
-          input: query
-        }),
-        signal: AbortSignal.timeout(8000)
-      });
-
-      if (response.ok) {
-        const json = await response.json();
-        const raw = json.data?.[0]?.embedding;
-        if (Array.isArray(raw) && raw.length === EMBEDDING_DIMENSION) {
-          return { embedding: new Float32Array(raw), provider: 'openai' };
-        }
-      }
-      console.warn('OpenAI embedding failed with status:', response.status, 'Falling back to Gemini if available.');
-    } catch (err) {
-      console.warn('OpenAI embedding request error, falling back:', err instanceof Error ? err.message : err);
-    }
+/** gemini-embedding-001 only returns unit vectors at its full 3072 dimensions; truncated outputs must be re-normalized. */
+function normalize(values: number[]): Float32Array {
+  const vector = new Float32Array(values);
+  let norm = 0;
+  for (const v of vector) norm += v * v;
+  norm = Math.sqrt(norm);
+  if (norm > 0) {
+    for (let i = 0; i < vector.length; i++) vector[i] /= norm;
   }
+  return vector;
+}
 
-  // Fallback to Gemini text-embedding-004 (Google AI Studio Free Tier)
-  if (gKey) {
-    try {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent`;
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-goog-api-key': gKey
-        },
-        body: JSON.stringify({
-          content: { parts: [{ text: query }] }
-        }),
-        signal: AbortSignal.timeout(8000)
-      });
+async function openAiEmbed(texts: string[]): Promise<Float32Array[]> {
+  const response = await fetch('https://api.openai.com/v1/embeddings', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${openAiKey()}`
+    },
+    body: JSON.stringify({ model: OPENAI_EMBEDDING_MODEL, input: texts }),
+    signal: AbortSignal.timeout(8000)
+  });
+  if (!response.ok) throw new Error(`OpenAI embedding HTTP ${response.status}`);
 
-      if (response.ok) {
-        const json = await response.json();
-        const raw = json.embedding?.values;
-        if (Array.isArray(raw)) {
-          // Pad 768 to 1536 to maintain unified sqlite-vec table compatibility
-          const padded = new Float32Array(EMBEDDING_DIMENSION);
-          for (let i = 0; i < raw.length && i < EMBEDDING_DIMENSION; i++) {
-            padded[i] = raw[i];
-          }
-          return { embedding: padded, provider: 'gemini' };
-        }
-      }
-    } catch (err) {
-      console.warn('Gemini embedding fallback error:', err instanceof Error ? err.message : err);
+  const json = await response.json();
+  const rows = json.data;
+  if (!Array.isArray(rows) || rows.length !== texts.length) throw new Error('OpenAI embedding size mismatch');
+  return rows.map((row: { embedding?: unknown }) => {
+    if (!Array.isArray(row.embedding) || row.embedding.length !== EMBEDDING_DIMENSION) {
+      throw new Error('OpenAI embedding dimension mismatch');
     }
-  }
+    return new Float32Array(row.embedding);
+  });
+}
 
-  throw new Error('NO_EMBEDDING_PROVIDER_AVAILABLE');
+async function geminiEmbed(texts: string[], taskType: 'RETRIEVAL_DOCUMENT' | 'RETRIEVAL_QUERY'): Promise<Float32Array[]> {
+  const response = await fetch(`${GEMINI_EMBED_BASE}:batchEmbedContents`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-goog-api-key': geminiKey()
+    },
+    body: JSON.stringify({
+      requests: texts.map(text => ({
+        model: `models/${GEMINI_EMBEDDING_MODEL}`,
+        content: { parts: [{ text }] },
+        taskType,
+        outputDimensionality: EMBEDDING_DIMENSION
+      }))
+    }),
+    signal: AbortSignal.timeout(10000)
+  });
+  if (!response.ok) throw new Error(`Gemini embedding HTTP ${response.status}`);
+
+  const json = await response.json();
+  const rows = json.embeddings;
+  if (!Array.isArray(rows) || rows.length !== texts.length) throw new Error('Gemini embedding size mismatch');
+  return rows.map((row: { values?: unknown }) => {
+    if (!Array.isArray(row.values) || row.values.length !== EMBEDDING_DIMENSION) {
+      throw new Error('Gemini embedding dimension mismatch');
+    }
+    return normalize(row.values);
+  });
 }
 
 /**
- * Batch generate embeddings for multiple texts using OpenAI text-embedding-3-small,
- * falling back to Gemini text-embedding-004 if needed.
+ * Embed a search query with one specific provider. The caller picks the provider
+ * that produced the stored vectors it wants to compare against.
+ */
+export async function getQueryEmbedding(query: string, provider: EmbeddingProvider): Promise<Float32Array> {
+  if (!configuredEmbeddingProviders().includes(provider)) {
+    throw new Error(`EMBEDDING_PROVIDER_NOT_CONFIGURED_${provider}`);
+  }
+  const [embedding] = provider === 'openai'
+    ? await openAiEmbed([query])
+    : await geminiEmbed([query], 'RETRIEVAL_QUERY');
+  return embedding;
+}
+
+/**
+ * Batch-embed documents with the first configured provider that succeeds
+ * (OpenAI text-embedding-3-small, then Gemini gemini-embedding-001).
+ * A batch is embedded entirely by one provider.
  */
 export async function getBatchEmbeddings(
   items: Array<{ id: string; text: string; contentHash: string }>
 ): Promise<EmbeddingResult[]> {
   if (items.length === 0) return [];
 
-  const oKey = openAiKey();
-  const gKey = geminiKey();
-
-  if (oKey) {
+  const batchSize = 16;
+  for (const provider of configuredEmbeddingProviders()) {
     try {
-      // Chunk into batches of up to 16 items for fast, reliable serverless execution
-      const batchSize = 16;
       const results: EmbeddingResult[] = [];
-
       for (let i = 0; i < items.length; i += batchSize) {
         const chunk = items.slice(i, i + batchSize);
-        const response = await fetch('https://api.openai.com/v1/embeddings', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${oKey}`
-          },
-          body: JSON.stringify({
-            model: 'text-embedding-3-small',
-            input: chunk.map(c => c.text)
-          }),
-          signal: AbortSignal.timeout(8000)
-        });
-
-        if (!response.ok) {
-          throw new Error(`OpenAI batch embedding HTTP ${response.status}`);
-        }
-
-        const json = await response.json();
-        const rawList = json.data;
-        if (!Array.isArray(rawList) || rawList.length !== chunk.length) {
-          throw new Error('OpenAI batch embedding size mismatch');
-        }
-
-        for (let j = 0; j < chunk.length; j++) {
-          const raw = rawList[j].embedding;
-          results.push({
-            nodeId: chunk[j].id,
-            embedding: new Float32Array(raw),
-            contentHash: chunk[j].contentHash,
-            provider: 'openai'
-          });
-        }
-      }
-
-      return results;
-    } catch (err) {
-      console.warn('OpenAI batch embeddings failed, trying Gemini fallback:', err instanceof Error ? err.message : err);
-    }
-  }
-
-  // Gemini Free Tier Fallback (text-embedding-004)
-  if (gKey) {
-    try {
-      const results: EmbeddingResult[] = [];
-      for (const item of items) {
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent`;
-        const response = await fetch(url, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-goog-api-key': gKey
-          },
-          body: JSON.stringify({
-            content: { parts: [{ text: item.text }] }
-          }),
-          signal: AbortSignal.timeout(6000)
-        });
-
-        if (response.ok) {
-          const json = await response.json();
-          const raw = json.embedding?.values;
-          if (Array.isArray(raw)) {
-            const padded = new Float32Array(EMBEDDING_DIMENSION);
-            for (let k = 0; k < raw.length && k < EMBEDDING_DIMENSION; k++) {
-              padded[k] = raw[k];
-            }
-            results.push({
-              nodeId: item.id,
-              embedding: padded,
-              contentHash: item.contentHash,
-              provider: 'gemini'
-            });
-          }
-        }
+        const vectors = provider === 'openai'
+          ? await openAiEmbed(chunk.map(c => c.text))
+          : await geminiEmbed(chunk.map(c => c.text), 'RETRIEVAL_DOCUMENT');
+        chunk.forEach((item, j) => results.push({
+          nodeId: item.id,
+          embedding: vectors[j],
+          contentHash: item.contentHash,
+          provider
+        }));
       }
       return results;
     } catch (err) {
-      console.warn('Gemini batch embeddings fallback failed:', err instanceof Error ? err.message : err);
+      console.warn(`${provider} batch embeddings failed:`, err instanceof Error ? err.message : err);
     }
   }
 

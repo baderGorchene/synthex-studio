@@ -1021,10 +1021,12 @@ export default function SynthexWorkspace() {
                     if (!last.researchProgress) return current;
                     const updated = [...current];
                     const steps = [...last.researchProgress.steps];
-                    const runningIdx = steps.findIndex(s => s.status === 'running');
-                    if (runningIdx !== -1 && runningIdx < steps.length - 1) {
-                      steps[runningIdx] = { ...steps[runningIdx], status: 'done' };
-                      steps[runningIdx + 1] = { ...steps[runningIdx + 1], status: 'running' };
+                    // Steps carrying a stepId move the checklist; other steps only update the status line.
+                    const targetIdx = steps.findIndex(s => s.id === eventData.stepId);
+                    if (targetIdx === -1) return current;
+                    for (let k = 0; k < steps.length; k++) {
+                      if (k < targetIdx) steps[k] = { ...steps[k], status: 'done' };
+                      else if (k === targetIdx) steps[k] = { ...steps[k], status: 'running' };
                     }
                     updated[lastIdx] = {
                       ...last,
