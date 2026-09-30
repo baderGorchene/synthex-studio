@@ -5,6 +5,7 @@ import "./globals.css";
 import "./typeset.css";
 import "./paper.css";
 import "./landing.css";
+import "./auth.css";
 
 // Handwritten type to match the paper board: Kalam for running text, Caveat for titles and the writing pad.
 const kalam = Kalam({ subsets: ["latin"], weight: ["300", "400", "700"], variable: "--font-kalam" });

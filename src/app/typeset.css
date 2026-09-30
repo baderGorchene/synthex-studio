@@ -1083,23 +1083,6 @@ a.ink-button, a.ink-button:hover { color: #fff; text-decoration: none; }
   .landing-demo-lines path, .landing-demo-label, .landing-faq summary svg { transition: none; }
 }
 
-/* ---------- Sign in / sign up: brand and one line on the left, Clerk on the right ---------- */
-.auth-page { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); height: 100dvh; overflow-y: auto; background: var(--canvas); color: var(--ink); }
-.auth-side { display: flex; flex-direction: column; justify-content: space-between; gap: 40px; padding: 32px 48px 64px 80px; border-right: 1px solid var(--line); }
-.auth-brand { display: inline-flex; align-items: center; min-height: 44px; color: var(--ink); text-decoration: none; }
-.auth-line { max-width: 12ch; margin: 0; color: var(--ink); font-size: clamp(40px, 4.4vw, 60px); font-weight: 800; line-height: 1; letter-spacing: -.035em; text-wrap: balance; }
-.auth-main { display: grid; place-items: center; padding: 48px 24px; background: #fff; }
-.auth-local { max-width: 420px; }
-.auth-local h1 { margin: 0; font-size: 30px; font-weight: 800; letter-spacing: -.025em; }
-.auth-local p { margin: 12px 0 24px; color: var(--muted); font-size: 15px; line-height: 1.6; }
-.auth-local code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; }
-.auth-local .ink-button { text-decoration: none; }
-@media (max-width: 860px) {
-  .auth-page { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
-  .auth-side { gap: 24px; padding: 16px 16px 32px; border-right: 0; border-bottom: 1px solid var(--line); }
-  .auth-line { max-width: 18ch; font-size: 34px; }
-  .auth-main { align-items: start; padding: 32px 16px; }
-}
 .menu-popover .map-menu-new .ink-button { display: inline-flex; justify-content: center; width: 100%; min-height: 44px; padding: 0 18px; border-radius: 2px; background: var(--ink); color: #fff; font-size: 15px; font-weight: 700; }
 .menu-popover .map-menu-new .ink-button:disabled { opacity: .35; }
 .menu-popover .layout-switch button { display: block; min-height: 0; height: 34px; }

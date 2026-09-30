@@ -3,7 +3,7 @@ import { AuthLayout, clerkAppearance } from '@/components/auth/AuthLayout';
 
 export default function SignInPage() {
   return (
-    <AuthLayout line="Pick up your maps where you left off.">
+    <AuthLayout variant="sign-in">
       <SignIn
         routing="path"
         path="/sign-in"
