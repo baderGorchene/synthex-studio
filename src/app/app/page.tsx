@@ -218,8 +218,8 @@ export default function SynthexWorkspace() {
   }, [navMenuOpen, projectMenuOpen, exportMenu, addRecordMenuOpen, overflowMenuOpen]);
   const [composerText, setComposerText] = useState('');
   const [composerTool, setComposerTool] = useState<string | null>(null);
-  // An empty board has nothing to ask about yet, so its composer starts on a quick map.
-  const [startTool, setStartTool] = useState<string | null>('quick');
+  // An empty board has nothing to ask about yet, so its composer starts by organizing the user's own thinking.
+  const [startTool, setStartTool] = useState<string | null>('organize');
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const researchAbort = useRef<AbortController | null>(null);
   const [detachingIds, setDetachingIds] = useState<string[]>([]);
