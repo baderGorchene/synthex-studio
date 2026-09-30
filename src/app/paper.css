@@ -328,16 +328,39 @@ h1, h2, h3 { font-family: var(--font-hand); font-weight: 700; letter-spacing: 0;
   .group-drop-hint { animation: none; }
 }
 
-/* ---------- Map menu: team vs personal maps ---------- */
-.topbar-project-menu > .map-menu-title { padding: 10px 10px 4px; font-family: var(--font-hand); font-size: 22px; font-weight: 700; }
-.map-menu-row { display: flex; align-items: center; gap: 4px; }
-.map-menu-row > button[role="menuitemradio"] { flex: 1; min-width: 0; }
-.map-menu-list .map-menu-row .map-menu-move { flex: none; min-height: 32px; padding: 0 8px !important; color: var(--faint); font-size: 12.5px; white-space: nowrap; }
-.map-menu-list .map-menu-row .map-menu-move:hover { color: var(--ink); background: transparent !important; }
-.map-menu-personal { margin-top: 6px; padding: 12px 10px 4px; border-top: 1px dashed var(--line-strong); }
-.map-menu-personal .map-menu-title { font-family: var(--font-hand); font-size: 20px; font-weight: 700; }
-.map-menu-personal .note-meta { margin: 2px 0 8px; }
-.map-menu-personal ul { display: flex; flex-direction: column; gap: 6px; max-height: 180px; margin: 0; padding: 0; overflow-y: auto; list-style: none; }
-.map-menu-personal li { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.map-menu-personal li span { overflow: hidden; font-size: 14px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
-.map-menu-personal .line-button { flex: none; min-height: 32px; font-size: 12.5px; }
+/* ---------- Map menu: switch, move and create maps ----------
+   Scoped under .map-menu so the generic `.menu-popover button` grid (a 20px icon column,
+   width: 100%) never squeezes a map's name out of its row. */
+.map-menu { display: flex; flex-direction: column; width: 340px; max-height: min(560px, calc(100dvh - 90px)); padding: 6px; overflow: hidden auto; overscroll-behavior: contain; }
+.map-menu-search { display: flex; align-items: center; gap: 8px; margin: 2px 2px 6px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: 6px; background: #fff; color: var(--faint); }
+.map-menu-search:focus-within { border-color: var(--ink); }
+.map-menu-search input { flex: 1; min-width: 0; height: 36px; border: 0; background: transparent; color: var(--ink); font: inherit; font-size: 14px; outline: none; }
+.map-menu-section + .map-menu-section { margin-top: 6px; padding-top: 6px; border-top: 1px dashed var(--line-strong); }
+.map-menu .map-menu-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin: 0; padding: 8px 10px 4px; color: var(--ink); font-family: var(--font-hand); font-size: 21px; font-weight: 700; line-height: 1.1; }
+.map-menu-heading small { color: var(--faint); font-family: var(--font-ui); font-size: 12px; font-weight: 600; }
+.map-menu-hint { margin: 0 10px 6px; color: var(--faint); font-size: 12.5px; line-height: 1.35; }
+.map-menu-list { display: flex; flex-direction: column; gap: 1px; max-height: 260px; margin: 0; padding: 0; overflow: hidden auto; list-style: none; }
+.map-menu-personal .map-menu-list { max-height: 180px; }
+.map-menu-row { display: flex; align-items: center; gap: 6px; min-width: 0; min-height: 40px; padding-right: 4px; border-radius: 6px; }
+.map-menu-row:hover, .map-menu-row:focus-within { background: var(--canvas); }
+.map-menu-row.is-active { background: var(--sticky); }
+.map-menu .map-menu-open { display: flex; flex: 1; align-items: center; gap: 8px; width: auto; min-width: 0; min-height: 40px; padding: 0 0 0 8px; border: 0; border-radius: 6px; background: transparent; color: var(--ink); font: inherit; text-align: left; cursor: pointer; }
+.map-menu .map-menu-open:hover { background: transparent; }
+.map-menu-check { display: inline-grid; flex: none; place-items: center; width: 16px; color: var(--ink); }
+.map-menu .map-menu-check svg { color: var(--ink); }
+.map-menu-personal .map-menu-row { padding-left: 8px; }
+.map-menu .map-menu-name { flex: 1; min-width: 0; overflow: hidden; color: var(--ink); font-size: 14.5px; font-weight: 600; font-style: normal; text-overflow: ellipsis; white-space: nowrap; }
+.map-menu-row.is-active .map-menu-name { font-weight: 800; }
+.map-menu-badge { flex: none; padding: 1px 7px; border: 1px solid var(--ink); border-radius: 999px; color: var(--ink); font-size: 11px; font-weight: 700; line-height: 1.4; }
+.map-menu .map-menu-action { display: inline-flex; flex: none; align-items: center; gap: 4px; width: auto; min-height: 28px; padding: 0 9px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--paper); color: var(--faint); font: inherit; font-size: 12px; font-weight: 600; white-space: nowrap; cursor: pointer; }
+.map-menu .map-menu-action svg { color: currentColor; }
+.map-menu .map-menu-action:hover, .map-menu .map-menu-action:focus-visible { border-color: var(--ink); background: #fff; color: var(--ink); }
+.map-menu-empty { padding: 10px; color: var(--faint); font-size: 13px; }
+.map-menu-new { display: flex; flex-direction: column; margin-top: 6px; padding: 4px 4px 6px; border-top: 1px solid var(--line); }
+.map-menu-new .map-menu-heading { padding-left: 6px; padding-right: 6px; }
+.map-menu-new-row { display: flex; gap: 6px; padding: 2px; }
+.map-menu-new-row .field-input { flex: 1; min-width: 0; min-height: 40px; padding: 8px 10px; font-size: 14px; }
+.map-menu .map-menu-create { display: inline-flex; flex: none; align-items: center; justify-content: center; gap: 5px; width: auto; min-height: 40px; padding: 0 14px; border: 0; border-radius: 6px; background: var(--ink); color: #fff; font: inherit; font-size: 14px; font-weight: 700; cursor: pointer; }
+.map-menu .map-menu-create svg { color: #fff; }
+.map-menu .map-menu-create:hover { background: var(--ink); color: #fff; opacity: .88; }
+.map-menu .map-menu-create:disabled { opacity: .35; cursor: default; }

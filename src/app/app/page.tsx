@@ -5,7 +5,7 @@ import {
   BookOpenText, Check, ChevronDown,
   FileJson2, FileText, FolderArchive, GitBranch,
   Image as ImageIcon, LoaderCircle, MessagesSquare, MoreHorizontal, Plus, Redo2,
-  Search, Shapes, Share, Square, Undo2, Upload, X
+  Search, Shapes, Share, Square, Undo2, Upload, UserRound, Users, X
 } from 'lucide-react';
 import { GraphCanvas, adoptLegacyClusterMembers, membersOf } from '@/components/research/GraphCanvas';
 import { useCollaboration, type PresencePeer, type RemoteChange } from '@/components/collab/useCollaboration';
@@ -177,6 +177,7 @@ export default function SynthexWorkspace() {
   const [overflowMenuOpen, setOverflowMenuOpen] = useState(false);
   const overflowMenuRef = useRef<HTMLDivElement>(null);
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
+  const [mapFilter, setMapFilter] = useState('');
   const [addRecordMenuOpen, setAddRecordMenuOpen] = useState(false);
   const navMenuRef = useRef<HTMLDivElement>(null);
   const projectMenuRef = useRef<HTMLDivElement>(null);
@@ -1812,6 +1813,10 @@ export default function SynthexWorkspace() {
     else if (toolId === 'new') { startNewChat(); setRightDrawerOpen(true); }
   }
 
+  const mapFilterQuery = mapFilter.trim().toLowerCase();
+  const visibleProjects = mapFilterQuery ? projects.filter(p => p.title.toLowerCase().includes(mapFilterQuery)) : projects;
+  const visiblePersonalProjects = mapFilterQuery ? personalProjects.filter(p => p.title.toLowerCase().includes(mapFilterQuery)) : personalProjects;
+
   const liveProgress = researching ? chatLines[chatLines.length - 1]?.researchProgress : undefined;
   const composerStatus = (
     <div className="composer-status" role="status">
@@ -1865,57 +1870,110 @@ export default function SynthexWorkspace() {
                 className="topbar-project-trigger"
                 aria-label={`Map: ${project?.title || 'Untitled map'}. Switch or create a map`}
                 aria-expanded={projectMenuOpen}
-                onClick={() => { setProjectMenuOpen(v => !v); setNavMenuOpen(false); setExportMenu(false); }}
+                onClick={() => { setProjectMenuOpen(v => !v); setMapFilter(''); setNavMenuOpen(false); setExportMenu(false); }}
               >
                 <span className="project-title">{project?.title || 'Untitled map'}</span>
                 <ChevronDown size={16} strokeWidth={1.75} className="project-arrow" />
               </button>
               {projectMenuOpen && (
                 <div className="menu-popover topbar-project-menu map-menu">
-                  <p className="map-menu-title">{workspaceKind === 'team' ? 'Team maps' : 'Your maps'}</p>
-                  <div className="map-menu-list" role="menu" aria-label={workspaceKind === 'team' ? 'Team maps' : 'Your maps'}>
-                    {projects.map(p => (
-                      <div key={p.id} className="map-menu-row">
-                        <button
-                          role="menuitemradio"
-                          aria-checked={p.id === projectId}
-                          className={p.id === projectId ? 'is-active' : ''}
-                          onClick={() => {
-                            setProjectId(p.id);
-                            if (typeof window !== 'undefined') {
-                              localStorage.setItem('synthex_active_project_id', p.id);
-                            }
-                            setProjectMenuOpen(false);
-                          }}
-                        >
-                          <strong>{p.title}</strong>
-                          {p.id === projectId && <Check size={16} strokeWidth={1.75} />}
-                        </button>
-                        {workspaceKind === 'team' && p.isOwner && (
-                          <button type="button" className="text-button map-menu-move" title="Only you will see it again; teammates lose access" onClick={() => void moveProject(p.id, 'personal')}>Make personal</button>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                  {workspaceKind === 'team' && personalProjects.length > 0 && (
-                    <div className="map-menu-personal">
-                      <p className="map-menu-title">Your personal maps</p>
-                      <p className="note-meta">Move one into the team so everyone here can open and edit it.</p>
-                      <ul>
-                        {personalProjects.map(p => (
-                          <li key={p.id}>
-                            <span>{p.title}</span>
-                            <button type="button" className="line-button" onClick={() => void moveProject(p.id, 'team')}>Move to team</button>
-                          </li>
-                        ))}
-                      </ul>
+                  {projects.length + personalProjects.length > 6 && (
+                    <div className="map-menu-search">
+                      <Search size={14} strokeWidth={1.75} aria-hidden="true" />
+                      <input
+                        type="search"
+                        value={mapFilter}
+                        onChange={event => setMapFilter(event.target.value)}
+                        placeholder="Find a map…"
+                        aria-label="Find a map"
+                        autoFocus
+                      />
                     </div>
                   )}
+                  <section className="map-menu-section">
+                    <p className="map-menu-heading">
+                      <span>{workspaceKind === 'team' ? 'Team maps' : 'Your maps'}</span>
+                      <small>{projects.length}</small>
+                    </p>
+                    <ul className="map-menu-list" role="menu" aria-label={workspaceKind === 'team' ? 'Team maps' : 'Your maps'}>
+                      {visibleProjects.map(p => {
+                        const isOpen = p.id === projectId;
+                        return (
+                          <li key={p.id} className={`map-menu-row ${isOpen ? 'is-active' : ''}`} role="none">
+                            <button
+                              type="button"
+                              role="menuitemradio"
+                              aria-checked={isOpen}
+                              className="map-menu-open"
+                              title={p.title}
+                              onClick={() => {
+                                setProjectId(p.id);
+                                if (typeof window !== 'undefined') {
+                                  localStorage.setItem('synthex_active_project_id', p.id);
+                                }
+                                setProjectMenuOpen(false);
+                              }}
+                            >
+                              <span className="map-menu-check" aria-hidden="true">{isOpen && <Check size={14} strokeWidth={2.25} />}</span>
+                              <span className="map-menu-name">{p.title || 'Untitled map'}</span>
+                              {isOpen && <span className="map-menu-badge">Open</span>}
+                            </button>
+                            {workspaceKind === 'team' && p.isOwner && (
+                              <button
+                                type="button"
+                                className="map-menu-action"
+                                title="Move to your personal workspace. Teammates lose access."
+                                aria-label={`Move “${p.title}” to your personal maps`}
+                                onClick={() => {
+                                  if (window.confirm(`Move “${p.title}” to your personal maps? Teammates will lose access to it.`)) void moveProject(p.id, 'personal');
+                                }}
+                              >
+                                <UserRound size={13} strokeWidth={1.75} aria-hidden="true" /> Make personal
+                              </button>
+                            )}
+                          </li>
+                        );
+                      })}
+                      {visibleProjects.length === 0 && (
+                        <li className="map-menu-empty" role="none">{mapFilterQuery ? 'No maps match.' : 'No maps yet. Create one below.'}</li>
+                      )}
+                    </ul>
+                  </section>
+                  {workspaceKind === 'team' && personalProjects.length > 0 && (
+                    <section className="map-menu-section map-menu-personal">
+                      <p className="map-menu-heading">
+                        <span>Your personal maps</span>
+                        <small>{personalProjects.length}</small>
+                      </p>
+                      <p className="map-menu-hint">Only you can see these. Move one into the team so everyone can open and edit it.</p>
+                      <ul className="map-menu-list">
+                        {visiblePersonalProjects.map(p => (
+                          <li key={p.id} className="map-menu-row">
+                            <span className="map-menu-check" aria-hidden="true" />
+                            <span className="map-menu-name" title={p.title}>{p.title || 'Untitled map'}</span>
+                            <button
+                              type="button"
+                              className="map-menu-action"
+                              aria-label={`Move “${p.title}” to the team`}
+                              onClick={() => void moveProject(p.id, 'team')}
+                            >
+                              <Users size={13} strokeWidth={1.75} aria-hidden="true" /> Move to team
+                            </button>
+                          </li>
+                        ))}
+                        {visiblePersonalProjects.length === 0 && <li className="map-menu-empty">No maps match.</li>}
+                      </ul>
+                    </section>
+                  )}
                   <form className="map-menu-new" onSubmit={createProject}>
-                    <p className="map-menu-title">New map</p>
-                    <label className="field-label" htmlFor="project-name">Name</label>
-                    <input className="field-input" id="project-name" value={projectTitleDraft} onChange={event => setProjectTitleDraft(event.target.value)} maxLength={80} minLength={2} placeholder="e.g. Small language models" required />
-                    <button type="submit" className="ink-button" disabled={creatingProject || projectTitleDraft.trim().length < 2}>{creatingProject ? 'Creating…' : 'Create map'}</button>
+                    <label className="map-menu-heading" htmlFor="project-name"><span>New map</span></label>
+                    <div className="map-menu-new-row">
+                      <input className="field-input" id="project-name" value={projectTitleDraft} onChange={event => setProjectTitleDraft(event.target.value)} maxLength={80} minLength={2} placeholder="e.g. Small language models" required />
+                      <button type="submit" className="map-menu-create" disabled={creatingProject || projectTitleDraft.trim().length < 2}>
+                        {creatingProject ? <LoaderCircle size={14} className="spin" aria-hidden="true" /> : <Plus size={14} strokeWidth={2} aria-hidden="true" />}
+                        {creatingProject ? 'Creating…' : 'Create'}
+                      </button>
+                    </div>
                   </form>
                 </div>
               )}
