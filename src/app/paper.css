@@ -103,13 +103,10 @@ h1, h2, h3 { font-family: var(--font-hand); font-weight: 700; letter-spacing: 0;
   box-shadow: 0 1px 0 rgba(17, 18, 20, .04), 0 14px 18px -16px rgba(17, 18, 20, .4);
 }
 
-/* ---------- Writing pad: ruled paper with a margin line ---------- */
+/* ---------- Writing pad: every AI input is a ruled line on paper, a margin, and a paperclip for tools ---------- */
 .workspace-drawer .chat-compose-wrapper { padding: 18px 16px 16px; background: var(--paper); }
-.workspace-drawer .chat-compose-box,
-.workspace-drawer .chat-compose-box:focus-within {
-  position: relative;
-  flex-direction: column;
-  align-items: stretch;
+.composer.tool-composer,
+.composer.tool-composer:focus-within {
   gap: 0;
   padding: 0;
   border: 1px solid var(--line-strong);
@@ -117,11 +114,10 @@ h1, h2, h3 { font-family: var(--font-hand); font-weight: 700; letter-spacing: 0;
   background: var(--paper);
   box-shadow: 0 1px 0 rgba(17, 18, 20, .04), 0 16px 22px -18px rgba(17, 18, 20, .42);
 }
-.workspace-drawer .chat-compose-box:focus-within { border-color: var(--faint); }
+.composer.tool-composer:focus-within { border-color: var(--faint); }
+.tool-composer:not(.dock-composer) { position: relative; }
 /* a strip of tape holds the pad down */
-.workspace-drawer .chat-compose-box::before,
-.dock-composer::before,
-.map-start .composer::before {
+.tool-composer::before {
   content: "";
   position: absolute;
   z-index: 1;
@@ -135,84 +131,166 @@ h1, h2, h3 { font-family: var(--font-hand); font-weight: 700; letter-spacing: 0;
   box-shadow: 0 1px 2px rgba(17, 18, 20, .08);
   pointer-events: none;
 }
-.workspace-drawer .chat-compose-box textarea,
-.map-start .composer textarea {
-  display: block;
-  width: 100%;
+.tool-composer-line {
+  --pad-top: 8px;
+  --margin-x: 40px;
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: var(--pad-top) 6px var(--pad-top) calc(var(--margin-x) + 12px);
+  background-image:
+    linear-gradient(to right, transparent calc(var(--margin-x) - 1px), var(--margin-red) calc(var(--margin-x) - 1px), var(--margin-red) var(--margin-x), transparent var(--margin-x)),
+    repeating-linear-gradient(to bottom, transparent 0, transparent calc(var(--rule-gap) - 1px), var(--rule-strong) calc(var(--rule-gap) - 1px), var(--rule-strong) var(--rule-gap));
+  background-position: 0 var(--pad-top);
+}
+.tool-composer.is-large .tool-composer-line { --pad-top: 18px; --margin-x: 44px; padding-right: 12px; padding-left: calc(var(--margin-x) + 16px); }
+
+.composer.tool-composer textarea {
+  flex: 1;
   min-width: 0;
+  min-height: var(--rule-gap);
+  max-height: calc(var(--rule-gap) * 6);
   margin: 0;
+  padding: 0 2px;
+  overflow-y: auto;
   border: 0;
   outline: 0;
   resize: none;
+  background: transparent;
   color: var(--ink);
-  background-color: transparent;
-  background-image:
-    linear-gradient(to right, transparent 39px, var(--margin-red) 39px, var(--margin-red) 40px, transparent 40px),
-    repeating-linear-gradient(to bottom, transparent 0, transparent calc(var(--rule-gap) - 1px), var(--rule-strong) calc(var(--rule-gap) - 1px), var(--rule-strong) var(--rule-gap));
-  background-attachment: local; /* the rules scroll with what's written */
   font-family: var(--font-hand);
-  font-weight: 500;
   font-size: 23px;
+  font-weight: 500;
   line-height: var(--rule-gap);
 }
-.workspace-drawer .chat-compose-box textarea {
-  /* the pad grows with what's written, from three ruled lines up to six */
-  field-sizing: content;
-  height: auto;
-  min-height: calc(var(--rule-gap) * 3 + 8px);
-  max-height: calc(var(--rule-gap) * 6 + 8px);
-  padding: 8px 14px 0 52px;
-  background-position: 0 8px;
-}
-.workspace-drawer .chat-compose-box textarea::placeholder,
-.map-start .composer textarea::placeholder,
-.dock-composer input[type="text"]::placeholder { color: var(--faint); opacity: .85; }
-.workspace-drawer .chat-compose-box textarea:disabled { cursor: not-allowed; opacity: .6; }
-.chat-compose-actions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 4px;
-  padding: 6px 6px 6px 14px;
-  border-top: 1px dashed var(--line-strong);
-}
-.chat-compose-actions .chat-cost { margin-right: auto; padding-left: 38px; font-family: var(--font-hand); font-size: 18px; }
-.chat-compose-actions .icon-send { width: 44px; min-width: 44px; padding: 0; }
+.composer.tool-composer.is-large textarea { min-height: calc(var(--rule-gap) * 3); max-height: calc(var(--rule-gap) * 5); font-size: 26px; }
+.composer.tool-composer textarea::placeholder { color: var(--faint); opacity: .85; }
+.composer.tool-composer textarea:disabled { cursor: not-allowed; opacity: .6; }
 
-/* The big composer on an empty board: a full sheet of ruled paper */
-.map-start .composer { position: relative; border: 1px solid var(--line-strong); background: var(--paper); }
-.map-start .composer textarea {
-  height: calc(var(--rule-gap) * 4 + 18px);
-  padding: 18px 24px 0 60px;
-  background-image:
-    linear-gradient(to right, transparent 43px, var(--margin-red) 43px, var(--margin-red) 44px, transparent 44px),
-    repeating-linear-gradient(to bottom, transparent 0, transparent calc(var(--rule-gap) - 1px), var(--rule-strong) calc(var(--rule-gap) - 1px), var(--rule-strong) var(--rule-gap));
-  background-position: 0 18px;
-  font-size: 26px;
-}
-.map-start .composer .composer-row { border-top: 1px dashed var(--line-strong); }
-
-/* The docked composer: a torn strip with a single rule to write on */
-.dock-composer { background: var(--paper); border-color: var(--line-strong); }
-.dock-composer .composer-input { position: relative; padding-left: 52px; }
-.dock-composer .composer-input::before {
-  content: "";
+/* the paperclip sits in the margin, clipped to the sheet */
+.tool-clip {
   position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 39px;
-  width: 1px;
-  background: var(--margin-red);
+  top: calc(var(--pad-top) - 6px);
+  left: 0;
+  display: grid;
+  place-items: center;
+  width: var(--margin-x);
+  height: 40px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--faint);
+  cursor: pointer;
+  rotate: -8deg;
+  transition: color 120ms cubic-bezier(.16, 1, .3, 1), rotate 200ms cubic-bezier(.16, 1, .3, 1);
 }
-.dock-composer input[type="text"] {
-  height: 44px;
-  padding: 0 4px;
-  background: linear-gradient(to top, transparent 9px, var(--rule-strong) 9px, var(--rule-strong) 10px, transparent 10px);
+.tool-clip:hover, .tool-clip.is-open { color: var(--ink); rotate: 4deg; }
+.tool-clip:disabled { opacity: .4; cursor: not-allowed; }
+.tool-composer .icon-send { flex: none; align-self: flex-end; width: 40px; min-width: 40px; min-height: 40px; margin: -6px 0; padding: 0; }
+
+/* the picked tool is a scrap of sticky note on the same line as the text */
+.tool-chip {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+  max-width: 50%;
+  height: 26px;
+  margin-top: 1px;
+  padding: 0 2px 0 8px;
+  overflow: hidden;
+  background: var(--sticky);
+  box-shadow: 0 1px 2px rgba(17, 18, 20, .12);
+  color: var(--ink);
   font-family: var(--font-hand);
-  font-size: 23px;
-  font-weight: 500;
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+  rotate: -1.5deg;
+  animation: pop-in 160ms cubic-bezier(.16, 1, .3, 1) both;
 }
-.dock-composer .composer-target { font-family: var(--font-hand); font-size: 19px; }
+.tool-composer.is-large .tool-chip { height: 30px; margin-top: -1px; font-size: 22px; }
+.tool-chip-slash { margin-right: 1px; color: var(--faint); }
+.tool-chip button {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  margin-left: 2px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--faint);
+  cursor: pointer;
+}
+.tool-chip button:hover { color: var(--ink); }
+
+.tool-menu {
+  position: absolute;
+  z-index: 40;
+  left: -1px;
+  right: -1px;
+  max-height: 340px;
+  margin: 0;
+  padding: 4px;
+  overflow-y: auto;
+  list-style: none;
+  border: 1px solid var(--line-strong);
+  border-radius: 2px;
+  background: var(--paper);
+  box-shadow: 0 1px 0 rgba(17, 18, 20, .04), 0 18px 30px -18px rgba(17, 18, 20, .42);
+  animation: pop-in 160ms cubic-bezier(.16, 1, .3, 1) both;
+}
+.tool-menu.is-above { bottom: calc(100% + 8px); }
+.tool-menu.is-below { top: calc(100% + 8px); }
+.tool-menu-item { display: flex; align-items: center; gap: 12px; min-height: 48px; padding: 4px 10px; border-radius: 2px; color: var(--ink); cursor: pointer; }
+.tool-menu-item + .tool-menu-item { border-top: 1px dashed var(--line); }
+.tool-menu-item.is-active { background: var(--canvas); }
+.tool-menu-item code { flex: none; width: 84px; color: var(--faint); font-family: var(--font-code); font-size: 12.5px; }
+.tool-menu-item.is-current code { color: var(--ink); font-weight: 700; }
+.tool-menu-text { display: flex; flex: 1; flex-direction: column; min-width: 0; }
+.tool-menu-text strong { font-family: var(--font-hand); font-size: 21px; font-weight: 700; line-height: 1.05; }
+.tool-menu-text small { overflow: hidden; color: var(--faint); font-size: 12.5px; white-space: nowrap; text-overflow: ellipsis; }
+.tool-menu-cost { flex: none; color: var(--faint); font-family: var(--font-hand); font-size: 18px; font-variant-numeric: tabular-nums; }
+.tool-menu-empty { padding: 12px 10px; color: var(--faint); font-size: 13px; }
+.workspace-drawer .tool-menu-item code { width: 64px; }
+
+.map-start .composer { position: relative; }
+
+/* ---------- The AI at work: a pencil scribbling, and a pencil-lead caret while an answer is written ---------- */
+.chat-thinking::before,
+.composer-status strong::before,
+.ai-steps li.running::after {
+  width: 34px;
+  height: 12px;
+  background: var(--ink);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 34 12'%3E%3Cpath d='M1.5 7.5c2.2-5 4.4-5.6 6 0s3.9 4.4 6-.5 4-5.4 6 0 4 5 6-.4 3.8-4.6 7-2.1' fill='none' stroke='%23000' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat center / 100% 100%;
+          mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 34 12'%3E%3Cpath d='M1.5 7.5c2.2-5 4.4-5.6 6 0s3.9 4.4 6-.5 4-5.4 6 0 4 5 6-.4 3.8-4.6 7-2.1' fill='none' stroke='%23000' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat center / 100% 100%;
+  animation: pencil-scribble 1.6s cubic-bezier(.45, 0, .55, 1) infinite;
+}
+.ai-steps li.running::after { vertical-align: -1px; }
+.streaming-cursor {
+  width: 2px;
+  height: 1.1em;
+  margin-left: 3px;
+  border-radius: 1px;
+  background: var(--ink);
+  vertical-align: -0.18em;
+  rotate: 8deg;
+  animation: caret-blink 1s steps(1, end) infinite;
+}
+@keyframes pencil-scribble {
+  0% { clip-path: inset(0 100% 0 0); opacity: 1; }
+  65% { clip-path: inset(0 0 0 0); opacity: 1; }
+  85%, 100% { clip-path: inset(0 0 0 0); opacity: 0; }
+}
+@keyframes caret-blink { 50% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .chat-thinking::before, .composer-status strong::before, .ai-steps li.running::after, .streaming-cursor, .tool-chip, .tool-menu { animation: none !important; }
+}
 
 /* ---------- Clusters as drop zones while a note is carried ---------- */
 .graph-group.is-drop-available .group-pen-stroke { stroke-dasharray: 7 6; }

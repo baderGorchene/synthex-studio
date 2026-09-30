@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type FormEvent } from 'react';
 import {
-  ArrowRight, BookOpenText, Check, ChevronDown,
+  BookOpenText, Check, ChevronDown,
   FileJson2, FileText, FolderArchive, GitBranch,
   Image as ImageIcon, LoaderCircle, MoreHorizontal, Plus, Redo2,
   Search, Shapes, Share, Square, Undo2, Upload, X
@@ -21,11 +21,13 @@ import { generateStandaloneSvg, exportGraphToPng } from '@/lib/canvas-export';
 import type { CanvasNode, CanvasNodeType, Connection, Coordinates, GraphRevisionSummary, ResearchChange, ResearchSession } from '@/types/canvas';
 import type { AIStatus } from '@/lib/ai-service';
 import { ChatToolCard } from '@/components/research/ChatToolCard';
+import { ToolComposer, type ComposerTool } from '@/components/research/ToolComposer';
 import { MarkdownView } from '@/components/research/MarkdownView';
 import { DocumentPane } from '@/components/research/DocumentPane';
 import { LiveResearchCard, type ResearchLiveProgress } from '@/components/research/LiveResearchCard';
 import type { ChatToolCall } from '@/types/chat-tools';
 import { computeOrganizedLayout } from '@/lib/graph-organizer';
+import { CREDIT_RATES } from '@/lib/plans';
 import { auditGraphTopology } from '@/lib/graph-analyst';
 import { UserNav } from '@/components/auth/UserNav';
 import { CreditsModal } from '@/components/auth/CreditsModal';
@@ -223,8 +225,8 @@ export default function SynthexWorkspace() {
     return () => window.removeEventListener('pointerdown', handlePointerDown, true);
   }, [navMenuOpen, projectMenuOpen, exportMenu, addRecordMenuOpen, overflowMenuOpen]);
   const [composerText, setComposerText] = useState('');
-  const [composerMode, setComposerMode] = useState<'quick' | 'deep'>('quick');
-  const composerRef = useRef<HTMLTextAreaElement | HTMLInputElement | null>(null);
+  const [composerTool, setComposerTool] = useState<string | null>(null);
+  const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const researchAbort = useRef<AbortController | null>(null);
   const [detachingIds, setDetachingIds] = useState<string[]>([]);
   // The note or cluster open in the full-screen editor (opened from its Edit button or Enter).
@@ -237,7 +239,7 @@ export default function SynthexWorkspace() {
   // Conversation memory lives on the server; the thread id ties this transcript to it.
   const [chatThreadId, setChatThreadId] = useState<string | null>(null);
   const [chatProjectId, setChatProjectId] = useState<string | null>(null);
-  const [activeResearchIntent, setActiveResearchIntent] = useState<{ mode: 'quick' | 'deep' } | null>(null);
+  const [chatTool, setChatTool] = useState<string | null>(null);
   const chatInputRef = useRef<HTMLTextAreaElement>(null);
   const [activeSession, setActiveSession] = useState<ResearchSession | null>(null);
   const [reviewDecisions, setReviewDecisions] = useState<Record<string, 'accepted' | 'rejected'>>({});
@@ -1208,14 +1210,13 @@ export default function SynthexWorkspace() {
     }
   }, [projectId, aiStatus, reloadHistory, announce]);
 
-  async function sendQuestion(event: FormEvent) {
-    event.preventDefault();
-    const question = chatInput.trim();
+  async function sendQuestion(text: string, toolId: string | null) {
+    const question = text.trim();
     if (!question || chatBusy) return;
 
-    if (activeResearchIntent) {
-      const mode = activeResearchIntent.mode;
-      setActiveResearchIntent(null);
+    if (toolId === 'quick' || toolId === 'deep') {
+      const mode = toolId;
+      setChatTool(null);
       setChatInput('');
       setChatLines(current => [...current, { role: 'user', text: question }]);
       await executeStreamingResearch(question, mode);
@@ -1409,14 +1410,15 @@ export default function SynthexWorkspace() {
     await executeStreamingResearch(query, mode);
   }, [executeStreamingResearch]);
 
-  const buildMap = useCallback((query: string) => {
+  const buildMap = useCallback((query: string, mode: 'quick' | 'deep' = 'quick') => {
     const trimmed = query.trim().slice(0, 500);
     if (!trimmed || researching) return;
     if (!aiConfigured) { announce('AI is not set up on this server yet. Add OPENAI_API_KEY or GEMINI_API_KEY to build maps.'); return; }
     setComposerText('');
+    setComposerTool(null);
     setSection('canvas');
-    void handleExecuteResearch(trimmed, composerMode);
-  }, [researching, aiConfigured, announce, handleExecuteResearch, composerMode]);
+    void handleExecuteResearch(trimmed, mode);
+  }, [researching, aiConfigured, announce, handleExecuteResearch]);
 
   const handleApplyLayout = useCallback((positions: Array<{ id: string; x: number; y: number }>) => {
     updateGraph(current => {
@@ -1575,7 +1577,7 @@ export default function SynthexWorkspace() {
 
     if (toolType === 'deep_research' || toolType === 'quick_research') {
       const mode = toolType === 'deep_research' ? 'deep' : 'quick';
-      setActiveResearchIntent({ mode });
+      setChatTool(mode);
       setTimeout(() => {
         chatInputRef.current?.focus();
       }, 50);
@@ -1762,12 +1764,53 @@ export default function SynthexWorkspace() {
   function openSession(session: ResearchSession) { setActiveSession(session); setReviewDecisions({}); }
   function closeSession() { setActiveSession(null); setReviewDecisions({}); }
 
+  const hasMapNodes = Object.keys(displayGraph.nodesById).length > 0;
+  const selectedTitle = selectedNode?.title;
+  const credits = (amount: number) => plural(amount, 'credit');
+
+  // Tools behind the paperclip (or `/`) on the board composer: they grow the map.
+  const composerTools = useMemo<ComposerTool[]>(() => [
+    { id: 'quick', command: 'quick', label: 'Quick map', hint: 'A fast first pass with web sources', cost: credits(CREDIT_RATES.quick_research), sticky: true },
+    { id: 'deep', command: 'deep', label: 'Deep research', hint: 'Several rounds of search for a fuller map', cost: credits(CREDIT_RATES.deep_research), sticky: true },
+    ...(selectedTitle ? [
+      { id: 'expand', command: 'expand', label: 'Expand this idea', hint: 'Sub-ideas, mechanisms and examples', cost: credits(CREDIT_RATES.quick_research) },
+      { id: 'sources', command: 'sources', label: 'Find sources', hint: 'Sources that support or dispute it', cost: credits(CREDIT_RATES.quick_research) },
+      { id: 'challenge', command: 'challenge', label: 'Challenge it', hint: 'Evidence and arguments against it', cost: credits(CREDIT_RATES.quick_research) }
+    ] : []),
+    { id: 'note', command: 'note', label: 'Write a note', hint: 'Pin what you typed as a note, no AI', cost: 'Free' },
+    ...(hasMapNodes ? [{ id: 'audit', command: 'audit', label: 'Audit my map', hint: 'Gaps, loose ideas and unverified claims', cost: 'Free' }] : [])
+  ], [selectedTitle, hasMapNodes]);
+
+  // Tools behind the paperclip (or `/`) in Ask AI.
+  const chatTools = useMemo<ComposerTool[]>(() => [
+    { id: 'quick', command: 'quick', label: 'Quick research', hint: 'Search the web and draft cards to review', cost: credits(CREDIT_RATES.quick_research), sticky: true },
+    { id: 'deep', command: 'deep', label: 'Deep research', hint: 'Several rounds of search, more sources', cost: credits(CREDIT_RATES.deep_research), sticky: true },
+    { id: 'audit', command: 'audit', label: 'Audit my map', hint: 'Gaps, loose ideas and unverified claims', cost: 'Free' },
+    { id: 'tidy', command: 'tidy', label: 'Tidy the layout', hint: 'Group cards by type. Undo with Ctrl+Z', cost: 'Free' },
+    { id: 'new', command: 'new', label: 'New chat', hint: 'Start over with an empty conversation', cost: 'Free' }
+  ], []);
+
+  function runComposerTool(toolId: string, text: string) {
+    const focus = text ? ` Focus on: ${text}` : '';
+    if (toolId === 'expand' && selectedTitle) buildMap(`Expand on "${selectedTitle}": the key sub-ideas, mechanisms and examples.${focus}`);
+    else if (toolId === 'sources' && selectedTitle) buildMap(`Find authoritative sources that support or dispute: "${selectedTitle}".${focus}`);
+    else if (toolId === 'challenge' && selectedTitle) buildMap(`What evidence or arguments challenge "${selectedTitle}"?${focus}`);
+    else if (toolId === 'note') { setComposerText(''); addRecord('note', text ? { content: text } : undefined); }
+    else if (toolId === 'audit') { setDrawerTab('chat'); setRightDrawerOpen(true); void executeToolDirectly('recommend_improvements'); }
+  }
+
+  function runChatTool(toolId: string) {
+    if (toolId === 'audit') void executeToolDirectly('recommend_improvements');
+    else if (toolId === 'tidy') handleApplyLayout(computeOrganizedLayout(graphRef.current, 'cluster_by_type'));
+    else if (toolId === 'new') startNewChat();
+  }
+
   const liveProgress = researching ? chatLines[chatLines.length - 1]?.researchProgress : undefined;
   const composerStatus = (
     <div className="composer-status" role="status">
       <div>
         <strong>{thinkingStep || 'Reading your question…'}</strong>
-        <small>{plural(liveProgress?.sources.length ?? 0, 'source')} found · {composerMode === 'deep' ? 'Deep research' : 'Quick map'} · nothing joins your map until you keep it</small>
+        <small>{plural(liveProgress?.sources.length ?? 0, 'source')} found · {liveProgress?.mode === 'deep' ? 'Deep research' : 'Quick map'} · nothing joins your map until you keep it</small>
       </div>
       <button type="button" className="line-button" onClick={() => researchAbort.current?.abort()}><Square size={12} fill="currentColor" /> Stop</button>
     </div>
@@ -1985,32 +2028,26 @@ export default function SynthexWorkspace() {
                   <div className="map-start-inner">
                     <h1>What are you trying to figure&nbsp;out?</h1>
                     <p className="map-start-lede">Ask a question, dump your thoughts, or paste notes. Synthex pins it onto a map you can reshape, then share anywhere.</p>
-                    <form className="composer" onSubmit={event => { event.preventDefault(); buildMap(composerText); }}>
-                      {researching ? composerStatus : <>
-                        <label htmlFor="map-question" className="sr-only">Your question or notes</label>
-                        <textarea
-                          id="map-question"
-                          ref={element => { composerRef.current = element; }}
-                          value={composerText}
-                          onChange={event => setComposerText(event.target.value)}
-                          onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); buildMap(composerText); } }}
-                          maxLength={500}
-                          placeholder="How does sleep affect memory? What do we actually know, and what is still debated?"
-                          autoFocus
-                        />
-                        <div className="composer-row">
-                          <div><button type="button" className="line-button" onClick={() => addRecord('note')}><Plus size={16} /> Write a note instead</button></div>
-                          <div>
-                            <label htmlFor="map-depth" className="sr-only">Depth</label>
-                            <select id="map-depth" value={composerMode} onChange={event => setComposerMode(event.target.value as 'quick' | 'deep')}>
-                              <option value="quick">Quick map</option>
-                              <option value="deep">Deep research</option>
-                            </select>
-                            <button type="submit" className="ink-button" disabled={!composerText.trim()}>Build map <ArrowRight size={18} /></button>
-                          </div>
-                        </div>
-                      </>}
-                    </form>
+                    {researching ? <div className="composer">{composerStatus}</div> : (
+                      <ToolComposer
+                        inputId="map-question"
+                        inputLabel="Your question or notes"
+                        size="large"
+                        menuPlacement="below"
+                        value={composerText}
+                        onValueChange={setComposerText}
+                        onSubmit={(text, toolId) => buildMap(text, toolId === 'deep' ? 'deep' : 'quick')}
+                        tools={composerTools}
+                        activeToolId={composerTool}
+                        onActiveToolChange={setComposerTool}
+                        onRunTool={runComposerTool}
+                        inputRef={element => { composerRef.current = element; }}
+                        maxLength={500}
+                        placeholder="How does sleep affect memory? Type / for tools"
+                        sendLabel="Build map"
+                        autoFocus
+                      />
+                    )}
                     {!aiConfigured && <p className="composer-note">AI is not set up on this server yet, so maps can only be built by hand. Add OPENAI_API_KEY or GEMINI_API_KEY to enable it.</p>}
                     <div className="map-starters">
                       {STARTERS.map(starter => (
@@ -2065,32 +2102,24 @@ export default function SynthexWorkspace() {
                 )}
 
                 {!loading && Object.keys(displayGraph.nodesById).length > 0 && (
-                  <form className="composer dock-composer" onSubmit={event => { event.preventDefault(); buildMap(selectedNode ? `${composerText.trim()} (about "${selectedNode.title}")` : composerText); }}>
-                    {researching ? composerStatus : <>
-                      {selectedNode && (
-                        <div className="composer-context">
-                          <span className="composer-target" title={selectedNode.title}>On “{selectedNode.title}”</span>
-                          <button type="button" className="line-button" onClick={() => buildMap(`Expand on "${selectedNode.title}": the key sub-ideas, mechanisms and examples.`)}>Expand</button>
-                          <button type="button" className="line-button" onClick={() => buildMap(`Find authoritative sources that support or dispute: "${selectedNode.title}".`)}>Find sources</button>
-                          <button type="button" className="line-button" onClick={() => buildMap(`What evidence or arguments challenge "${selectedNode.title}"?`)}>Challenge it</button>
-                        </div>
-                      )}
-                      <div className="composer-input">
-                        <label htmlFor="dock-question" className="sr-only">Ask to grow the map</label>
-                        <input
-                          id="dock-question"
-                          type="text"
-                          ref={element => { composerRef.current = element; }}
-                          value={composerText}
-                          onChange={event => setComposerText(event.target.value)}
-                          maxLength={400}
-                          placeholder={selectedNode ? 'Ask about this idea' : 'Ask a question to grow the map'}
-                          title="Press N anywhere on the map to write a note by hand"
-                        />
-                        <button type="submit" className="ink-button icon-send" aria-label="Grow the map" disabled={!composerText.trim()}><ArrowRight size={18} /></button>
-                      </div>
-                    </>}
-                  </form>
+                  researching ? <div className="composer dock-composer">{composerStatus}</div> : (
+                    <ToolComposer
+                      className="dock-composer"
+                      inputId="dock-question"
+                      inputLabel="Ask to grow the map"
+                      value={composerText}
+                      onValueChange={setComposerText}
+                      onSubmit={(text, toolId) => buildMap(selectedTitle ? `${text} (about "${selectedTitle}")` : text, toolId === 'deep' ? 'deep' : 'quick')}
+                      tools={composerTools}
+                      activeToolId={composerTool}
+                      onActiveToolChange={setComposerTool}
+                      onRunTool={runComposerTool}
+                      inputRef={element => { composerRef.current = element; }}
+                      maxLength={400}
+                      placeholder={selectedTitle ? `Ask about “${selectedTitle.slice(0, 32)}”` : 'Ask a question to grow the map, or type /'}
+                      sendLabel="Grow the map"
+                    />
+                  )
                 )}
               </div>
 
@@ -2254,54 +2283,29 @@ export default function SynthexWorkspace() {
                       </div>
 
                       <div className="chat-compose-wrapper">
-                        {activeResearchIntent && (
-                          <div className="active-research-banner">
-                            <span>{activeResearchIntent.mode === 'deep' ? 'Deep research' : 'Quick research'} · type your question</span>
-                            <button type="button" className="text-button" onClick={() => setActiveResearchIntent(null)}>Cancel</button>
-                          </div>
-                        )}
-
-                        <form className="composer chat-compose-box" onSubmit={sendQuestion}>
-                          <textarea
-                            ref={chatInputRef}
-                            rows={3}
-                            aria-label="Ask a question about your map"
-                            placeholder={
-                              activeResearchIntent
-                                ? 'What should the research look into?'
-                                : selectedNode
-                                  ? `Ask about "${selectedNode.title.slice(0, 24)}"…`
-                                  : 'Ask about your map'
-                            }
-                            value={chatInput}
-                            onChange={event => setChatInput(event.target.value)}
-                            onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }}
-                            maxLength={2000}
-                            disabled={!aiConfigured || chatBusy}
-                          />
-                          <div className="chat-compose-actions">
-                            <button
-                              type="button"
-                              onClick={() => setModal('credits')}
-                              className="chat-cost"
-                              title="Credits this costs. Click to see your balance."
-                            >
-                              {activeResearchIntent?.mode === 'deep'
-                                ? '20 credits'
-                                : activeResearchIntent?.mode === 'quick'
-                                  ? '5 credits'
-                                  : '1 credit'}
-                            </button>
-                            <button
-                              type="submit"
-                              className="ink-button icon-send"
-                              disabled={!chatInput.trim() || !aiConfigured || chatBusy}
-                              aria-label="Send question"
-                            >
-                              <ArrowRight size={18} strokeWidth={1.75} />
-                            </button>
-                          </div>
-                        </form>
+                        <ToolComposer
+                          className="chat-compose-box"
+                          inputId="chat-question"
+                          inputLabel="Ask a question about your map"
+                          value={chatInput}
+                          onValueChange={setChatInput}
+                          onSubmit={(text, toolId) => { void sendQuestion(text, toolId); }}
+                          tools={chatTools}
+                          activeToolId={chatTool}
+                          onActiveToolChange={setChatTool}
+                          onRunTool={runChatTool}
+                          inputRef={element => { chatInputRef.current = element; }}
+                          maxLength={2000}
+                          disabled={!aiConfigured || chatBusy}
+                          placeholder={
+                            chatTool
+                              ? 'What should it look into?'
+                              : selectedTitle
+                                ? `Ask about “${selectedTitle.slice(0, 18)}”`
+                                : 'Ask anything, or type /'
+                          }
+                          sendLabel="Send question"
+                        />
                       </div>
                     </div>
                   )}

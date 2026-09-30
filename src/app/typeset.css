@@ -202,15 +202,9 @@ body { font-size: 14px; }
   min-width: 420px;
   transform: translateX(-50%);
 }
-.dock-composer .composer-context { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 12px 0 16px; }
-.dock-composer .composer-target { display: inline-flex; align-items: center; gap: 8px; max-width: 260px; margin-right: 4px; overflow: hidden; color: var(--proof); font-size: 13px; font-weight: 600; white-space: nowrap; text-overflow: ellipsis; }
-.dock-composer .composer-target::before { content: ""; flex: none; width: 8px; height: 8px; background: var(--proof); }
-.dock-composer .composer-input { display: flex; align-items: center; gap: 8px; padding: 8px 10px 10px 16px; }
-.dock-composer input[type="text"] { height: 44px; font-size: 16px; }
-.dock-composer .icon-send { width: 44px; min-width: 44px; padding: 0; }
 .composer-status { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 12px 14px 20px; }
 .composer-status strong { display: flex; align-items: center; gap: 10px; color: var(--ink); font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
-.composer-status strong::before { content: ""; width: 8px; height: 8px; background: var(--proof); animation: status-blink 1.1s steps(2, jump-none) infinite; }
+.composer-status strong::before { content: ""; flex: none; }
 .composer-status small { display: block; margin-top: 4px; color: var(--faint); font-size: 12.5px; }
 @keyframes status-blink { 50% { opacity: .2; } }
 
@@ -410,18 +404,11 @@ a:hover > .synthex-logo .synthex-mark, button:hover > .synthex-logo .synthex-mar
 .workspace-drawer .chat-line p { padding: 0; border: 0; border-radius: 0; background: none; }
 .workspace-drawer .chat-markdown-body, .workspace-drawer .chat-markdown-body .markdown-view { color: var(--ink); font-size: 14.5px; line-height: 1.6; }
 .workspace-drawer .chat-line .note-meta { margin-top: 8px; }
-.streaming-cursor { width: 8px; height: 8px; border-radius: 0; background: var(--proof); vertical-align: baseline; animation: status-blink 1.1s steps(2, jump-none) infinite; }
+.streaming-cursor { display: inline-block; }
 .chat-thinking { display: flex; align-items: center; gap: 10px; margin: 0; color: var(--muted); font-size: 13.5px; font-weight: 600; }
-.chat-thinking::before { content: ""; flex: none; width: 8px; height: 8px; background: var(--proof); animation: status-blink 1.1s steps(2, jump-none) infinite; }
+.chat-thinking::before { content: ""; flex: none; }
 
 .workspace-drawer .chat-compose-wrapper { padding: 12px 16px 16px; border-top: 1px solid var(--line); background: #fff; }
-.workspace-drawer .active-research-banner { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 0 8px; padding: 0; border: 0; background: none; color: var(--proof); font-size: 13px; font-weight: 600; }
-.workspace-drawer .chat-compose-box { flex-direction: row; align-items: center; gap: 4px; padding: 6px 6px 6px 14px; border: 1.5px solid var(--ink); border-radius: 2px; background: #fff; box-shadow: none; }
-.workspace-drawer .chat-compose-box:focus-within { border-color: var(--ink); background: #fff; box-shadow: none; }
-.workspace-drawer .chat-compose-box input[type="text"] { flex: 1; min-width: 0; height: 44px; font-size: 15px; }
-.chat-cost { flex: none; min-height: 44px; padding: 0 8px; border: 0; background: none; color: var(--faint); font: inherit; font-size: 12.5px; font-weight: 600; font-variant-numeric: tabular-nums; cursor: pointer; }
-.chat-cost:hover { color: var(--ink); }
-.workspace-drawer .icon-send { width: 44px; min-width: 44px; padding: 0; }
 
 /* ---------- Ask AI cards: hairline sections, no icon tiles ---------- */
 .ai-card { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
@@ -436,7 +423,7 @@ a:hover > .synthex-logo .synthex-mark, button:hover > .synthex-logo .synthex-mar
 .ai-steps li.pending { color: var(--faint); }
 .ai-steps li.done { color: var(--muted); }
 .ai-steps li.running { color: var(--ink); font-weight: 600; }
-.ai-steps li.running::after { content: ""; display: inline-block; width: 8px; height: 8px; margin-left: 8px; background: var(--proof); animation: status-blink 1.1s steps(2, jump-none) infinite; }
+.ai-steps li.running::after { content: ""; display: inline-block; margin-left: 8px; }
 .ai-plain-list, .ai-rows { margin: 0; padding: 0; list-style: none; }
 .ai-plain-list li { padding: 3px 0; color: var(--muted); font-size: 13px; }
 .ai-sources { margin: 0; padding-left: 22px; font-size: 13px; line-height: 1.4; font-variant-numeric: tabular-nums; }
@@ -599,12 +586,6 @@ a:hover > .synthex-logo .synthex-mark, button:hover > .synthex-logo .synthex-mar
 .canvas-minimap-toggle-btn:hover { border-color: var(--ink); }
 
 /* ---------- Known layout bugs ---------- */
-/* Contextual chips stay on one row and scroll sideways instead of wrapping in Map + Doc */
-.dock-composer .composer-context { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
-.dock-composer .composer-context::-webkit-scrollbar { display: none; }
-.dock-composer .composer-context > * { flex: none; }
-.dock-composer .composer-target { max-width: 200px; display: inline-block; }
-.dock-composer .composer-target::before { display: inline-block; margin-right: 8px; vertical-align: 0; }
 /* The legend yields to the composer when the document pane is open */
 .canvas-and-inspector.layout-split .relation-legend { display: none; }
 
