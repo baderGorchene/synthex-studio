@@ -17,7 +17,6 @@ import type {
   ResearchChangeStatus,
   ResearchSession
 } from '../types/canvas';
-import { SEED_CONNECTIONS, SEED_NODES } from '../constants/seedData.ts';
 import { addNode, addRelationship, normalizeGraph } from './graph.ts';
 import {
   isNeonConfigured,
@@ -406,66 +405,6 @@ function initSchema(db: Database.Database) {
   `);
 
   ensureSchemaColumns(db);
-
-  // Seed default nodes if database table is newly initialized
-  const countStmt = db.prepare("SELECT COUNT(*) as count FROM nodes WHERE projectId = 'default'");
-  const result = countStmt.get() as { count: number };
-
-  if (result.count === 0) {
-    const insertNode = db.prepare(`
-      INSERT INTO nodes (
-        id, type, x, y, width, height, color, title, content, items,
-        imageUrl, caption, url, domain, description, metadata, createdAt
-      ) VALUES (
-        @id, @type, @x, @y, @width, @height, @color, @title, @content, @items,
-        @imageUrl, @caption, @url, @domain, @description, @metadata, @createdAt
-      )
-    `);
-
-    const insertManyNodes = db.transaction((nodes: CanvasNode[]) => {
-      for (const node of nodes) {
-        insertNode.run({
-          id: node.id,
-          type: node.type,
-          x: node.x,
-          y: node.y,
-          width: node.width ?? null,
-          height: node.height ?? null,
-          color: node.color ?? 'neutral',
-          title: node.title,
-          content: node.content ?? null,
-          items: node.items ? JSON.stringify(node.items) : null,
-          imageUrl: node.imageUrl ?? null,
-          caption: node.caption ?? null,
-          url: node.url ?? null,
-          domain: node.domain ?? null,
-          description: node.description ?? null,
-          metadata: node.metadata ? JSON.stringify(node.metadata) : null,
-          createdAt: node.createdAt
-        });
-      }
-    });
-
-    insertManyNodes(SEED_NODES);
-
-    const insertConn = db.prepare(`
-      INSERT INTO connections (id, from_node, to_node, label)
-      VALUES (@id, @from_node, @to_node, @label)
-    `);
-
-    const insertManyConns = db.transaction((conns: Connection[]) => {
-      for (const c of conns) {
-        insertConn.run({
-          id: c.id,
-          from_node: c.from,
-          to_node: c.to,
-          label: c.label ?? null
-        });
-      }
-    });
-
-    insertManyConns(SEED_CONNECTIONS);
-  }
 }
 
 export function getAllNodesFromDb(projectId = 'default'): CanvasNode[] | Promise<CanvasNode[]> {
@@ -853,12 +792,11 @@ export function userHasProjectAccess(
 export function createProjectInDb(
   id: string,
   title: string,
-  template: 'blank' | 'rag' = 'blank',
   userId?: string | null,
   organizationId?: string | null
 ): ResearchProject | Promise<ResearchProject> {
   if (isNeonConfigured()) {
-    return neonCreateProject(id, title, template, userId, organizationId);
+    return neonCreateProject(id, title, userId, organizationId);
   }
   const project: ResearchProject = {
     id,
@@ -871,17 +809,6 @@ export function createProjectInDb(
     INSERT INTO projects (id, title, createdAt, userId, organizationId)
     VALUES (@id, @title, @createdAt, @userId, @organizationId)
   `).run(project);
-  if (template === 'rag') {
-    const ids = new Map(SEED_NODES.map(node => [node.id, `${id}-${node.id}`]));
-    const nodes = SEED_NODES.map(node => ({ ...node, id: ids.get(node.id)!, metadata: node.metadata ? { ...node.metadata } : undefined }));
-    const connections = SEED_CONNECTIONS.map(edge => ({
-      ...edge,
-      id: `${id}-${edge.id}`,
-      from: ids.get(edge.from)!,
-      to: ids.get(edge.to)!
-    }));
-    bulkSaveCanvasToDb(nodes, connections, id);
-  }
   return project;
 }
 

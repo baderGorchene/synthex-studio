@@ -12,6 +12,7 @@ import { useCollaboration, type PresencePeer, type RemoteChange } from '@/compon
 import { PresenceBar } from '@/components/collab/PresenceBar';
 import { KnowledgeViews } from '@/components/research/KnowledgeViews';
 import { NoteEditor } from '@/components/research/NoteEditor';
+import { EmptyMapGuide } from '@/components/research/EmptyMapGuide';
 import { CanvasToolDock, type ResearchProject, type WorkspaceSection } from '@/components/research/WorkspaceSidebar';
 import { extractYouTubeVideoId } from '@/components/research/SourceMetadata';
 import { addNode, addRelationship, exportContextMarkdown, exportGraphJson, exportMermaid, normalizeGraph, removeNode, strokeForLabel, updateNode, updateRelationship, type KnowledgeGraph } from '@/lib/graph';
@@ -128,13 +129,6 @@ const MORE_VIEWS: Array<[WorkspaceSection, string, string]> = [
   ['revisions', 'Revisions', 'Snapshots you can restore']
 ];
 
-const STARTERS = [
-  { label: 'Map the evidence on sleep and memory', kind: 'Research question', prompt: 'How does sleep affect memory? What is well supported and what is still debated?' },
-  { label: 'Plan a video essay on urban heat islands', kind: 'Creator brief', prompt: 'Plan a video essay on urban heat islands: causes, who is most affected, and what cities are doing about it.' },
-  { label: 'Weigh three pricing models for a SaaS product', kind: 'Work decision', prompt: 'Compare per-seat, usage-based and flat-rate pricing for a B2B SaaS product: trade-offs, risks, and when each fits.' },
-  { label: 'Turn a topic into a revision map', kind: 'Study notes', prompt: 'Build a revision map of the causes and consequences of the French Revolution.' }
-];
-
 export default function SynthexWorkspace() {
   const [projects, setProjects] = useState<ResearchProject[]>([]);
   // The active workspace (personal or a team) decides which maps are listed; personal maps can be brought into a team.
@@ -241,7 +235,6 @@ export default function SynthexWorkspace() {
   const [activeSession, setActiveSession] = useState<ResearchSession | null>(null);
   const [reviewDecisions, setReviewDecisions] = useState<Record<string, 'accepted' | 'rejected'>>({});
   const [projectTitleDraft, setProjectTitleDraft] = useState('');
-  const [projectTemplate, setProjectTemplate] = useState<'blank' | 'rag'>('rag');
   const [creatingProject, setCreatingProject] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [undoReady, setUndoReady] = useState(false);
@@ -941,7 +934,7 @@ export default function SynthexWorkspace() {
     try {
       const data = await readJson<{ project: ResearchProject }>(await fetch('/api/projects', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: projectTitleDraft, template: projectTemplate })
+        body: JSON.stringify({ title: projectTitleDraft })
       }));
       setProjects(current => [...current, data.project]);
       setProjectTitleDraft(''); setProjectMenuOpen(false); setProjectId(data.project.id);
@@ -1896,10 +1889,6 @@ export default function SynthexWorkspace() {
                     <p className="map-menu-title">New map</p>
                     <label className="field-label" htmlFor="project-name">Name</label>
                     <input className="field-input" id="project-name" value={projectTitleDraft} onChange={event => setProjectTitleDraft(event.target.value)} maxLength={80} minLength={2} placeholder="e.g. Small language models" required />
-                    <div className="layout-switch map-menu-starter" role="group" aria-label="Start with">
-                      <button type="button" aria-pressed={projectTemplate === 'blank'} onClick={() => setProjectTemplate('blank')}>Empty map</button>
-                      <button type="button" aria-pressed={projectTemplate === 'rag'} onClick={() => setProjectTemplate('rag')}>Guided example</button>
-                    </div>
                     <button type="submit" className="ink-button" disabled={creatingProject || projectTitleDraft.trim().length < 2}>{creatingProject ? 'Creating…' : 'Create map'}</button>
                   </form>
                 </div>
@@ -2001,7 +1990,7 @@ export default function SynthexWorkspace() {
           {section === 'canvas' ? <>
             <div className={`canvas-and-inspector layout-${layout}`}>
               <div className="graph-wrap">
-                {loading ? <div className="canvas-loading"><LoaderCircle size={21} className="spin" />Opening your map…</div> : Object.keys(displayGraph.nodesById).length === 0 ? <div className="map-start">
+                {loading ? <div className="canvas-loading"><LoaderCircle size={21} className="spin" />Opening your map…</div> : Object.keys(displayGraph.nodesById).length === 0 ? <><div className="map-start">
                   <div className="map-start-inner">
                     <h1>What are you trying to figure&nbsp;out?</h1>
                     <p className="map-start-lede">Ask a question, dump your thoughts, or paste notes. Synthex pins it onto a map you can reshape, then share anywhere.</p>
@@ -2027,16 +2016,8 @@ export default function SynthexWorkspace() {
                       />
                     )}
                     {!aiConfigured && <p className="composer-note">AI is not set up on this server yet, so maps can only be built by hand. Add OPENAI_API_KEY or GEMINI_API_KEY to enable it.</p>}
-                    <div className="map-starters">
-                      {STARTERS.map(starter => (
-                        <button key={starter.label} type="button" className="map-starter" onClick={() => { setComposerText(starter.prompt); composerRef.current?.focus(); }}>
-                          <strong>{starter.label}</strong>
-                          <span>{starter.kind}</span>
-                        </button>
-                      ))}
-                    </div>
                   </div>
-                </div> : <GraphCanvas
+                </div><EmptyMapGuide /></> : <GraphCanvas
                   graph={displayGraph} draftIds={draftIds} detachingIds={detachingIds} keptIds={keptIds} sketch={sketch} sketchStyle={sketchStyle} onSketchChange={saveSketch} selectedNodeIds={selectedIds} viewport={viewport} setViewport={setViewport} activeTool={tool} spacePressed={spacePressed}
                   linkingFromId={linkingFromId} autoFitKey={canvasFitKey} editingNoteId={editingNoteId}
                   onSelectNode={(id, additive) => {

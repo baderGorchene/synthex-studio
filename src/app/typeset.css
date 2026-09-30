@@ -141,18 +141,60 @@ body { font-size: 14px; }
   overflow-y: auto;
   background: var(--canvas);
 }
-.map-start-inner { width: min(846px, 100%); }
-.map-start h1 { margin: 0; color: var(--ink); font-size: clamp(40px, 5vw, 60px); font-weight: 800; line-height: 1; letter-spacing: -.035em; text-wrap: balance; }
-.map-start-lede { max-width: 620px; margin: 22px 0 0; color: var(--muted); font-size: 18px; line-height: 1.5; text-wrap: pretty; }
-.map-starters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 24px; margin-top: 40px; }
-.map-starter {
-  display: flex; flex-direction: column; align-items: flex-start; gap: 4px;
-  padding: 14px 0 16px; border: 0; border-top: 1px solid var(--ink); background: transparent;
-  color: var(--ink); font: inherit; text-align: left; cursor: pointer;
+.map-start-inner { position: relative; z-index: 1; width: min(640px, 100%); }
+.map-start h1 { margin: 0; color: var(--ink); font-size: clamp(34px, 4vw, 48px); font-weight: 800; line-height: 1; letter-spacing: -.035em; text-wrap: balance; }
+.map-start-lede { max-width: 620px; margin: 18px 0 0; color: var(--muted); font-size: 17px; line-height: 1.5; text-wrap: pretty; }
+
+/* ---------- Empty map: hand-drawn guide around the composer ---------- */
+.empty-map-guide {
+  --guide-ink: #3D4046;
+  --guide-pen: var(--proof);
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  overflow: hidden;
+  pointer-events: none;
+  user-select: none;
 }
-.map-starter strong { font-size: 16px; font-weight: 700; }
-.map-starter span { color: var(--faint); font-size: 13px; font-weight: 500; }
-.map-starter:hover strong { color: var(--proof); }
+.guide-measure { position: absolute; top: 0; left: 0; visibility: hidden; }
+.guide-measure .guide-note { position: absolute; }
+.guide-ink { position: absolute; inset: 0; overflow: visible; }
+.guide-stroke {
+  fill: none;
+  stroke: var(--guide-pen);
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  opacity: .85;
+  animation: guide-draw .75s cubic-bezier(.45, .05, .35, 1) forwards;
+}
+.guide-head { animation-duration: .25s; }
+.guide-loop { stroke-width: 1.5; opacity: .55; animation-duration: .9s; }
+.guide-note {
+  display: flex;
+  flex-direction: column;
+  color: var(--guide-ink);
+  font-size: clamp(17px, 1.1vw + 6px, 22px);
+  font-weight: 500;
+  line-height: 1.08;
+  white-space: nowrap;
+}
+.guide-note.is-placed { position: absolute; animation: guide-float 6s ease-in-out infinite alternate; }
+.guide-note em { color: var(--guide-pen); font-style: normal; font-weight: 700; }
+.guide-note.is-placed .guide-line {
+  clip-path: inset(-4px 100% -4px -4px);
+  animation: guide-write .9s steps(18, end) forwards;
+}
+@keyframes guide-draw { to { stroke-dashoffset: 0; } }
+@keyframes guide-write { to { clip-path: inset(-4px -4px -4px -4px); } }
+@keyframes guide-float { from { translate: 0 0; } to { translate: 0 -4px; } }
+@media (prefers-reduced-motion: reduce) {
+  .guide-stroke, .guide-note.is-placed, .guide-note.is-placed .guide-line { animation: none; }
+  .guide-stroke { stroke-dashoffset: 0; }
+  .guide-note.is-placed .guide-line { clip-path: none; }
+}
 
 .composer {
   display: flex;
@@ -255,7 +297,6 @@ body { font-size: 14px; }
   .composer-status strong::before, .knowledge-card.is-draft, .knowledge-card.is-draft .note-pin { animation: none; }
 }
 @media (max-width: 760px) {
-  .map-starters { grid-template-columns: 1fr; }
   .composer-row { flex-wrap: wrap; }
   .dock-composer, .draft-bar { width: calc(100% - 24px); min-width: 0; max-width: none; }
   .dock-composer { bottom: 12px; }
@@ -667,8 +708,6 @@ button.view-row:hover { background: var(--canvas); }
 .map-menu-new { display: flex; flex-direction: column; margin-top: 6px; padding: 12px 10px 8px; border-top: 1px solid var(--line); }
 .map-menu-title { margin: 0; color: var(--ink); font-size: 17px; font-weight: 800; letter-spacing: -.01em; }
 .map-menu-new .field-label { margin-top: 10px; }
-.map-menu-starter { margin: 10px 0 12px; }
-.map-menu-starter button { flex: 1; display: block !important; min-height: 0 !important; padding: 0 10px !important; }
 .map-menu-new .ink-button { width: 100%; }
 .menu-separator { height: 1px; margin: 6px 0; background: var(--line); }
 

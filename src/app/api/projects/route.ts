@@ -22,8 +22,7 @@ export async function GET() {
     if (projects.length === 0 && userId) {
       const starter = await createProjectInDb(
         `project-${randomUUID()}`,
-        'Synthex Studio Guide',
-        'rag',
+        'My first map',
         userId,
         orgId
       );
@@ -82,11 +81,10 @@ export async function POST(request: Request) {
 
     const body = await request.json();
     const title = typeof body?.title === 'string' ? body.title.trim() : '';
-    const template = body?.template === 'rag' ? 'rag' : body?.template === 'blank' ? 'blank' : undefined;
-    if (!template || title.length < 2 || title.length > 80) {
-      return Response.json({ error: 'Give the project a name between 2 and 80 characters and choose a starter.' }, { status: 400 });
+    if (title.length < 2 || title.length > 80) {
+      return Response.json({ error: 'Give the project a name between 2 and 80 characters.' }, { status: 400 });
     }
-    const project = await createProjectInDb(`project-${randomUUID()}`, title, template, userId, orgId);
+    const project = await createProjectInDb(`project-${randomUUID()}`, title, userId, orgId);
     return Response.json({ project }, { status: 201 });
   } catch (error) {
     console.error('Failed to create project:', error);

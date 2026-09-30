@@ -19,7 +19,6 @@ import type {
   ResearchChangeStatus,
   ResearchSession
 } from '../types/canvas';
-import { SEED_CONNECTIONS, SEED_NODES } from '../constants/seedData.ts';
 import { addNode, addRelationship, normalizeGraph } from './graph.ts';
 import type { ChatMessageRecord, CreditTransaction, ResearchProject, UserRecord } from './db.ts';
 
@@ -234,13 +233,6 @@ export async function ensureNeonSchema(): Promise<void> {
           ON CONFLICT (id) DO NOTHING
         `;
       }
-
-      // 3. Ensure default seed nodes exist
-      const existingNodes = await sql`SELECT count(*)::int as count FROM nodes WHERE project_id = 'default'`;
-      const nodeCount = Number(existingNodes[0]?.count || 0);
-      if (nodeCount === 0) {
-        await neonBulkSaveCanvas(SEED_NODES, SEED_CONNECTIONS, 'default');
-      }
     } finally {
       isInitializingSchema = false;
     }
@@ -349,7 +341,6 @@ export async function neonUserHasProjectAccess(
 export async function neonCreateProject(
   id: string,
   title: string,
-  template: 'blank' | 'rag' = 'blank',
   userId?: string | null,
   organizationId?: string | null
 ): Promise<ResearchProject> {
@@ -360,24 +351,6 @@ export async function neonCreateProject(
     INSERT INTO projects (id, title, user_id, organization_id, created_at)
     VALUES (${id}, ${title}, ${userId || null}, ${organizationId || null}, ${createdAt})
   `;
-
-  if (template === 'rag') {
-    const shortProj = id.replace(/^project-/, '').slice(0, 8);
-    const ids = new Map(SEED_NODES.map(node => [node.id, `n-${shortProj}-${node.id}`]));
-    const nodes = SEED_NODES.map(node => ({
-      ...node,
-      id: ids.get(node.id)!,
-      sectionId: node.sectionId ? (ids.get(node.sectionId) || node.sectionId) : undefined,
-      metadata: node.metadata ? { ...node.metadata } : undefined
-    }));
-    const connections = SEED_CONNECTIONS.map(edge => ({
-      ...edge,
-      id: `c-${shortProj}-${edge.id}`,
-      from: ids.get(edge.from)!,
-      to: ids.get(edge.to)!
-    }));
-    await neonBulkSaveCanvas(nodes, connections, id);
-  }
 
   return { id, title, userId: userId || null, organizationId: organizationId || null, createdAt };
 }
