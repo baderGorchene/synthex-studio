@@ -76,6 +76,49 @@ export function isAbort(error: unknown, signal?: AbortSignal): boolean {
   return Boolean(signal?.aborted) || (error instanceof Error && error.name === 'AbortError');
 }
 
+/** Models to try within one provider step: Gemini gets one retry on its backup model when at capacity. */
+export function modelsFor(provider: ProviderName): string[] {
+  if (provider === 'OpenAI') return [OPENAI_MODEL];
+  return GEMINI_MODEL === GEMINI_BACKUP_MODEL ? [GEMINI_MODEL] : [GEMINI_MODEL, GEMINI_BACKUP_MODEL];
+}
+
+export async function withModelFallback<T>(
+  provider: ProviderName,
+  run: (modelId: string) => Promise<T>,
+  signal?: AbortSignal
+): Promise<T> {
+  const models = modelsFor(provider);
+  for (const [index, modelId] of models.entries()) {
+    try {
+      return await run(modelId);
+    } catch (err) {
+      if (index < models.length - 1 && isGeminiCapacityError(err) && !isAbort(err, signal)) {
+        console.warn(`Gemini ${modelId} is at capacity; retrying with ${models[index + 1]}.`);
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw new Error('NO_MODEL_AVAILABLE');
+}
+
+export interface TokenUsage {
+  inputTokens?: number;
+  outputTokens?: number;
+}
+
+export function addUsage(total: TokenUsage, usage: TokenUsage | undefined): TokenUsage {
+  if (!usage) return total;
+  return {
+    inputTokens: (total.inputTokens ?? 0) + (usage.inputTokens ?? 0),
+    outputTokens: (total.outputTokens ?? 0) + (usage.outputTokens ?? 0)
+  };
+}
+
+export function logUsage(task: string, provider: ProviderName, model: string, usage: TokenUsage | undefined) {
+  if (usage) console.info(`[ai] ${task} ${provider}/${model} input=${usage.inputTokens ?? '?'} output=${usage.outputTokens ?? '?'}`);
+}
+
 export async function runWithFallback<T extends { usedFallback?: boolean }>(
   task: string,
   run: (provider: ProviderName) => Promise<T>,

@@ -6,22 +6,20 @@ import type { ChatToolCall, ProposedNodeItem, ProposedRelationshipItem } from '.
 import { buildGraphRAGContext } from './rag/context-builder.ts';
 import { auditGraphTopology } from './graph-analyst.ts';
 import {
-  GEMINI_BACKUP_MODEL,
-  GEMINI_MODEL,
-  OPENAI_MODEL,
   PROVIDER_OPTIONS,
   isAbort,
   isGeminiCapacityError,
   languageModel,
+  logUsage,
+  modelsFor,
   providerPlan,
   recordProviderOutcome,
-  type ProviderName
+  withModelFallback,
+  type ProviderName,
+  type TokenUsage
 } from './ai-providers.ts';
 
-export interface TokenUsage {
-  inputTokens?: number;
-  outputTokens?: number;
-}
+export type { TokenUsage };
 
 export interface GraphAnswer {
   answer: string;
@@ -177,16 +175,8 @@ function finalizeChat(output: Partial<ChatOutput> | null | undefined, graph: Kno
 }
 
 /* =====================================================================
-   Model attempts
-
-   Each provider step tries its models in order: OpenAI has one; Gemini
-   retries once on its backup model when the main one is at capacity.
+   Model calls
 ===================================================================== */
-function modelsFor(provider: ProviderName): string[] {
-  if (provider === 'OpenAI') return [OPENAI_MODEL];
-  return GEMINI_MODEL === GEMINI_BACKUP_MODEL ? [GEMINI_MODEL] : [GEMINI_MODEL, GEMINI_BACKUP_MODEL];
-}
-
 function callSettings(provider: ProviderName, modelId: string, contextMarkdown: string, question: string, signal?: AbortSignal) {
   return {
     model: languageModel(provider, modelId),
@@ -202,10 +192,6 @@ function callSettings(provider: ProviderName, modelId: string, contextMarkdown: 
 
 function toUsage(usage: { inputTokens?: number; outputTokens?: number } | undefined): TokenUsage | undefined {
   return usage ? { inputTokens: usage.inputTokens, outputTokens: usage.outputTokens } : undefined;
-}
-
-function logUsage(provider: ProviderName, model: string, usage: TokenUsage | undefined) {
-  if (usage) console.info(`[ai] chat ${provider}/${model} input=${usage.inputTokens ?? '?'} output=${usage.outputTokens ?? '?'}`);
 }
 
 async function retrieveContext(question: string, graph: KnowledgeGraph, options: ChatOptions) {
@@ -226,28 +212,18 @@ async function generateWithProvider(
   graph: KnowledgeGraph,
   signal?: AbortSignal
 ): Promise<GraphAnswer> {
-  const models = modelsFor(provider);
-  for (const [index, modelId] of models.entries()) {
-    try {
-      const result = await generateText(callSettings(provider, modelId, contextMarkdown, question, signal));
-      const usage = toUsage(result.totalUsage);
-      logUsage(provider, modelId, usage);
-      return {
-        ...finalizeChat(result.output, graph),
-        provider,
-        model: modelId,
-        ...(provider === 'OpenAI' ? { reasoningEffort: 'medium' as const } : {}),
-        usage
-      };
-    } catch (err) {
-      if (index < models.length - 1 && isGeminiCapacityError(err) && !isAbort(err, signal)) {
-        console.warn(`Gemini ${modelId} is at capacity; retrying with ${models[index + 1]}.`);
-        continue;
-      }
-      throw err;
-    }
-  }
-  throw new Error('NO_MODEL_AVAILABLE');
+  return withModelFallback(provider, async modelId => {
+    const result = await generateText(callSettings(provider, modelId, contextMarkdown, question, signal));
+    const usage = toUsage(result.totalUsage);
+    logUsage('chat', provider, modelId, usage);
+    return {
+      ...finalizeChat(result.output, graph),
+      provider,
+      model: modelId,
+      ...(provider === 'OpenAI' ? { reasoningEffort: 'medium' as const } : {}),
+      usage
+    };
+  }, signal);
 }
 
 async function* streamWithProvider(
@@ -297,7 +273,7 @@ async function* streamWithProvider(
     if (final.toolCall) yield { type: 'tool', toolCall: final.toolCall };
 
     const usage = toUsage(await result.totalUsage);
-    logUsage(provider, modelId, usage);
+    logUsage('chat', provider, modelId, usage);
     yield {
       type: 'done',
       text: final.answer,

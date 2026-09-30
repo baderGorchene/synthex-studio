@@ -1398,30 +1398,40 @@ test('chat stream: Gemini answers are streamed incrementally', async () => {
   });
 });
 
+const researchOutput = (overrides = {}) => ({
+  summary: 'Reefs.', subquestions: [], sources: [],
+  nodes: [{ tempId: 't1', type: 'claim', title: 'Bleaching rises', content: '', rationale: '' }],
+  relationships: [],
+  ...overrides
+});
+
 test('research: OpenAI sources must come from web search results; progress streams as work happens', async () => {
   const { researchGraphStream } = await import('../src/lib/ai-service.ts');
   const graph = normalizeGraph([], []);
   const handler = (url, body) => {
     if (url.includes('api.openai.com/v1/responses')) {
-      assert.deepEqual(body.tools, [{ type: 'web_search' }]);
-      return jsonResponse({ output: [
-        { type: 'web_search_call', action: { type: 'search', query: 'coral bleaching 2026', sources: [{ type: 'url', url: 'https://www.example.org/reef/' }] } },
-        { type: 'message', content: [{ type: 'output_text', annotations: [], text: JSON.stringify({
-          summary: 'Reefs.', subquestions: [],
-          sources: [
-            { title: 'Reef study', url: 'https://example.org/reef?utm_source=openai' },
-            { title: 'Invented paper', url: 'https://made-up.example.com/paper' }
-          ],
-          nodes: [{ tempId: 't1', type: 'claim', title: 'Bleaching rises', content: '', rationale: '' }],
-          relationships: []
-        }) }] }
-      ] });
+      assert.ok(body.tools.some(t => t.type === 'web_search'), 'web search tool is enabled');
+      assert.ok(body.include.includes('web_search_call.action.sources'), 'search sources are requested');
+      assert.equal(body.text.format.type, 'json_schema');
+      return jsonResponse({
+        id: 'resp_1', created_at: 1, model: 'gpt-6-luna',
+        output: [
+          { type: 'web_search_call', id: 'ws_1', status: 'completed', action: { type: 'search', query: 'coral bleaching 2026', sources: [{ type: 'url', url: 'https://www.example.org/reef/' }] } },
+          { type: 'message', role: 'assistant', id: 'msg_1', content: [{ type: 'output_text', annotations: [], text: JSON.stringify(researchOutput({
+            sources: [
+              { title: 'Reef study', url: 'https://example.org/reef?utm_source=openai' },
+              { title: 'Invented paper', url: 'https://made-up.example.com/paper' }
+            ]
+          })) }] }
+        ],
+        usage: { input_tokens: 500, output_tokens: 200 }
+      });
     }
     throw new Error(`unexpected fetch ${url}`);
   };
   await withMockedAI({ OPENAI_API_KEY: 'sk-test' }, handler, async () => {
     const events = [];
-    for await (const event of researchGraphStream('coral bleaching', 'quick', graph, `test-research-${Date.now()}`)) events.push(event);
+    for await (const event of researchGraphStream('coral bleaching', 'quick', graph, { projectId: `test-research-${Date.now()}` })) events.push(event);
     const types = events.map(e => e.type);
     assert.deepEqual(types.slice(0, 2), ['step', 'step']);
     assert.deepEqual(events.filter(e => e.type === 'query').map(e => e.query), ['coral bleaching 2026']);
@@ -1430,5 +1440,85 @@ test('research: OpenAI sources must come from web search results; progress strea
     assert.equal(done.type, 'done');
     assert.deepEqual(done.result.sources, [{ title: 'Reef study', url: 'https://www.example.org/reef/' }], 'unverified model citation is dropped');
     assert.deepEqual(done.result.searchQueries, ['coral bleaching 2026']);
+    assert.deepEqual(done.result.usage, { inputTokens: 500, outputTokens: 200 });
+    assert.equal(done.result.groundingNote, undefined);
+  });
+});
+
+test('research: if OpenAI rejects web search, the run continues without sources and says so', async () => {
+  const { researchGraph } = await import('../src/lib/ai-service.ts');
+  const handler = (url, body) => {
+    if (!url.includes('api.openai.com/v1/responses')) throw new Error(`unexpected fetch ${url}`);
+    if (body.tools) return jsonResponse({ error: { message: 'web_search not supported', type: 'invalid_request_error', code: 'unsupported' } }, 400);
+    return jsonResponse({
+      id: 'resp_2', created_at: 1, model: 'gpt-6-luna',
+      output: [{ type: 'message', role: 'assistant', id: 'msg_2', content: [{ type: 'output_text', annotations: [], text: JSON.stringify(researchOutput({
+        sources: [{ title: 'From memory', url: 'https://example.org/remembered' }]
+      })) }] }],
+      usage: { input_tokens: 10, output_tokens: 10 }
+    });
+  };
+  await withMockedAI({ OPENAI_API_KEY: 'sk-test' }, handler, async () => {
+    const result = await researchGraph('coral bleaching', 'quick', normalizeGraph([], []), { projectId: `test-nosearch-${Date.now()}` });
+    assert.deepEqual(result.sources, []);
+    assert.match(result.groundingNote, /no sources/);
+  });
+});
+
+test('research: Gemini deep research plans, runs two grounded hops, and links hop 2 cards to hop 1', async () => {
+  const { researchGraphStream } = await import('../src/lib/ai-service.ts');
+  const graph = normalizeGraph([], []);
+  const grounded = (output, uri, query) => jsonResponse({
+    candidates: [{
+      content: { role: 'model', parts: [{ text: JSON.stringify(output) }] },
+      finishReason: 'STOP',
+      groundingMetadata: { webSearchQueries: [query], groundingChunks: [{ web: { uri, title: hostnameOf(uri) } }] }
+    }],
+    usageMetadata: { promptTokenCount: 100, candidatesTokenCount: 50, totalTokenCount: 150 }
+  });
+  const hostnameOf = uri => new URL(uri).hostname;
+  const handler = (url, body) => {
+    if (!url.includes(':generateContent')) throw new Error(`unexpected fetch ${url}`);
+    const prompt = body.contents[0].parts[0].text;
+    if (!body.tools) {
+      return geminiResponse({ axes: [
+        { name: 'Foundations', searchQuery: 'reef symbiosis mechanism', focus: '' },
+        { name: 'Empirical', searchQuery: 'bleaching events 2026 data', focus: '' },
+        { name: 'Counter', searchQuery: 'reef recovery evidence', focus: '' }
+      ], preliminaryHypotheses: ['Heat drives bleaching'] });
+    }
+    assert.ok(body.tools.some(t => 'googleSearch' in t || 'google_search' in t), 'Google Search grounding is enabled');
+    if (prompt.includes('hop 1 of 2')) {
+      assert.ok(prompt.includes('reef symbiosis mechanism'), 'hop 1 searches the planned axes');
+      return grounded(researchOutput({
+        subquestions: ['Can reefs adapt?'],
+        nodes: [{ tempId: 'a', type: 'concept', title: 'Symbiosis', content: '', rationale: '' }]
+      }), 'https://one.example.org/a', 'reef symbiosis');
+    }
+    assert.ok(prompt.includes('Can reefs adapt?'), 'hop 2 follows hop 1 subquestions');
+    assert.ok(prompt.includes('a: [concept] Symbiosis'), 'hop 2 sees hop 1 cards');
+    return grounded(researchOutput({
+      nodes: [
+        { tempId: 'a', type: 'claim', title: 'Heat tolerance evolves', content: '', rationale: '' },
+        { tempId: 'dup', type: 'concept', title: ' symbiosis ', content: '', rationale: '' }
+      ],
+      relationships: [
+        { fromTempId: 'a', toTempId: 'dup', label: 'depends_on', evidence: '', confidence: 0.7 }
+      ]
+    }), 'https://two.example.org/b', 'coral adaptation');
+  };
+  await withMockedAI({ GEMINI_API_KEY: 'g-test' }, handler, async () => {
+    const events = [];
+    for await (const event of researchGraphStream('coral bleaching', 'deep', graph, { projectId: `test-deep-${Date.now()}` })) events.push(event);
+    const stepIds = events.filter(e => e.type === 'step' && e.stepId).map(e => e.stepId);
+    assert.deepEqual(stepIds, ['axes', 'axes', 'queries', 'synthesis']);
+    assert.deepEqual(events.filter(e => e.type === 'hop').map(e => e.hop), [1, 2]);
+    const { result } = events.at(-1);
+    assert.deepEqual(result.result.nodes.map(n => n.tempId), ['a', 'hop2-a'], 'hop 2 ids are namespaced and duplicates merged');
+    assert.deepEqual(result.result.relationships.map(r => [r.fromTempId, r.toTempId]), [['hop2-a', 'a']], 'hop 2 links back to the hop 1 card');
+    assert.deepEqual(result.sources.map(s => s.url), ['https://one.example.org/a', 'https://two.example.org/b']);
+    assert.deepEqual(result.searchQueries, ['reef symbiosis', 'coral adaptation']);
+    assert.equal(result.provider, 'Gemini');
+    assert.deepEqual(result.usage, { inputTokens: 300, outputTokens: 120 });
   });
 });
