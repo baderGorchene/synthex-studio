@@ -22,9 +22,17 @@ import { SketchLayer, type SketchStroke } from './SketchLayer';
 import { DEFAULT_SKETCH_STYLE, clusterWidth, type SketchStyle } from './inkPalette';
 import { uploadFile } from '@/lib/upload';
 import { extractPageNumber, type CitationReference } from '@/utils/citation';
+/** Phones get one-finger panning; tablets and desktops keep marquee selection. */
+const isPhoneTouch = (event: { pointerType: string }) =>
+  event.pointerType === 'touch' && typeof window !== 'undefined' && window.matchMedia('(max-width: 760px)').matches;
+/** How far two fingers must spread or pinch (as a share of their start distance) before the map zooms. */
+const PINCH_ZOOM_THRESHOLD = .1;
+
 type Gesture =
-  | { kind: 'pan'; start: Coordinates; origin: Coordinates }
-  | { kind: 'pinch'; startDistance: number; startZoom: number; anchor: Coordinates }
+  // On phones a one-finger touch pans; `tap` records what a touch that never moved should do instead.
+  | { kind: 'pan'; start: Coordinates; origin: Coordinates; tap?: { clear: true } | { selectId: string } }
+  // `zooming` stays false until the fingers clearly spread or pinch, so a two-finger pan never zooms.
+  | { kind: 'pinch'; startDistance: number; startZoom: number; anchor: Coordinates; zooming: boolean }
   | { kind: 'drag'; start: Coordinates; origins: Record<string, Coordinates>; primaryId?: string; noteIds: string[] }
   | { kind: 'resize'; start: Coordinates; node: CanvasNode; handle: SectionResizeHandle }
   | { kind: 'marquee'; startClient: Coordinates; currentClient: Coordinates; additive: boolean };
@@ -514,6 +522,7 @@ export function GraphCanvas({
   const canvasRef = useRef<HTMLDivElement>(null);
   const gesture = useRef<Gesture | null>(null);
   const activePointers = useRef(new Map<number, Coordinates>());
+  const pinchFrame = useRef<number | null>(null);
   const lastFittedKey = useRef<number | null>(null);
   const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
   const [cursorWorld, setCursorWorld] = useState<Coordinates | null>(null);
@@ -818,6 +827,20 @@ export function GraphCanvas({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoFitKey, handleFitCanvas]);
 
+  // iOS Safari zooms the whole page on a pinch even with touch-action: none, fighting the map's own
+  // zoom. Its non-standard gesture events are the only way to stop that.
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const block = (event: Event) => event.preventDefault();
+    canvas.addEventListener('gesturestart', block);
+    canvas.addEventListener('gesturechange', block);
+    return () => {
+      canvas.removeEventListener('gesturestart', block);
+      canvas.removeEventListener('gesturechange', block);
+    };
+  }, []);
+
   useEffect(() => {
     const move = (event: PointerEvent) => {
       const current = gesture.current;
@@ -869,18 +892,36 @@ export function GraphCanvas({
         }
       } else if (current.kind === 'pinch') {
         activePointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
-        const points = [...activePointers.current.values()];
-        if (points.length < 2) return;
-        const rect = canvasRef.current?.getBoundingClientRect();
-        if (!rect) return;
-        const distance = Math.max(1, Math.hypot(points[1].x - points[0].x, points[1].y - points[0].y));
-        const center = {
-          x: (points[0].x + points[1].x) / 2 - rect.left,
-          y: (points[0].y + points[1].y) / 2 - rect.top
-        };
-        setViewport(() => {
-          const zoom = Math.min(1.6, Math.max(.28, current.startZoom * distance / current.startDistance));
-          return { zoom, pan: { x: center.x - current.anchor.x * zoom, y: center.y - current.anchor.y * zoom } };
+        // Each finger reports its own move, so read both only once per frame: in between, one finger has
+        // moved and the other has not, and the spread would look like a pinch in the middle of a pan.
+        if (pinchFrame.current !== null) return;
+        pinchFrame.current = requestAnimationFrame(() => {
+          pinchFrame.current = null;
+          const pinch = gesture.current;
+          if (pinch?.kind !== 'pinch') return;
+          const points = [...activePointers.current.values()];
+          if (points.length < 2) return;
+          const rect = canvasRef.current?.getBoundingClientRect();
+          if (!rect) return;
+          const distance = Math.max(1, Math.hypot(points[1].x - points[0].x, points[1].y - points[0].y));
+          const center = {
+            x: (points[0].x + points[1].x) / 2 - rect.left,
+            y: (points[0].y + points[1].y) / 2 - rect.top
+          };
+          // Fingers never keep exactly the same spread, so small changes only pan. Once the spread
+          // clearly changes, zoom from that point on so the map does not jump by the dead zone.
+          if (!pinch.zooming) {
+            if (Math.abs(distance / pinch.startDistance - 1) < PINCH_ZOOM_THRESHOLD) {
+              setViewport(value => ({ ...value, pan: { x: center.x - pinch.anchor.x * pinch.startZoom, y: center.y - pinch.anchor.y * pinch.startZoom } }));
+              return;
+            }
+            pinch.zooming = true;
+            pinch.startDistance = distance;
+          }
+          setViewport(() => {
+            const zoom = Math.min(1.6, Math.max(.28, pinch.startZoom * distance / pinch.startDistance));
+            return { zoom, pan: { x: center.x - pinch.anchor.x * zoom, y: center.y - pinch.anchor.y * zoom } };
+          });
         });
       } else if (current.kind === 'resize') {
         const dx = (event.clientX - current.start.x) / viewport.zoom;
@@ -1097,6 +1138,21 @@ export function GraphCanvas({
     };
     const up = (event: PointerEvent) => {
       activePointers.current.delete(event.pointerId);
+      // Lifting one finger of a pinch keeps panning with the finger still down.
+      if (gesture.current?.kind === 'pinch') {
+        const remaining = [...activePointers.current.values()][0];
+        gesture.current = remaining ? { kind: 'pan', start: remaining, origin: viewport.pan } : null;
+        return;
+      }
+      if (gesture.current?.kind === 'pan' && gesture.current.tap) {
+        const { tap, start } = gesture.current;
+        gesture.current = null;
+        if (Math.hypot(event.clientX - start.x, event.clientY - start.y) < 8) {
+          if ('selectId' in tap) onSelectNode(tap.selectId, false);
+          else { onClearSelection(); onClickAway(); }
+        }
+        return;
+      }
       if (rafMoveRef.current !== null) {
         cancelAnimationFrame(rafMoveRef.current);
         rafMoveRef.current = null;
@@ -1132,7 +1188,8 @@ export function GraphCanvas({
         }
         // Dropped on another note: everything that moved goes back to where it started.
         if (blockedRef.current.length) onMoveNodes(gesture.current.origins);
-        else if (carried.length && onAssignCluster) {
+        // A phone tap on a selected note (say, the first half of a double tap to edit it) is not a drop.
+        else if (carried.length && onAssignCluster && !(isPhoneTouch(event) && Math.hypot(event.clientX - gesture.current.start.x, event.clientY - gesture.current.start.y) < 8)) {
           // Dropped: into the cluster under it, or out of the one it came from.
           const changed = carried.filter(id => {
             const note = graph.nodesById[id];
@@ -1147,7 +1204,8 @@ export function GraphCanvas({
       if (blockedRef.current.length) { blockedRef.current = []; setBlockedIds([]); }
       gesture.current = null;
     };
-    const cancel = () => {
+    const cancel = (event: PointerEvent) => {
+      activePointers.current.delete(event.pointerId);
       if (rafMoveRef.current !== null) {
         cancelAnimationFrame(rafMoveRef.current);
         rafMoveRef.current = null;
@@ -1172,16 +1230,36 @@ export function GraphCanvas({
         cancelAnimationFrame(rafMoveRef.current);
         rafMoveRef.current = null;
       }
+      if (pinchFrame.current !== null) {
+        cancelAnimationFrame(pinchFrame.current);
+        pinchFrame.current = null;
+      }
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', up);
       window.removeEventListener('pointercancel', cancel);
     };
-  }, [onMoveNodes, onResizeGroup, onSelectMultipleNodes, onDeleteNodes, setViewport, viewport.zoom, viewport.pan, nodes, visibleIds, nodeHeights, isOverTrash, draggedNodeIds, onClearSelection, onClickAway, graph.nodesById, nodeBounds, groups, onAssignCluster]);
+  }, [onMoveNodes, onResizeGroup, onSelectMultipleNodes, onDeleteNodes, setViewport, viewport.zoom, viewport.pan, nodes, visibleIds, nodeHeights, isOverTrash, draggedNodeIds, onClearSelection, onClickAway, onSelectNode, graph.nodesById, nodeBounds, groups, onAssignCluster]);
 
   const trackTouchPointer = (event: React.PointerEvent<HTMLDivElement>) => {
     if (event.pointerType !== 'touch') return;
+    // The first finger of a new touch starts clean, so a lost pointerup can never leave a ghost finger behind.
+    if (event.isPrimary) activePointers.current.clear();
     activePointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
     if (activePointers.current.size !== 2) return;
+    // A second finger turns whatever the first one started into a pinch: a note it was carrying goes back.
+    const previous = gesture.current;
+    if (previous?.kind === 'drag') {
+      if (rafMoveRef.current !== null) { cancelAnimationFrame(rafMoveRef.current); rafMoveRef.current = null; }
+      onMoveNodes(previous.origins);
+      setDraggedNodeIds([]);
+      setCarriedNoteIds([]);
+      dropTargetRef.current = null; setDropTargetId(null);
+      setDragTilt(0);
+      setIsOverTrash(false);
+      setAlignmentGuides([]);
+      if (blockedRef.current.length) { blockedRef.current = []; setBlockedIds([]); }
+    }
+    setMarqueeBox(null);
     const points = [...activePointers.current.values()];
     const rect = canvasRef.current?.getBoundingClientRect();
     if (!rect) return;
@@ -1191,7 +1269,7 @@ export function GraphCanvas({
       y: (points[0].y + points[1].y) / 2 - rect.top
     };
     gesture.current = {
-      kind: 'pinch', startDistance, startZoom: viewport.zoom,
+      kind: 'pinch', startDistance, startZoom: viewport.zoom, zooming: false,
       anchor: { x: (center.x - viewport.pan.x) / viewport.zoom, y: (center.y - viewport.pan.y) / viewport.zoom }
     };
     event.currentTarget.setPointerCapture(event.pointerId);
@@ -1209,6 +1287,12 @@ export function GraphCanvas({
 
     if (spacePressed || activeTool === 'hand' || event.button === 1) {
       gesture.current = { kind: 'pan', start: { x: event.clientX, y: event.clientY }, origin: viewport.pan };
+      return;
+    }
+
+    // Phones: one finger on empty board moves the map; a plain tap still clears the selection.
+    if (activeTool === 'select' && isPhoneTouch(event)) {
+      gesture.current = { kind: 'pan', start: { x: event.clientX, y: event.clientY }, origin: viewport.pan, tap: { clear: true } };
       return;
     }
 
@@ -1233,8 +1317,19 @@ export function GraphCanvas({
     }
   };
 
+  /** Phones: a second finger on a handle stays part of the pinch, and a cluster that is not selected
+   *  pans under the finger like the rest of the board instead of resizing. */
+  const touchSkipsResize = (event: React.PointerEvent, node: CanvasNode) => {
+    if (gesture.current?.kind === 'pinch') { event.stopPropagation(); return true; }
+    if (!isPhoneTouch(event) || selectedNodeIds.includes(node.id)) return false;
+    event.stopPropagation();
+    gesture.current = { kind: 'pan', start: { x: event.clientX, y: event.clientY }, origin: viewport.pan, tap: { selectId: node.id } };
+    return true;
+  };
+
   const startGroupResize = (event: React.PointerEvent, node: CanvasNode, handle: SectionResizeHandle) => {
     if (isResizeLocked) return;
+    if (touchSkipsResize(event, node)) return;
     event.preventDefault(); event.stopPropagation();
     // Resize from what is on screen (the loop is stretched round its notes), not the stored size underneath.
     const shown = nodeBounds[node.id];
@@ -1243,6 +1338,7 @@ export function GraphCanvas({
 
   const startNodeResize = (event: React.PointerEvent, node: CanvasNode, handle: SectionResizeHandle) => {
     if (isResizeLocked) return;
+    if (touchSkipsResize(event, node)) return;
     event.preventDefault(); event.stopPropagation();
     gesture.current = { kind: 'resize', start: { x: event.clientX, y: event.clientY }, node, handle };
   };
@@ -1259,6 +1355,13 @@ export function GraphCanvas({
     }
     if (event.button !== 0) return;
     if ((event.target as HTMLElement).closest('button, input, textarea, a, .markdown-editor')) { event.stopPropagation(); return; }
+    // Phones: a finger on a note that is not selected pans the map (notes cover most of a small
+    // screen), and a tap selects it. Once selected, the note can be dragged. Drafts never drag.
+    if (isPhoneTouch(event) && activeTool !== 'connect' && !linkingFromId && (!selectedNodeIds.includes(node.id) || draftIds?.has(node.id))) {
+      event.stopPropagation();
+      gesture.current = { kind: 'pan', start: { x: event.clientX, y: event.clientY }, origin: viewport.pan, tap: { selectId: node.id } };
+      return;
+    }
     if (draftIds?.has(node.id)) { event.stopPropagation(); onSelectNode(node.id, false); return; }
     if (activeTool === 'connect' || linkingFromId) {
       event.preventDefault();

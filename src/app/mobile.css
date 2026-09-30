@@ -1,0 +1,214 @@
+/* ==========================================================================
+   Phones (≤ 760px). Loaded last, and everything except the two hidden-by-default
+   controls below sits inside the phone media query, so tablets and desktops are untouched.
+   Layout of a phone board, top to bottom:
+     top bar (brand · map · Map/Doc · chat · …)  →  draft bar  →  board  →  tool row  →  composer
+   The chat opens as a sheet between the top bar and the composer, so the composer
+   stays the one place to type, on the board and in the chat alike.
+   ========================================================================== */
+
+/* Phone-only controls stay out of the wider layouts */
+.topbar-chat-button { display: none; }
+
+@media (max-width: 760px) {
+  :root {
+    --m-gutter: 12px;
+    --m-top: env(safe-area-inset-top, 0px);
+    --m-bottom: env(safe-area-inset-bottom, 0px);
+    --m-bar: 52px;                                     /* top bar height */
+    --m-composer-bottom: calc(10px + var(--m-bottom));
+    --m-dock-bottom: calc(var(--m-composer-bottom) + 66px); /* tool row sits just above the composer */
+  }
+
+  /* Nothing may push the whole workspace sideways (a wide popover used to scroll it 48px left) */
+  .workspace-shell, .workspace-main, .workspace-stage { overflow: hidden; overscroll-behavior: none; }
+  .full-canvas-shell { position: fixed; inset: 0; }
+
+  /* ---------- Top bar ---------- */
+  .canvas-main .workspace-topbar {
+    top: calc(8px + var(--m-top)); left: var(--m-gutter); right: var(--m-gutter);
+    height: var(--m-bar); gap: 4px; padding: 0 4px 0 6px;
+  }
+  .workspace-main:not(.canvas-main) .workspace-topbar { padding-top: var(--m-top); height: calc(var(--m-bar) + var(--m-top)); }
+  .workspace-topbar .topbar-left { gap: 2px; }
+  .workspace-topbar .topbar-home-button { flex: none; width: 40px; min-width: 40px; height: 40px; padding: 0; }
+  .workspace-topbar .topbar-project-anchor { min-width: 0; flex: 1 1 auto; }
+  .workspace-topbar .topbar-project-trigger { max-width: 100%; min-width: 0; min-height: 40px; padding: 0 4px; }
+  .workspace-topbar .topbar-project-trigger .project-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .workspace-topbar .topbar-center { flex: none; }
+  .workspace-topbar .layout-switch { padding: 2px; }
+  .workspace-topbar .layout-switch button { height: 34px; padding: 0 9px; }
+  .workspace-topbar .topbar-actions { flex: none; gap: 2px; }
+  .topbar-actions > .topbar-chat-button { display: inline-grid !important; place-items: center; width: 40px; height: 40px; }
+  .topbar-actions > .topbar-chat-button.is-active { background: var(--ink); color: #fff; }
+  .workspace-topbar .topbar-overflow .icon-button { width: 40px; height: 40px; }
+  /* Account controls shrink to their avatars; the credits count lives in the "…" menu */
+  .topbar-actions .user-nav { gap: 2px; }
+  .topbar-actions .user-nav .user-nav-link.text-button { display: none; }
+  .topbar-actions .user-nav .user-nav-link.ink-button { min-height: 34px; padding: 0 10px; font-size: 13px; }
+  .topbar-actions .cl-organizationSwitcherTrigger { padding: 4px; }
+  .topbar-actions .cl-organizationSwitcherTrigger .cl-organizationPreviewTextContainer,
+  .topbar-actions .cl-organizationSwitcherTrigger .cl-userPreviewTextContainer,
+  .topbar-actions .cl-organizationSwitcherTrigger > svg { display: none; }
+
+  /* Menus from the top bar open as full-width sheets under it instead of running off the edge */
+  .topbar-project-menu, .map-menu,
+  .workspace-topbar .overflow-menu,
+  .workspace-topbar .views-menu,
+  .share-panel {
+    position: fixed !important;
+    top: calc(var(--m-top) + var(--m-bar) + 16px) !important;
+    left: var(--m-gutter) !important; right: var(--m-gutter) !important;
+    width: auto !important; max-width: none !important;
+    max-height: calc(100dvh - var(--m-top) - var(--m-bar) - 32px - var(--m-bottom));
+    overflow-y: auto; overscroll-behavior: contain;
+    z-index: 70;
+  }
+  .workspace-topbar .overflow-menu { left: auto !important; width: min(280px, calc(100vw - 24px)) !important; }
+  .overflow-menu button { justify-content: flex-start; }
+
+  /* ---------- Draft bar: under the top bar ---------- */
+  .draft-bar { top: calc(var(--m-top) + var(--m-bar) + 16px); gap: 8px; padding: 10px 12px; }
+  .draft-bar > span { font-size: 13px; }
+  .draft-bar > div { flex-wrap: wrap; width: 100%; justify-content: flex-end; }
+
+  /* ---------- Tool row: one row, full width, just above the composer ---------- */
+  .full-canvas-shell .canvas-tool-dock {
+    top: auto !important; bottom: var(--m-dock-bottom) !important;
+    left: var(--m-gutter) !important; right: var(--m-gutter) !important;
+    width: auto !important; max-width: none !important; height: auto;
+    padding: 3px !important; flex-direction: row !important; transform: none !important;
+  }
+  .full-canvas-shell .canvas-tool-dock .sidebar-tool-row { flex: 1; flex-wrap: nowrap !important; align-items: center; gap: 0; min-width: 0; }
+  .full-canvas-shell .canvas-tool-dock .sidebar-tool-row > .sidebar-tool-button,
+  .full-canvas-shell .canvas-tool-dock .dock-add-record,
+  .full-canvas-shell .canvas-tool-dock .dock-organize-record { flex: 1 1 0; min-width: 0; }
+  .full-canvas-shell .canvas-tool-dock .dock-draw-tools { flex: 3 1 0; min-width: 0; flex-direction: row; position: static; }
+  .full-canvas-shell .canvas-tool-dock .dock-draw-tools > .sidebar-tool-button { flex: 1 1 0; min-width: 0; }
+  .full-canvas-shell .canvas-tool-dock .sidebar-tool-button {
+    display: grid; grid-template-columns: 1fr; place-items: center;
+    width: 100% !important; height: 42px; padding: 0;
+  }
+  .full-canvas-shell .canvas-tool-dock .tool-icon { width: 100%; height: 42px; }
+  .full-canvas-shell .canvas-tool-dock :is(.tool-info, .tool-trailing, .tool-tooltip) { display: none !important; }
+  .full-canvas-shell .canvas-tool-dock .sidebar-tool-divider { flex: none; width: 1px !important; height: 24px; margin: 0 2px; }
+  .full-canvas-shell .canvas-tool-dock .dock-add-record, .full-canvas-shell .canvas-tool-dock .dock-organize-record { position: static; }
+  /* The Doc view has no board to use the tools on */
+  .full-canvas-shell:has(.canvas-and-inspector.layout-doc) .canvas-tool-dock { display: none !important; }
+
+  /* Tool menus and the pen/marker options open as a sheet above the tool row */
+  .full-canvas-shell .canvas-tool-dock .dock-menu,
+  .full-canvas-shell .canvas-tool-dock .sketch-options,
+  .full-canvas-shell .canvas-tool-dock .sketch-options.is-marker {
+    position: fixed; z-index: 60;
+    top: auto; bottom: calc(var(--m-dock-bottom) + 58px);
+    left: var(--m-gutter); right: var(--m-gutter);
+    width: auto; max-width: none;
+    max-height: calc(100dvh - var(--m-dock-bottom) - var(--m-top) - var(--m-bar) - 90px);
+    overflow-y: auto;
+  }
+  .full-canvas-shell .canvas-tool-dock .sketch-options { flex-direction: row; flex-wrap: wrap; padding: 10px; }
+  .full-canvas-shell .canvas-tool-dock .sketch-options .width-slider { flex-basis: 100%; }
+  .full-canvas-shell .canvas-tool-dock .sketch-colors { justify-content: space-between; width: 100%; }
+
+  /* ---------- Composer: owns the bottom edge, above the home bar ---------- */
+  .dock-composer { bottom: var(--m-composer-bottom); z-index: 26; }
+  /* the composer's own "/" menu opens over the tool row, never under it */
+  .dock-composer .tool-menu { z-index: 61; max-height: calc(100dvh - var(--m-top) - var(--m-bar) - 140px - var(--m-bottom)); overflow-y: auto; }
+  .workspace-shell:has(.dock-composer .tool-menu) .canvas-tool-dock { visibility: hidden; }
+  /* one line of placeholder, and the tool row steps aside while typing (the keyboard needs the room) */
+  .dock-composer textarea::placeholder { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .composer.tool-composer.dock-composer textarea { font-size: 21px; }
+  .workspace-shell:has(.dock-composer:focus-within) .canvas-tool-dock { visibility: hidden; }
+  .full-canvas-shell .toast-note { bottom: calc(var(--m-dock-bottom) + 60px); }
+
+  /* On the empty-map page the large pad puts the picked tool on its own line, so the question keeps the width */
+  .tool-composer.is-large .tool-composer-line { flex-wrap: wrap; row-gap: 0; }
+  .tool-composer.is-large .tool-chip { max-width: 100%; }
+  .composer.tool-composer.is-large textarea { flex: 1 1 calc(100% - 56px); font-size: 22px; }
+  .tool-composer .tool-chip { max-width: 42%; }
+  /* the start page scrolls clear of the top bar and the tool row */
+  .map-start { place-items: start center; padding: calc(var(--m-top) + var(--m-bar) + 116px) 16px calc(var(--m-dock-bottom) + 72px); }
+  .map-start h1 { font-size: clamp(40px, 12vw, 52px); }
+  .map-start-lede { font-size: 16px; }
+
+  /* ---------- Chat: a sheet between the top bar and the composer ---------- */
+  .workspace-drawer {
+    top: calc(var(--m-top) + var(--m-bar) + 16px);
+    left: var(--m-gutter); right: var(--m-gutter);
+    bottom: calc(var(--m-composer-bottom) + 66px);
+    width: auto; max-width: none;
+    transform: translateY(calc(100% + 120px));
+  }
+  .workspace-drawer.is-open { transform: none; }
+  .workspace-drawer .drawer-header { padding: 6px 6px 6px 14px; }
+  .workspace-drawer .close-drawer-btn { width: 40px; height: 40px; }
+  .workspace-drawer .chat-transcript { overscroll-behavior: contain; }
+  /* while chatting, the board's drafts bar would sit on top of the answer */
+  .canvas-and-inspector:has(.workspace-drawer.is-open) .draft-bar { display: none; }
+
+  /* ---------- Views (claims, sources, …): the table becomes one card per row ---------- */
+  .view-table, .view-table tbody { display: block; width: 100%; }
+  .view-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .view-table tr {
+    display: grid; grid-template-columns: repeat(3, auto) 1fr; align-items: center; gap: 4px 14px;
+    padding: 12px 14px; border-bottom: 1px solid var(--line);
+  }
+  .view-table td { padding: 0 !important; border: 0 !important; text-align: left !important; font-size: 13.5px; }
+  .view-table td:first-child { grid-column: 1 / -1; }
+  .view-table td:first-child button { text-align: left; font-size: 16px; }
+  .view-table td.num::after { margin-left: 4px; color: var(--faint); font-size: 12.5px; }
+  .view-table td.num:nth-child(4)::after { content: "sources"; }
+  .view-table td.num:nth-child(5)::after { content: "relations"; }
+
+  /* ---------- Modals fill the phone ---------- */
+  .modal-scrim { padding: calc(8px + var(--m-top)) 8px calc(8px + var(--m-bottom)); }
+  .work-modal, .review-modal { width: 100%; max-width: none; max-height: calc(100dvh - 16px - var(--m-top) - var(--m-bottom)); overflow-y: auto; }
+  .review-footer { flex-wrap: wrap; gap: 8px; }
+  .group-canvas-scrim { padding: 0; }
+  .group-canvas-modal { width: 100%; height: 100dvh; border: 0; border-radius: 0; }
+  .group-canvas-header { padding-top: var(--m-top); }
+
+  /* File and image viewer: full screen, its toolbar wraps under the file name */
+  .media-viewer-backdrop { padding: 0; }
+  .media-viewer-container { width: 100vw; max-height: none; height: 100dvh; border: 0; border-radius: 0; }
+  .media-viewer-header { flex-wrap: wrap; gap: 8px; padding: calc(10px + var(--m-top)) 12px 10px; }
+  .media-viewer-title-group { flex: 1 1 100%; }
+  .media-viewer-filename { max-width: none; }
+  .media-viewer-actions { flex: 1 1 100%; flex-wrap: wrap; justify-content: space-between; gap: 6px; }
+
+  /* Touch: tooltips never linger after a tap */
+  .tool-tooltip { display: none !important; }
+
+  /* ---------- Sign in / sign up: pitch, then the form, then the rest ---------- */
+  .auth-page {
+    display: flex; flex-direction: column; gap: 0;
+    padding: calc(12px + var(--m-top)) 16px calc(28px + var(--m-bottom));
+    background-color: var(--canvas);
+    background-image:
+      linear-gradient(to right, var(--rule) 1px, transparent 1px),
+      linear-gradient(to bottom, var(--rule) 1px, transparent 1px);
+    background-size: 32px 32px;
+  }
+  .auth-side, .auth-pitch, .auth-main { display: contents; }
+  .auth-brand { order: 1; margin-bottom: 20px; }
+  .auth-eyebrow { order: 2; margin-bottom: 8px; }
+  .auth-line { order: 3; max-width: 16ch; font-size: clamp(34px, 10.5vw, 44px); }
+  .auth-sheet { order: 4; width: 100%; margin-top: 32px; padding: 24px 0 8px; rotate: none; }
+  .auth-scribble { order: 5; align-self: center; margin-top: 16px; font-size: 22px; }
+  .auth-points { order: 6; margin: 28px 0 0; }
+  .auth-points li { font-size: 15px; }
+  .auth-board { order: 7; display: block; width: 100%; margin: 28px 0 8px; }
+  .auth-note { padding: 14px 10px 8px; }
+  .auth-note h2 { font-size: 18px; }
+  .auth-note.is-question h2 { font-size: 20px; }
+  .auth-foot { order: 8; margin-top: 20px; }
+  .auth-local { padding: 8px 20px 16px; }
+  /* Clerk's card keeps its own generous padding; give the fields the phone's width instead */
+  .auth-sheet .cl-rootBox, .auth-sheet .cl-cardBox { width: 100% !important; max-width: none !important; }
+  .auth-sheet .cl-card { padding: 8px 20px 20px !important; gap: 20px; }
+  .auth-sheet .cl-footer { padding-left: 20px; padding-right: 20px; }
+  .auth-sheet .cl-socialButtons { gap: 8px; }
+  .auth-sheet .cl-formFieldInput { min-height: 44px; font-size: 16px; }
+  .auth-sheet .cl-formButtonPrimary { min-height: 46px; font-size: 15px; }
+}
