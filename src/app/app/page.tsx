@@ -11,7 +11,6 @@ import { GraphCanvas, adoptLegacyClusterMembers, membersOf } from '@/components/
 import { useCollaboration, type PresencePeer, type RemoteChange } from '@/components/collab/useCollaboration';
 import { PresenceBar } from '@/components/collab/PresenceBar';
 import { KnowledgeViews } from '@/components/research/KnowledgeViews';
-import { NodeInspector } from '@/components/research/NodeInspector';
 import { NoteEditor } from '@/components/research/NoteEditor';
 import { CanvasToolDock, type ResearchProject, type WorkspaceSection } from '@/components/research/WorkspaceSidebar';
 import { extractYouTubeVideoId } from '@/components/research/SourceMetadata';
@@ -179,7 +178,6 @@ export default function SynthexWorkspace() {
   const [groupViewport, setGroupViewport] = useState<Viewport>({ zoom: 0.72, pan: { x: 60, y: 54 } });
   const [modal, setModal] = useState<Modal>(null);
   const [rightDrawerOpen, setRightDrawerOpen] = useState(false);
-  const [drawerTab, setDrawerTab] = useState<'inspector' | 'chat'>('inspector');
   const [exportMenu, setExportMenu] = useState(false);
   const [navMenuOpen, setNavMenuOpen] = useState(false);
   const [overflowMenuOpen, setOverflowMenuOpen] = useState(false);
@@ -226,6 +224,8 @@ export default function SynthexWorkspace() {
   }, [navMenuOpen, projectMenuOpen, exportMenu, addRecordMenuOpen, overflowMenuOpen]);
   const [composerText, setComposerText] = useState('');
   const [composerTool, setComposerTool] = useState<string | null>(null);
+  // An empty board has nothing to ask about yet, so its composer starts on a quick map.
+  const [startTool, setStartTool] = useState<string | null>('quick');
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const researchAbort = useRef<AbortController | null>(null);
   const [detachingIds, setDetachingIds] = useState<string[]>([]);
@@ -233,14 +233,11 @@ export default function SynthexWorkspace() {
   const [editorId, setEditorId] = useState<string | null>(null);
   const [keptIds, setKeptIds] = useState<string[]>([]);
   const [researching, setResearching] = useState(false);
-  const [chatInput, setChatInput] = useState('');
   const [chatBusy, setChatBusy] = useState(false);
   const [chatLines, setChatLines] = useState<ChatLine[]>([]);
   // Conversation memory lives on the server; the thread id ties this transcript to it.
   const [chatThreadId, setChatThreadId] = useState<string | null>(null);
   const [chatProjectId, setChatProjectId] = useState<string | null>(null);
-  const [chatTool, setChatTool] = useState<string | null>(null);
-  const chatInputRef = useRef<HTMLTextAreaElement>(null);
   const [activeSession, setActiveSession] = useState<ResearchSession | null>(null);
   const [reviewDecisions, setReviewDecisions] = useState<Record<string, 'accepted' | 'rejected'>>({});
   const [projectTitleDraft, setProjectTitleDraft] = useState('');
@@ -780,7 +777,6 @@ export default function SynthexWorkspace() {
           composerRef.current?.focus();
         } else if (event.key === '?' || (event.shiftKey && key === 'a')) {
           event.preventDefault();
-          setDrawerTab('chat');
           setRightDrawerOpen(true);
         }
       }
@@ -926,11 +922,6 @@ export default function SynthexWorkspace() {
     }
     return nextGraph;
   }, false);
-
-  const updateSelectedNode = (fields: Partial<CanvasNode>) => {
-    if (!selectedNode) return;
-    updateGraph(current => updateNode(current, selectedNode.id, withAutoTitle(current.nodesById[selectedNode.id], fields)), false);
-  };
 
   const reloadGraph = useCallback(async () => {
     const data = await readJson<{ nodes: CanvasNode[]; relationships: Connection[] }>(await fetch(`/api/graph?projectId=${encodeURIComponent(projectId)}`, { cache: 'no-store' }));
@@ -1210,20 +1201,13 @@ export default function SynthexWorkspace() {
     }
   }, [projectId, aiStatus, reloadHistory, announce]);
 
-  async function sendQuestion(text: string, toolId: string | null) {
+  async function sendQuestion(text: string) {
     const question = text.trim();
     if (!question || chatBusy) return;
+    if (!aiConfigured) { announce('AI is not set up on this server yet. Add OPENAI_API_KEY or GEMINI_API_KEY to ask about your map.'); return; }
 
-    if (toolId === 'quick' || toolId === 'deep') {
-      const mode = toolId;
-      setChatTool(null);
-      setChatInput('');
-      setChatLines(current => [...current, { role: 'user', text: question }]);
-      await executeStreamingResearch(question, mode);
-      return;
-    }
-
-    setChatInput('');
+    setRightDrawerOpen(true);
+    setComposerText('');
     setChatLines(current => [...current, { role: 'user', text: question }]);
     setChatBusy(true);
     setThinkingStep('Retrieving knowledge graph context & semantic paths...');
@@ -1577,9 +1561,9 @@ export default function SynthexWorkspace() {
 
     if (toolType === 'deep_research' || toolType === 'quick_research') {
       const mode = toolType === 'deep_research' ? 'deep' : 'quick';
-      setChatTool(mode);
+      setComposerTool(mode);
       setTimeout(() => {
-        chatInputRef.current?.focus();
+        composerRef.current?.focus();
       }, 50);
       announce(`Entered ${mode === 'deep' ? 'Deep' : 'Quick'} Research mode. Type your question in the chat input to begin.`);
       return;
@@ -1766,29 +1750,36 @@ export default function SynthexWorkspace() {
 
   const hasMapNodes = Object.keys(displayGraph.nodesById).length > 0;
   const selectedTitle = selectedNode?.title;
+  const hasChat = chatLines.length > 0;
   const credits = (amount: number) => plural(amount, 'credit');
 
-  // Tools behind the paperclip (or `/`) on the board composer: they grow the map.
+  // Tools behind the paperclip (or `/`). A plain message asks about the map; research only runs when picked.
   const composerTools = useMemo<ComposerTool[]>(() => [
-    { id: 'quick', command: 'quick', label: 'Quick map', hint: 'A fast first pass with web sources', cost: credits(CREDIT_RATES.quick_research), sticky: true },
-    { id: 'deep', command: 'deep', label: 'Deep research', hint: 'Several rounds of search for a fuller map', cost: credits(CREDIT_RATES.deep_research), sticky: true },
+    { id: 'quick', command: 'quick', label: 'Quick research', hint: 'Search the web and draft cards to review', cost: credits(CREDIT_RATES.quick_research), sticky: true },
+    { id: 'deep', command: 'deep', label: 'Deep research', hint: 'Several rounds of search, more sources', cost: credits(CREDIT_RATES.deep_research), sticky: true },
     ...(selectedTitle ? [
       { id: 'expand', command: 'expand', label: 'Expand this idea', hint: 'Sub-ideas, mechanisms and examples', cost: credits(CREDIT_RATES.quick_research) },
       { id: 'sources', command: 'sources', label: 'Find sources', hint: 'Sources that support or dispute it', cost: credits(CREDIT_RATES.quick_research) },
       { id: 'challenge', command: 'challenge', label: 'Challenge it', hint: 'Evidence and arguments against it', cost: credits(CREDIT_RATES.quick_research) }
     ] : []),
     { id: 'note', command: 'note', label: 'Write a note', hint: 'Pin what you typed as a note, no AI', cost: 'Free' },
-    ...(hasMapNodes ? [{ id: 'audit', command: 'audit', label: 'Audit my map', hint: 'Gaps, loose ideas and unverified claims', cost: 'Free' }] : [])
-  ], [selectedTitle, hasMapNodes]);
+    ...(hasMapNodes ? [
+      { id: 'audit', command: 'audit', label: 'Audit my map', hint: 'Gaps, loose ideas and unverified claims', cost: 'Free' },
+      { id: 'tidy', command: 'tidy', label: 'Tidy the layout', hint: 'Group cards by type. Undo with Ctrl+Z', cost: 'Free' }
+    ] : []),
+    ...(hasChat ? [
+      { id: 'chat', command: 'chat', label: 'Show the chat', hint: 'Open the conversation so far', cost: 'Free' },
+      { id: 'new', command: 'new', label: 'New chat', hint: 'Start over with an empty conversation', cost: 'Free' }
+    ] : [])
+  ], [selectedTitle, hasMapNodes, hasChat]);
 
-  // Tools behind the paperclip (or `/`) in Ask AI.
-  const chatTools = useMemo<ComposerTool[]>(() => [
-    { id: 'quick', command: 'quick', label: 'Quick research', hint: 'Search the web and draft cards to review', cost: credits(CREDIT_RATES.quick_research), sticky: true },
-    { id: 'deep', command: 'deep', label: 'Deep research', hint: 'Several rounds of search, more sources', cost: credits(CREDIT_RATES.deep_research), sticky: true },
-    { id: 'audit', command: 'audit', label: 'Audit my map', hint: 'Gaps, loose ideas and unverified claims', cost: 'Free' },
-    { id: 'tidy', command: 'tidy', label: 'Tidy the layout', hint: 'Group cards by type. Undo with Ctrl+Z', cost: 'Free' },
-    { id: 'new', command: 'new', label: 'New chat', hint: 'Start over with an empty conversation', cost: 'Free' }
-  ], []);
+  function submitComposer(text: string, toolId: string | null) {
+    if (toolId === 'quick' || toolId === 'deep') {
+      buildMap(selectedTitle ? `${text} (about "${selectedTitle}")` : text, toolId);
+      return;
+    }
+    void sendQuestion(text);
+  }
 
   function runComposerTool(toolId: string, text: string) {
     const focus = text ? ` Focus on: ${text}` : '';
@@ -1796,13 +1787,10 @@ export default function SynthexWorkspace() {
     else if (toolId === 'sources' && selectedTitle) buildMap(`Find authoritative sources that support or dispute: "${selectedTitle}".${focus}`);
     else if (toolId === 'challenge' && selectedTitle) buildMap(`What evidence or arguments challenge "${selectedTitle}"?${focus}`);
     else if (toolId === 'note') { setComposerText(''); addRecord('note', text ? { content: text } : undefined); }
-    else if (toolId === 'audit') { setDrawerTab('chat'); setRightDrawerOpen(true); void executeToolDirectly('recommend_improvements'); }
-  }
-
-  function runChatTool(toolId: string) {
-    if (toolId === 'audit') void executeToolDirectly('recommend_improvements');
+    else if (toolId === 'audit') { setRightDrawerOpen(true); void executeToolDirectly('recommend_improvements'); }
     else if (toolId === 'tidy') handleApplyLayout(computeOrganizedLayout(graphRef.current, 'cluster_by_type'));
-    else if (toolId === 'new') startNewChat();
+    else if (toolId === 'chat') setRightDrawerOpen(true);
+    else if (toolId === 'new') { startNewChat(); setRightDrawerOpen(true); }
   }
 
   const liveProgress = researching ? chatLines[chatLines.length - 1]?.researchProgress : undefined;
@@ -1955,7 +1943,7 @@ export default function SynthexWorkspace() {
           </div>
 
           <div className="topbar-actions">
-            {/* Phones: one "…" menu holds search, undo/redo, Ask AI, Share and the other views */}
+            {/* Phones: one "…" menu holds search, undo/redo, Share and the other views */}
             <div className="menu-anchor topbar-overflow" ref={overflowMenuRef}>
               <button type="button" className="icon-button" aria-label="More actions" aria-expanded={overflowMenuOpen} onClick={() => { setOverflowMenuOpen(v => !v); setNavMenuOpen(false); setProjectMenuOpen(false); setExportMenu(false); }}><MoreHorizontal size={20} strokeWidth={1.75} /></button>
               {overflowMenuOpen && (
@@ -1963,7 +1951,6 @@ export default function SynthexWorkspace() {
                   <button type="button" role="menuitem" onClick={() => { setOverflowMenuOpen(false); setModal('search'); }}><strong>Search</strong></button>
                   <button type="button" role="menuitem" disabled={!undoReady} onClick={() => { undo(); setOverflowMenuOpen(false); }}><strong>Undo</strong></button>
                   <button type="button" role="menuitem" disabled={!redoReady} onClick={() => { redo(); setOverflowMenuOpen(false); }}><strong>Redo</strong></button>
-                  <button type="button" role="menuitem" onClick={() => { setOverflowMenuOpen(false); setDrawerTab('chat'); setRightDrawerOpen(true); }}><strong>Ask AI</strong></button>
                   <button type="button" role="menuitem" onClick={() => { setOverflowMenuOpen(false); setExportMenu(true); }}><strong>Share</strong></button>
                   <button type="button" role="menuitem" onClick={() => { setOverflowMenuOpen(false); setModal('credits'); }}><strong>Credits</strong></button>
                   <div className="menu-separator" />
@@ -1976,14 +1963,6 @@ export default function SynthexWorkspace() {
             <button type="button" className="icon-button" aria-label="Search the map" title="Search (Ctrl+K)" onClick={() => setModal('search')}><Search size={18} strokeWidth={1.75} /></button>
             <button type="button" className="icon-button" title="Undo (Ctrl+Z)" aria-label="Undo" disabled={!undoReady} onClick={undo}><Undo2 size={18} strokeWidth={1.75} /></button>
             <button type="button" className="icon-button" title="Redo (Ctrl+Y)" aria-label="Redo" disabled={!redoReady} onClick={redo}><Redo2 size={18} strokeWidth={1.75} /></button>
-            <button
-              type="button"
-              className={`text-button ask-button ${rightDrawerOpen && drawerTab === 'chat' ? 'is-active' : ''}`}
-              title="Ask questions about this map"
-              onClick={() => { if (rightDrawerOpen && drawerTab === 'chat') setRightDrawerOpen(false); else { setDrawerTab('chat'); setRightDrawerOpen(true); } }}
-            >
-              Ask AI
-            </button>
             <div className="menu-anchor" ref={exportMenuRef}>
               <button type="button" className="ink-button share-button" aria-expanded={exportMenu} onClick={() => { setExportMenu(v => !v); setNavMenuOpen(false); setProjectMenuOpen(false); }}>
                 <Share size={17} /><span>Share</span>
@@ -2036,14 +2015,15 @@ export default function SynthexWorkspace() {
                         menuPlacement="below"
                         value={composerText}
                         onValueChange={setComposerText}
-                        onSubmit={(text, toolId) => buildMap(text, toolId === 'deep' ? 'deep' : 'quick')}
+                        onSubmit={submitComposer}
                         tools={composerTools}
-                        activeToolId={composerTool}
-                        onActiveToolChange={setComposerTool}
+                        activeToolId={startTool}
+                        onActiveToolChange={setStartTool}
                         onRunTool={runComposerTool}
                         inputRef={element => { composerRef.current = element; }}
                         maxLength={500}
                         placeholder="How does sleep affect memory? Type / for tools"
+                        busy={chatBusy}
                         sendLabel="Build map"
                         autoFocus
                       />
@@ -2109,14 +2089,15 @@ export default function SynthexWorkspace() {
                       inputLabel="Ask to grow the map"
                       value={composerText}
                       onValueChange={setComposerText}
-                      onSubmit={(text, toolId) => buildMap(selectedTitle ? `${text} (about "${selectedTitle}")` : text, toolId === 'deep' ? 'deep' : 'quick')}
+                      onSubmit={submitComposer}
+                      busy={chatBusy}
                       tools={composerTools}
                       activeToolId={composerTool}
                       onActiveToolChange={setComposerTool}
                       onRunTool={runComposerTool}
                       inputRef={element => { composerRef.current = element; }}
                       maxLength={400}
-                      placeholder={selectedTitle ? `Ask about “${selectedTitle.slice(0, 32)}”` : 'Ask a question to grow the map, or type /'}
+                      placeholder={selectedTitle ? `Ask about “${selectedTitle.slice(0, 32)}”, or type /` : 'Ask about your map, or type /'}
                       sendLabel="Grow the map"
                     />
                   )
@@ -2135,71 +2116,17 @@ export default function SynthexWorkspace() {
                 />
               )}
 
-              <aside className={`workspace-drawer ${rightDrawerOpen ? 'is-open' : ''}`} aria-label="Details and Ask AI">
+              <aside className={`workspace-drawer ${rightDrawerOpen ? 'is-open' : ''}`} aria-label="Chat about your map">
                 <div className="drawer-header">
-                  <div className="drawer-tabs" role="tablist">
-                    <button
-                      role="tab"
-                      aria-selected={drawerTab === 'inspector'}
-                      className={`drawer-tab ${drawerTab === 'inspector' ? 'active' : ''}`}
-                      onClick={() => setDrawerTab('inspector')}
-                    >
-                      Properties{selectedIds.length > 0 && ` (${selectedIds.length})`}
-                    </button>
-                    <button
-                      role="tab"
-                      aria-selected={drawerTab === 'chat'}
-                      className={`drawer-tab ${drawerTab === 'chat' ? 'active' : ''}`}
-                      onClick={() => setDrawerTab('chat')}
-                    >
-                      Ask AI
-                    </button>
+                  <div className="drawer-tabs">
+                    <h2 className="drawer-tab active">Chat</h2>
                   </div>
-                  <button className="icon-button close-drawer-btn" aria-label="Close panel" onClick={() => { setRightDrawerOpen(false); setSelectedIds([]); }}>
+                  <button className="icon-button close-drawer-btn" aria-label="Close chat" onClick={() => setRightDrawerOpen(false)}>
                     <X size={15} />
                   </button>
                 </div>
 
                 <div className="drawer-body">
-                  {drawerTab === 'inspector' ? (
-                    selectedNode ? (
-                      <NodeInspector
-                        hideHeader
-                        floating={false}
-                        node={selectedNode}
-                        relationshipCount={edges.filter(edge => edge.from === selectedNode.id || edge.to === selectedNode.id).length}
-                        onUpdate={updateSelectedNode}
-                        onDelete={() => { deleteSelected(); setRightDrawerOpen(false); }}
-                        onClose={() => { setSelectedIds([]); setRightDrawerOpen(false); }}
-                        projectId={projectId}
-                        allNodes={nodes}
-                      />
-                    ) : selectedIds.length > 1 ? (
-                      <div className="drawer-state">
-                        <h3>{plural(selectedIds.length, 'idea')} selected</h3>
-                        <p>Drag any of them to move them together.</p>
-                        <button
-                          className="text-button danger-text"
-                          title="Remove from map (Delete / Backspace)"
-                          onClick={() => {
-                            deleteSelected();
-                            setRightDrawerOpen(false);
-                          }}
-                        >
-                          Remove from map
-                        </button>
-                      </div>
-                    ) : (
-                      <div className="drawer-state">
-                        <p>Nothing selected. Click a note to see its details.</p>
-                        <div className="drawer-state-actions">
-                          <button className="line-button" onClick={() => addRecord('concept')}><Plus size={16} strokeWidth={1.75} /> Add an idea</button>
-                          <button className="line-button" onClick={() => addRecord('claim')}><Plus size={16} strokeWidth={1.75} /> Add a claim</button>
-                          <button className="text-button" onClick={() => setDrawerTab('chat')}>Ask AI</button>
-                        </div>
-                      </div>
-                    )
-                  ) : (
                     <div className="drawer-chat-pane">
                       <div className="chat-scope chat-scope-row">
                         <p className="note-meta">
@@ -2221,7 +2148,7 @@ export default function SynthexWorkspace() {
                             <p>
                               {selectedNode
                                 ? 'Ask for evidence, counterarguments or related ideas.'
-                                : 'Ask anything about what’s on your map. To grow the map, use the composer on the board.'}
+                                : 'Ask anything about what’s on your map in the box at the bottom of the board. Type / there for research and other tools.'}
                             </p>
                             <button type="button" className="line-button" onClick={() => executeToolDirectly('recommend_improvements')}>
                               Audit my map
@@ -2282,33 +2209,7 @@ export default function SynthexWorkspace() {
                         )}
                       </div>
 
-                      <div className="chat-compose-wrapper">
-                        <ToolComposer
-                          className="chat-compose-box"
-                          inputId="chat-question"
-                          inputLabel="Ask a question about your map"
-                          value={chatInput}
-                          onValueChange={setChatInput}
-                          onSubmit={(text, toolId) => { void sendQuestion(text, toolId); }}
-                          tools={chatTools}
-                          activeToolId={chatTool}
-                          onActiveToolChange={setChatTool}
-                          onRunTool={runChatTool}
-                          inputRef={element => { chatInputRef.current = element; }}
-                          maxLength={2000}
-                          disabled={!aiConfigured || chatBusy}
-                          placeholder={
-                            chatTool
-                              ? 'What should it look into?'
-                              : selectedTitle
-                                ? `Ask about “${selectedTitle.slice(0, 18)}”`
-                                : 'Ask anything, or type /'
-                          }
-                          sendLabel="Send question"
-                        />
-                      </div>
                     </div>
-                  )}
                 </div>
               </aside>
             </div>

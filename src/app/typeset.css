@@ -284,7 +284,6 @@ body { font-size: 14px; }
 .topbar-actions { display: flex; align-items: center; gap: 2px; }
 .topbar-actions .icon-button { width: 40px; height: 40px; border-radius: 2px; color: var(--muted); }
 .topbar-actions .icon-button:hover:not(:disabled) { color: var(--ink); background: rgba(17, 18, 20, .05); }
-.ask-button.is-active { color: var(--ink); box-shadow: inset 0 -2px 0 var(--ink); }
 .share-button { min-height: 40px; margin: 0 6px 0 4px; padding: 0 16px; font-size: 14px; }
 
 .views-menu, .share-panel { border-radius: 2px !important; border-color: var(--line-strong) !important; box-shadow: 0 22px 44px -22px rgba(17, 18, 20, .45) !important; }
@@ -408,7 +407,6 @@ a:hover > .synthex-logo .synthex-mark, button:hover > .synthex-logo .synthex-mar
 .chat-thinking { display: flex; align-items: center; gap: 10px; margin: 0; color: var(--muted); font-size: 13.5px; font-weight: 600; }
 .chat-thinking::before { content: ""; flex: none; }
 
-.workspace-drawer .chat-compose-wrapper { padding: 12px 16px 16px; border-top: 1px solid var(--line); background: #fff; }
 
 /* ---------- Ask AI cards: hairline sections, no icon tiles ---------- */
 .ai-card { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
@@ -879,7 +877,7 @@ button.view-row:hover { background: var(--canvas); }
 @media (max-width: 760px) {
   .canvas-main .workspace-topbar, .workspace-topbar { gap: 4px; height: 52px; padding: 0 4px 0 6px; }
   .topbar-slash, .topbar-save, .topbar-center .menu-anchor,
-  .topbar-actions > .icon-button, .topbar-actions > .ask-button, .topbar-actions .share-button, .topbar-actions .user-nav .credits-button { display: none !important; }
+  .topbar-actions > .icon-button, .topbar-actions .share-button, .topbar-actions .user-nav .credits-button { display: none !important; }
   .topbar-overflow { display: block; }
   .topbar-left { min-width: 0; flex: 1 1 auto; }
   .topbar-home-button .synthex-wordmark { display: none; }
@@ -1078,6 +1076,10 @@ a.ink-button, a.ink-button:hover { color: #fff; text-decoration: none; }
 .review-actions .ink-button, .review-actions .ink-button:hover { border: 0; background: var(--ink); color: #fff; }
 @media (max-width: 760px) {
   .workspace-shell:has(.workspace-drawer.is-open) .canvas-tool-dock { display: none !important; }
+  /* The chat panel stops above the composer, which stays the place to ask follow-ups */
+  .workspace-drawer { bottom: 80px; }
+  .canvas-and-inspector:has(.workspace-drawer.is-open) .dock-composer { z-index: 26; }
+  .canvas-and-inspector.layout-map:has(.workspace-drawer.is-open) .dock-composer { left: 50%; width: calc(100% - 24px); min-width: 0; max-width: none; }
 }
 
 /* ---------- Clusters: a pen loop drawn round the notes, titled on a strip of masking tape ---------- */

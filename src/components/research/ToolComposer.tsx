@@ -29,6 +29,8 @@ type ToolComposerProps = {
   sendLabel: string;
   inputRef?: (element: HTMLTextAreaElement | null) => void;
   disabled?: boolean;
+  /** Still accepts typing, but nothing is sent until the current answer is done. */
+  busy?: boolean;
   maxLength?: number;
   autoFocus?: boolean;
   size?: 'large' | 'regular';
@@ -41,7 +43,7 @@ const SLASH_PREFIX = /^\/(\S+)\s+([\s\S]*)$/;
 
 export function ToolComposer({
   inputId, inputLabel, value, onValueChange, onSubmit, tools, activeToolId, onActiveToolChange, onRunTool,
-  placeholder, sendLabel, inputRef, disabled = false, maxLength, autoFocus, size = 'regular', menuPlacement = 'above', className = ''
+  placeholder, sendLabel, inputRef, disabled = false, busy = false, maxLength, autoFocus, size = 'regular', menuPlacement = 'above', className = ''
 }: ToolComposerProps) {
   const formRef = useRef<HTMLFormElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -105,7 +107,7 @@ export function ToolComposer({
   };
 
   const submit = () => {
-    if (disabled) return;
+    if (disabled || busy) return;
     let text = value.trim();
     let toolId = activeToolId;
     // `/deep how does sleep work` sends with the tool without picking it from the menu first.
@@ -161,7 +163,7 @@ export function ToolComposer({
     }
   };
 
-  const canSend = !disabled && value.trim().length > 0 && !SLASH_QUERY.test(value.trim());
+  const canSend = !disabled && !busy && value.trim().length > 0 && !SLASH_QUERY.test(value.trim());
 
   return (
     <form
