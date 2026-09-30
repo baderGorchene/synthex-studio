@@ -126,6 +126,9 @@ const STARTERS = [
 
 export default function SynthexWorkspace() {
   const [projects, setProjects] = useState<ResearchProject[]>([]);
+  // The active workspace (personal or a team) decides which maps are listed; personal maps can be brought into a team.
+  const [workspaceKind, setWorkspaceKind] = useState<'personal' | 'team'>('personal');
+  const [personalProjects, setPersonalProjects] = useState<ResearchProject[]>([]);
   const [projectId, setProjectId] = useState<string>(() => {
     if (typeof window !== 'undefined') {
       return localStorage.getItem('synthex_active_project_id') || '';
@@ -383,24 +386,46 @@ export default function SynthexWorkspace() {
     }
   }, [announce]);
 
+  const loadProjects = useCallback(async () => {
+    try {
+      const data = await readJson<{ projects: ResearchProject[]; personalProjects?: ResearchProject[]; workspace?: { kind: 'personal' | 'team' } }>(
+        await fetch('/api/projects', { cache: 'no-store' })
+      );
+      setProjects(data.projects);
+      setPersonalProjects(data.personalProjects || []);
+      setWorkspaceKind(data.workspace?.kind === 'team' ? 'team' : 'personal');
+      if (data.projects.length > 0) {
+        // Keep the open map if it belongs to this workspace, otherwise open the workspace's first map.
+        const stored = typeof window !== 'undefined' ? localStorage.getItem('synthex_active_project_id') : null;
+        const matching = data.projects.find(p => p.id === stored);
+        const nextId = matching ? matching.id : data.projects[0].id;
+        setProjectId(nextId);
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('synthex_active_project_id', nextId);
+        }
+      }
+    } catch (error) {
+      announce(error instanceof Error ? error.message : 'Could not load projects.');
+    }
+  }, [announce]);
+
+  const moveProject = useCallback(async (id: string, workspace: 'team' | 'personal') => {
+    try {
+      await readJson(await fetch('/api/projects', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId: id, workspace })
+      }));
+      if (workspace === 'team' && typeof window !== 'undefined') localStorage.setItem('synthex_active_project_id', id);
+      await loadProjects();
+      announce(workspace === 'team' ? 'Map moved into the team. Everyone in the team can open it now.' : 'Map moved back to your personal workspace.');
+    } catch (error) {
+      announce(error instanceof Error ? error.message : 'Could not move that map.');
+    }
+  }, [announce, loadProjects]);
+
   useEffect(() => {
     let cancelled = false;
-    fetch('/api/projects', { cache: 'no-store' })
-      .then(response => readJson<{ projects: ResearchProject[] }>(response))
-      .then(data => {
-        if (cancelled) return;
-        setProjects(data.projects);
-        if (data.projects.length > 0) {
-          const stored = typeof window !== 'undefined' ? localStorage.getItem('synthex_active_project_id') : null;
-          const matching = data.projects.find(p => p.id === stored);
-          const nextId = matching ? matching.id : data.projects[0].id;
-          setProjectId(nextId);
-          if (typeof window !== 'undefined') {
-            localStorage.setItem('synthex_active_project_id', nextId);
-          }
-        }
-      })
-      .catch(error => announce(error instanceof Error ? error.message : 'Could not load projects.'));
+    void loadProjects();
     fetch('/api/ai/status', { cache: 'no-store' })
       .then(response => response.json())
       .then((data: AIStatus) => {
@@ -422,7 +447,7 @@ export default function SynthexWorkspace() {
       })
       .catch(() => { });
     return () => { cancelled = true; };
-  }, [announce]);
+  }, [announce, loadProjects]);
 
   useEffect(() => {
     if (projectId && projects.length) void loadProject(projectId);
@@ -1652,26 +1677,45 @@ export default function SynthexWorkspace() {
               </button>
               {projectMenuOpen && (
                 <div className="menu-popover topbar-project-menu map-menu">
-                  <div className="map-menu-list" role="menu" aria-label="Your maps">
+                  <p className="map-menu-title">{workspaceKind === 'team' ? 'Team maps' : 'Your maps'}</p>
+                  <div className="map-menu-list" role="menu" aria-label={workspaceKind === 'team' ? 'Team maps' : 'Your maps'}>
                     {projects.map(p => (
-                      <button
-                        key={p.id}
-                        role="menuitemradio"
-                        aria-checked={p.id === projectId}
-                        className={p.id === projectId ? 'is-active' : ''}
-                        onClick={() => {
-                          setProjectId(p.id);
-                          if (typeof window !== 'undefined') {
-                            localStorage.setItem('synthex_active_project_id', p.id);
-                          }
-                          setProjectMenuOpen(false);
-                        }}
-                      >
-                        <strong>{p.title}</strong>
-                        {p.id === projectId && <Check size={16} strokeWidth={1.75} />}
-                      </button>
+                      <div key={p.id} className="map-menu-row">
+                        <button
+                          role="menuitemradio"
+                          aria-checked={p.id === projectId}
+                          className={p.id === projectId ? 'is-active' : ''}
+                          onClick={() => {
+                            setProjectId(p.id);
+                            if (typeof window !== 'undefined') {
+                              localStorage.setItem('synthex_active_project_id', p.id);
+                            }
+                            setProjectMenuOpen(false);
+                          }}
+                        >
+                          <strong>{p.title}</strong>
+                          {p.id === projectId && <Check size={16} strokeWidth={1.75} />}
+                        </button>
+                        {workspaceKind === 'team' && p.isOwner && (
+                          <button type="button" className="text-button map-menu-move" title="Only you will see it again; teammates lose access" onClick={() => void moveProject(p.id, 'personal')}>Make personal</button>
+                        )}
+                      </div>
                     ))}
                   </div>
+                  {workspaceKind === 'team' && personalProjects.length > 0 && (
+                    <div className="map-menu-personal">
+                      <p className="map-menu-title">Your personal maps</p>
+                      <p className="note-meta">Move one into the team so everyone here can open and edit it.</p>
+                      <ul>
+                        {personalProjects.map(p => (
+                          <li key={p.id}>
+                            <span>{p.title}</span>
+                            <button type="button" className="line-button" onClick={() => void moveProject(p.id, 'team')}>Move to team</button>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
                   <form className="map-menu-new" onSubmit={createProject}>
                     <p className="map-menu-title">New map</p>
                     <label className="field-label" htmlFor="project-name">Name</label>
@@ -1783,7 +1827,7 @@ export default function SynthexWorkspace() {
                 </div>
               )}
             </div>
-            <UserNav contextCredits={userAuth?.contextCredits} subscriptionTier={userAuth?.subscriptionTier} onOpenCreditsModal={() => setModal('credits')} />
+            <UserNav contextCredits={userAuth?.contextCredits} subscriptionTier={userAuth?.subscriptionTier} onOpenCreditsModal={() => setModal('credits')} onWorkspaceChange={() => void loadProjects()} />
           </div>
           <input ref={fileRef} type="file" accept="application/json,.json" hidden onChange={handleImport} />
           <input ref={bibRef} type="file" accept=".bib,.txt" hidden onChange={handleBibImport} />

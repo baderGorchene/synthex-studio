@@ -22,6 +22,7 @@ import { addNode, addRelationship, normalizeGraph } from './graph.ts';
 import {
   isNeonConfigured,
   neonGetProjects,
+  neonMoveProjectToWorkspace,
   neonProjectExists,
   neonUserHasProjectAccess,
   neonCreateProject,
@@ -735,6 +736,10 @@ export interface ResearchProject {
   organizationId?: string | null;
 }
 
+/**
+ * Maps in the active workspace. With a team (org) active: the team's maps only. Without one: the user's
+ * personal maps only (never maps they created inside a team), so switching workspace switches the list.
+ */
 export function getProjectsFromDb(
   userId?: string | null,
   orgId?: string | null,
@@ -744,29 +749,44 @@ export function getProjectsFromDb(
     return neonGetProjects(userId, orgId, clerkId);
   }
   const db = getDatabase();
-  if (userId || orgId || clerkId) {
-    const conditions: string[] = [];
-    const params: string[] = [];
-    if (userId) {
-      conditions.push('userId = ?');
-      params.push(userId);
-    }
-    if (clerkId) {
-      conditions.push('userId = ?');
-      params.push(clerkId);
-    }
-    if (orgId) {
-      conditions.push('organizationId = ?');
-      params.push(orgId);
-    }
+  if (orgId) {
     return db.prepare(`
       SELECT id, title, createdAt, userId, organizationId
       FROM projects
-      WHERE ${conditions.join(' OR ')}
+      WHERE organizationId = ?
       ORDER BY createdAt ASC
-    `).all(...params) as ResearchProject[];
+    `).all(orgId) as ResearchProject[];
   }
-  return [];
+  const owners = [userId, clerkId].filter((value): value is string => Boolean(value));
+  if (!owners.length) return [];
+  return db.prepare(`
+    SELECT id, title, createdAt, userId, organizationId
+    FROM projects
+    WHERE organizationId IS NULL AND userId IN (${owners.map(() => '?').join(', ')})
+    ORDER BY createdAt ASC
+  `).all(...owners) as ResearchProject[];
+}
+
+/**
+ * Moves a map the user created between their personal workspace (orgId null) and a team.
+ * Only the map's creator may move it. Returns false when the map isn't theirs.
+ */
+export function moveProjectToWorkspace(
+  id: string,
+  orgId: string | null,
+  userId?: string | null,
+  clerkId?: string | null
+): boolean | Promise<boolean> {
+  if (isNeonConfigured()) {
+    return neonMoveProjectToWorkspace(id, orgId, userId, clerkId);
+  }
+  const owners = [userId, clerkId].filter((value): value is string => Boolean(value));
+  if (!owners.length) return false;
+  const result = getDatabase().prepare(`
+    UPDATE projects SET organizationId = ?
+    WHERE id = ? AND userId IN (${owners.map(() => '?').join(', ')})
+  `).run(orgId, id, ...owners);
+  return result.changes > 0;
 }
 
 export function projectExistsInDb(id: string): boolean | Promise<boolean> {

@@ -10,6 +10,9 @@ export interface ResearchProject {
   id: string;
   title: string;
   createdAt: number;
+  organizationId?: string | null;
+  /** The signed-in user created this map, so they may move it between workspaces. */
+  isOwner?: boolean;
 }
 
 export type WorkspaceSection = 'canvas' | 'outline' | 'evidence' | 'table' | 'sources' | 'questions' | 'history' | 'revisions';

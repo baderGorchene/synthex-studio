@@ -251,3 +251,17 @@ h1, h2, h3 { font-family: var(--font-hand); font-weight: 700; letter-spacing: 0;
   .workspace-drawer p.chat-line.user { rotate: none; }
   .group-drop-hint { animation: none; }
 }
+
+/* ---------- Map menu: team vs personal maps ---------- */
+.topbar-project-menu > .map-menu-title { padding: 10px 10px 4px; font-family: var(--font-hand); font-size: 22px; font-weight: 700; }
+.map-menu-row { display: flex; align-items: center; gap: 4px; }
+.map-menu-row > button[role="menuitemradio"] { flex: 1; min-width: 0; }
+.map-menu-list .map-menu-row .map-menu-move { flex: none; min-height: 32px; padding: 0 8px !important; color: var(--faint); font-size: 12.5px; white-space: nowrap; }
+.map-menu-list .map-menu-row .map-menu-move:hover { color: var(--ink); background: transparent !important; }
+.map-menu-personal { margin-top: 6px; padding: 12px 10px 4px; border-top: 1px dashed var(--line-strong); }
+.map-menu-personal .map-menu-title { font-family: var(--font-hand); font-size: 20px; font-weight: 700; }
+.map-menu-personal .note-meta { margin: 2px 0 8px; }
+.map-menu-personal ul { display: flex; flex-direction: column; gap: 6px; max-height: 180px; margin: 0; padding: 0; overflow-y: auto; list-style: none; }
+.map-menu-personal li { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.map-menu-personal li span { overflow: hidden; font-size: 14px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.map-menu-personal .line-button { flex: none; min-height: 32px; font-size: 12.5px; }

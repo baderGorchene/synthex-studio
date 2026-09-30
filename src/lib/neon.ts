@@ -248,24 +248,55 @@ export async function neonGetProjects(
 ): Promise<ResearchProject[]> {
   await ensureNeonSchema();
   const sql = getSql();
-  if (userId || orgId || clerkId) {
-    const rows = await sql`
+  // Team active: the team's maps. Otherwise: the user's personal maps (not the ones they made inside a team).
+  let rows;
+  if (orgId) {
+    rows = await sql`
       SELECT id, title, user_id, organization_id, created_at
       FROM projects
-      WHERE (${userId || null}::varchar IS NOT NULL AND user_id = ${userId || null})
-         OR (${clerkId || null}::varchar IS NOT NULL AND user_id = ${clerkId || null})
-         OR (${orgId || null}::varchar IS NOT NULL AND organization_id = ${orgId || null})
+      WHERE organization_id = ${orgId}
       ORDER BY created_at ASC
     `;
-    return rows.map(r => ({
-      id: String(r.id),
-      title: String(r.title),
-      userId: r.user_id ? String(r.user_id) : null,
-      organizationId: r.organization_id ? String(r.organization_id) : null,
-      createdAt: Number(r.created_at)
-    }));
+  } else if (userId || clerkId) {
+    rows = await sql`
+      SELECT id, title, user_id, organization_id, created_at
+      FROM projects
+      WHERE organization_id IS NULL AND (
+        (${userId || null}::varchar IS NOT NULL AND user_id = ${userId || null}) OR
+        (${clerkId || null}::varchar IS NOT NULL AND user_id = ${clerkId || null})
+      )
+      ORDER BY created_at ASC
+    `;
+  } else {
+    return [];
   }
-  return [];
+  return rows.map(r => ({
+    id: String(r.id),
+    title: String(r.title),
+    userId: r.user_id ? String(r.user_id) : null,
+    organizationId: r.organization_id ? String(r.organization_id) : null,
+    createdAt: Number(r.created_at)
+  }));
+}
+
+export async function neonMoveProjectToWorkspace(
+  id: string,
+  orgId: string | null,
+  userId?: string | null,
+  clerkId?: string | null
+): Promise<boolean> {
+  await ensureNeonSchema();
+  const sql = getSql();
+  if (!userId && !clerkId) return false;
+  const rows = await sql`
+    UPDATE projects SET organization_id = ${orgId}
+    WHERE id = ${id} AND (
+      (${userId || null}::varchar IS NOT NULL AND user_id = ${userId || null}) OR
+      (${clerkId || null}::varchar IS NOT NULL AND user_id = ${clerkId || null})
+    )
+    RETURNING id
+  `;
+  return rows.length > 0;
 }
 
 export async function neonProjectExists(id: string): Promise<boolean> {
