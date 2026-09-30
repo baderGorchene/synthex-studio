@@ -131,9 +131,6 @@ export function BaseKnowledgeCard({
           <Pencil size={14} strokeWidth={1.75} /><span>Edit</span>
         </button>
       )}
-      {node.type === 'note' && <div className="knowledge-card-topline">
-        <button className={`note-mode-toggle ${isEditing ? 'is-editing' : ''}`} aria-label={isEditing ? 'Finish editing note' : 'Edit note'} title={isEditing ? 'Finish editing note' : 'Edit note'} onPointerDown={event => event.stopPropagation()} onClick={event => { event.stopPropagation(); onToggleEdit(); }}>{isEditing ? <Check size={13} /> : <Pencil size={12} />}<span>{isEditing ? 'Done' : 'Edit'}</span></button>
-      </div>}
       <h2>{node.title}</h2>
 
       <div className={`knowledge-card-body-scroll ${node.height ? 'has-custom-height' : ''}`}>

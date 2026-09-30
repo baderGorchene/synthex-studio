@@ -197,11 +197,6 @@ kbd {
   position: relative;
 }
 
-.dock-add-btn.active .tool-tooltip,
-.dock-add-record:has(.dock-add-record-menu) .tool-tooltip {
-  display: none !important;
-}
-
 .dock-add-record-menu {
   position: absolute;
   left: calc(100% + 12px);
@@ -223,11 +218,6 @@ kbd {
 
 .dock-organize-record {
   position: relative;
-}
-
-.dock-organize-btn.active .tool-tooltip,
-.dock-organize-record:has(.dock-organize-menu) .tool-tooltip {
-  display: none !important;
 }
 
 .dock-organize-menu {
@@ -2187,8 +2177,6 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .canvas-tool-dock .sidebar-tool-row { flex-direction: column; gap: 2px; }
 .canvas-tool-dock .sidebar-tool-button { width: 36px; height: 34px; color: #111214; }
 .canvas-tool-dock .sidebar-tool-button:hover, .canvas-tool-dock .sidebar-tool-button.active { border-color: #D9D9D4; color: #111214; background: #D9D9D4; }
-.canvas-tool-dock .tool-tooltip { position: absolute; z-index: 20; left: calc(100% + 9px); display: none; width: max-content; padding: 6px 8px; border: 1px solid #D9D9D4; border-radius: 5px; color: #111214; background: #fff; box-shadow: 0 3px 12px rgba(28,43,66,.12); font-size: 10px; font-weight: 500; white-space: nowrap; pointer-events: none; }
-.canvas-tool-dock .sidebar-tool-button:hover .tool-tooltip, .canvas-tool-dock .sidebar-tool-button:focus-visible .tool-tooltip { display: block; }
 .floating-inspector { position: fixed; z-index: 40; top: 142px; right: 16px; bottom: auto; width: 294px; max-height: calc(100dvh - 158px); border: 1px solid #D9D9D4; }
 .floating-inspector .inspector-head { position: sticky; top: -13px; z-index: 2; background: #fff; }
 .floating-chat-sidebar { height: calc(100dvh - 158px); min-height: 360px; overflow: hidden; }
@@ -2208,7 +2196,6 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .sidebar-tool-row { display: flex; align-items: center; gap: 5px; }
 .sidebar-tool-button { position: relative; display: grid; place-items: center; width: 36px; height: 31px; padding: 0; border: 1px solid transparent; border-radius: 6px; color: #1F3DFF; background: transparent; cursor: pointer; }
 .sidebar-tool-button:hover, .sidebar-tool-button.active { border-color: #D9D9D4; color: #111214; background: #D9D9D4; }
-.sidebar-tool-button kbd { position: absolute; right: 1px; bottom: 0; padding: 0 2px; border: 0; color: #1F3DFF; background: transparent; font-size: 7px; }
 .floating-workspace-sidebar .sidebar-nav { margin-top: 16px; }
 
 @media (max-width: 980px) {

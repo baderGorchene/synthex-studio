@@ -1814,6 +1814,8 @@ export default function SynthexWorkspace() {
           onAddRecord={addRecord}
           sketchStyle={sketchStyle}
           onSketchStyleChange={saveSketchStyle}
+          isResizeLocked={isResizeLocked}
+          onToggleResizeLock={toggleResizeLock}
           onOrganizeLayout={strategy => {
             const positions = computeOrganizedLayout(graphRef.current, strategy);
             handleApplyLayout(positions);
@@ -1926,17 +1928,13 @@ export default function SynthexWorkspace() {
                       <small>{hint}</small>
                     </button>
                   ))}
-                  <div className="menu-separator" />
-                  {sketch.length > 0 && (
+                  {sketch.length > 0 && (<>
+                    <div className="menu-separator" />
                     <button type="button" role="menuitem" onClick={() => { saveSketch(() => []); setNavMenuOpen(false); announce('Drawings cleared.'); }}>
                       <strong>Clear drawings</strong>
                       <small>Removes pen and marker marks from this map</small>
                     </button>
-                  )}
-                  <button type="button" role="menuitemcheckbox" aria-checked={isResizeLocked} onClick={() => { toggleResizeLock(); setNavMenuOpen(false); }}>
-                    <strong>{isResizeLocked ? 'Unlock note sizes' : 'Lock note sizes'}</strong>
-                    <small>{isResizeLocked ? 'Notes can be resized again' : 'Stop notes being resized by accident'}</small>
-                  </button>
+                  </>)}
                 </div>
               )}
             </div>
