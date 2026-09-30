@@ -1,10 +1,13 @@
 import type { Metadata } from "next";
-import { Schibsted_Grotesk } from "next/font/google";
+import { Caveat, Kalam } from "next/font/google";
 import { ClerkProvider } from "@clerk/nextjs";
 import "./globals.css";
 import "./typeset.css";
+import "./paper.css";
 
-const grotesk = Schibsted_Grotesk({ subsets: ["latin"], variable: "--font-grotesk" });
+// Handwritten type to match the paper board: Kalam for running text, Caveat for titles and the writing pad.
+const kalam = Kalam({ subsets: ["latin"], weight: ["300", "400", "700"], variable: "--font-kalam" });
+const caveat = Caveat({ subsets: ["latin"], variable: "--font-caveat" });
 
 export const metadata: Metadata = {
   title: "Synthex Studio",
@@ -19,7 +22,7 @@ export default function RootLayout({
   const hasClerk = Boolean(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY);
 
   const bodyContent = (
-    <html lang="en" className={`h-full antialiased ${grotesk.variable}`}>
+    <html lang="en" className={`h-full antialiased ${kalam.variable} ${caveat.variable}`}>
       <body className="h-full w-full overflow-hidden m-0 p-0 font-sans">
         {children}
       </body>

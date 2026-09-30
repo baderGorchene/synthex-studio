@@ -29,7 +29,8 @@
   --teal-soft: rgba(17, 18, 20, 0.06);
   --charcoal: #111214;
   --silver: #D9D9D4;
-  --font-ui: var(--font-grotesk), "Helvetica Neue", Arial, sans-serif;
+  --font-ui: var(--font-kalam), "Segoe Print", "Bradley Hand", "Comic Sans MS", cursive;
+  --font-hand: var(--font-caveat), "Segoe Print", "Bradley Hand", cursive;
   --font-code: ui-monospace, "Cascadia Code", Consolas, monospace;
   --shadow: 0 12px 36px rgba(17, 18, 20, .09), 0 2px 7px rgba(17, 18, 20, .04);
 }

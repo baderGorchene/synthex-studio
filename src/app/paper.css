@@ -1,0 +1,219 @@
+/* Paper: the whole workspace shares the board's materials. Cream stock, blue notebook rules,
+   a red margin line, handwritten type. Loaded after typeset.css so it wins on equal specificity. */
+
+:root {
+  --canvas: #F7F3E8;          /* the board: cream sketchbook stock */
+  --wash: #F7F3E8;
+  --paper: #FFFDF7;           /* a loose sheet pinned on top of the board */
+  --sticky: #FFF4B8;          /* a sticky note */
+  --tape: rgba(232, 221, 178, .78);
+  --line: #E6DECC;
+  --line-strong: #D8CDB5;
+  --faint: #7A7466;           /* pencil */
+  --rule: rgba(84, 150, 212, .26);   /* same blue as the board grid */
+  --rule-strong: rgba(84, 150, 212, .38);
+  --margin-red: rgba(214, 86, 86, .5);
+  --rule-gap: 28px;
+}
+
+body { background: var(--canvas); }
+.workspace-shell, .workspace-stage.stage-view, .map-start, .auth-main { background: var(--canvas); }
+
+/* Headings are written, not typeset */
+h1, h2, h3 { font-family: var(--font-hand); font-weight: 700; letter-spacing: 0; }
+.map-start h1 { font-size: clamp(52px, 6.4vw, 78px); font-weight: 700; line-height: .95; letter-spacing: 0; }
+.map-start-lede { font-size: 18px; }
+
+/* ---------- Loose sheets: every floating surface is the same paper as the notes ---------- */
+.knowledge-card,
+.knowledge-card[class*="type-"] { background: var(--paper) !important; }
+.graph-group.is-folded,
+.canvas-tool-dock,
+.canvas-minimap-card { background: var(--paper) !important; }
+.canvas-main .workspace-topbar { background: rgba(255, 253, 247, .94); }
+.relation-legend { background: rgba(255, 253, 247, .94); }
+.relationship-pill { background: rgba(255, 253, 247, .96) !important; }
+.relationship-mark:hover .relationship-pill, .relationship-pill.options-open { background: var(--paper) !important; }
+.relationship-mark text { stroke: var(--canvas); }
+.layout-switch, .menu-popover, .work-modal, .search-modal, .view-empty, .view-paper, .view-rows, .view-table th,
+.file-viewer-container, .media-viewer-container, .file-viewer-header, .media-viewer-header, .media-viewer-caption-bar,
+.review-change.decision-accepted, .review-change.decision-rejected, .field-input, .composer select,
+.draft-bar, .draft-bar .line-button, .attached-file-badge { background: var(--paper); }
+.line-button { background: var(--paper); }
+
+/* Note titles in handwriting; Caveat runs narrow, so it gets more size than the grotesk had */
+.knowledge-card h2 { font-family: var(--font-hand); font-size: 25px; font-weight: 700; line-height: 1.05; letter-spacing: 0; }
+.knowledge-card.type-question h2 { font-size: 32px; font-weight: 700; letter-spacing: 0; line-height: 1; }
+.knowledge-card.type-source h2, .knowledge-card.type-link h2 { font-size: 22px; }
+.map-starter strong { font-family: var(--font-hand); font-size: 23px; line-height: 1.1; }
+
+/* ---------- Side drawer: a notebook page ---------- */
+.workspace-drawer { background: var(--paper); }
+.workspace-drawer .drawer-header,
+.workspace-drawer .drawer-body,
+.drawer-chat-pane { background: var(--paper); }
+.workspace-drawer .drawer-tab { font-family: var(--font-hand); font-size: 22px; font-weight: 700; }
+.drawer-state h3, .workspace-drawer .chat-welcome h3 { font-size: 26px; font-weight: 700; letter-spacing: 0; line-height: 1.1; }
+
+/* The transcript sits on the same squared paper as the board */
+.workspace-drawer .chat-transcript {
+  background-color: var(--canvas);
+  background-image:
+    linear-gradient(to right, var(--rule) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--rule) 1px, transparent 1px);
+  background-size: 24px 24px;
+  background-attachment: local;
+}
+.chat-scope { background: var(--paper); }
+
+/* Your questions: sticky notes taped into the notebook */
+.workspace-drawer p.chat-line.user {
+  position: relative;
+  align-self: flex-end;
+  max-width: 88%;
+  margin: 6px 4px 0 auto;
+  padding: 14px 16px 12px;
+  background: var(--sticky);
+  box-shadow: 0 1px 0 rgba(17, 18, 20, .05), 0 12px 16px -14px rgba(17, 18, 20, .45);
+  rotate: -0.6deg;
+  color: var(--ink);
+  font-family: var(--font-hand);
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1.15;
+}
+.workspace-drawer p.chat-line.user::before {
+  content: "";
+  position: absolute;
+  top: -8px;
+  left: 50%;
+  width: 64px;
+  height: 18px;
+  translate: -50% 0;
+  rotate: 3deg;
+  background: var(--tape);
+  box-shadow: 0 1px 2px rgba(17, 18, 20, .08);
+}
+/* The assistant answers on a loose sheet */
+.workspace-drawer .chat-line.assistant > div {
+  padding: 14px 16px 12px;
+  border: 1px solid var(--line);
+  border-top: 2px solid var(--ink);
+  background: var(--paper);
+  box-shadow: 0 1px 0 rgba(17, 18, 20, .04), 0 14px 18px -16px rgba(17, 18, 20, .4);
+}
+
+/* ---------- Writing pad: ruled paper with a margin line ---------- */
+.workspace-drawer .chat-compose-wrapper { padding: 18px 16px 16px; background: var(--paper); }
+.workspace-drawer .chat-compose-box,
+.workspace-drawer .chat-compose-box:focus-within {
+  position: relative;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+  padding: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 2px;
+  background: var(--paper);
+  box-shadow: 0 1px 0 rgba(17, 18, 20, .04), 0 16px 22px -18px rgba(17, 18, 20, .42);
+}
+.workspace-drawer .chat-compose-box:focus-within { border-color: var(--faint); }
+/* a strip of tape holds the pad down */
+.workspace-drawer .chat-compose-box::before,
+.dock-composer::before,
+.map-start .composer::before {
+  content: "";
+  position: absolute;
+  z-index: 1;
+  top: -13px;
+  left: 50%;
+  width: 84px;
+  height: 18px;
+  translate: -50% 0;
+  rotate: -2deg;
+  background: var(--tape);
+  box-shadow: 0 1px 2px rgba(17, 18, 20, .08);
+  pointer-events: none;
+}
+.workspace-drawer .chat-compose-box textarea,
+.map-start .composer textarea {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  border: 0;
+  outline: 0;
+  resize: none;
+  color: var(--ink);
+  background-color: transparent;
+  background-image:
+    linear-gradient(to right, transparent 39px, var(--margin-red) 39px, var(--margin-red) 40px, transparent 40px),
+    repeating-linear-gradient(to bottom, transparent 0, transparent calc(var(--rule-gap) - 1px), var(--rule-strong) calc(var(--rule-gap) - 1px), var(--rule-strong) var(--rule-gap));
+  background-attachment: local; /* the rules scroll with what's written */
+  font-family: var(--font-hand);
+  font-weight: 500;
+  font-size: 23px;
+  line-height: var(--rule-gap);
+}
+.workspace-drawer .chat-compose-box textarea {
+  /* the pad grows with what's written, from three ruled lines up to six */
+  field-sizing: content;
+  height: auto;
+  min-height: calc(var(--rule-gap) * 3 + 8px);
+  max-height: calc(var(--rule-gap) * 6 + 8px);
+  padding: 8px 14px 0 52px;
+  background-position: 0 8px;
+}
+.workspace-drawer .chat-compose-box textarea::placeholder,
+.map-start .composer textarea::placeholder,
+.dock-composer input[type="text"]::placeholder { color: var(--faint); opacity: .85; }
+.workspace-drawer .chat-compose-box textarea:disabled { cursor: not-allowed; opacity: .6; }
+.chat-compose-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  padding: 6px 6px 6px 14px;
+  border-top: 1px dashed var(--line-strong);
+}
+.chat-compose-actions .chat-cost { margin-right: auto; padding-left: 38px; font-family: var(--font-hand); font-size: 18px; }
+.chat-compose-actions .icon-send { width: 44px; min-width: 44px; padding: 0; }
+
+/* The big composer on an empty board: a full sheet of ruled paper */
+.map-start .composer { position: relative; border: 1px solid var(--line-strong); background: var(--paper); }
+.map-start .composer textarea {
+  height: calc(var(--rule-gap) * 4 + 18px);
+  padding: 18px 24px 0 60px;
+  background-image:
+    linear-gradient(to right, transparent 43px, var(--margin-red) 43px, var(--margin-red) 44px, transparent 44px),
+    repeating-linear-gradient(to bottom, transparent 0, transparent calc(var(--rule-gap) - 1px), var(--rule-strong) calc(var(--rule-gap) - 1px), var(--rule-strong) var(--rule-gap));
+  background-position: 0 18px;
+  font-size: 26px;
+}
+.map-start .composer .composer-row { border-top: 1px dashed var(--line-strong); }
+
+/* The docked composer: a torn strip with a single rule to write on */
+.dock-composer { background: var(--paper); border-color: var(--line-strong); }
+.dock-composer .composer-input { position: relative; padding-left: 52px; }
+.dock-composer .composer-input::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 39px;
+  width: 1px;
+  background: var(--margin-red);
+}
+.dock-composer input[type="text"] {
+  height: 44px;
+  padding: 0 4px;
+  background: linear-gradient(to top, transparent 9px, var(--rule-strong) 9px, var(--rule-strong) 10px, transparent 10px);
+  font-family: var(--font-hand);
+  font-size: 23px;
+  font-weight: 500;
+}
+.dock-composer .composer-target { font-family: var(--font-hand); font-size: 19px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .workspace-drawer p.chat-line.user { rotate: none; }
+}

@@ -222,7 +222,7 @@ export default function SynthexWorkspace() {
   const [chatBusy, setChatBusy] = useState(false);
   const [chatLines, setChatLines] = useState<ChatLine[]>([]);
   const [activeResearchIntent, setActiveResearchIntent] = useState<{ mode: 'quick' | 'deep' } | null>(null);
-  const chatInputRef = useRef<HTMLInputElement>(null);
+  const chatInputRef = useRef<HTMLTextAreaElement>(null);
   const [activeSession, setActiveSession] = useState<ResearchSession | null>(null);
   const [reviewDecisions, setReviewDecisions] = useState<Record<string, 'accepted' | 'rejected'>>({});
   const [projectTitleDraft, setProjectTitleDraft] = useState('');
@@ -2080,9 +2080,9 @@ export default function SynthexWorkspace() {
                         )}
 
                         <form className="composer chat-compose-box" onSubmit={sendQuestion}>
-                          <input
+                          <textarea
                             ref={chatInputRef}
-                            type="text"
+                            rows={3}
                             aria-label="Ask a question about your map"
                             placeholder={
                               activeResearchIntent
@@ -2093,29 +2093,32 @@ export default function SynthexWorkspace() {
                             }
                             value={chatInput}
                             onChange={event => setChatInput(event.target.value)}
+                            onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }}
                             maxLength={2000}
                             disabled={!aiConfigured || chatBusy}
                           />
-                          <button
-                            type="button"
-                            onClick={() => setModal('credits')}
-                            className="chat-cost"
-                            title="Credits this costs. Click to see your balance."
-                          >
-                            {activeResearchIntent?.mode === 'deep'
-                              ? '20 credits'
-                              : activeResearchIntent?.mode === 'quick'
-                                ? '5 credits'
-                                : '1 credit'}
-                          </button>
-                          <button
-                            type="submit"
-                            className="ink-button icon-send"
-                            disabled={!chatInput.trim() || !aiConfigured || chatBusy}
-                            aria-label="Send question"
-                          >
-                            <ArrowRight size={18} strokeWidth={1.75} />
-                          </button>
+                          <div className="chat-compose-actions">
+                            <button
+                              type="button"
+                              onClick={() => setModal('credits')}
+                              className="chat-cost"
+                              title="Credits this costs. Click to see your balance."
+                            >
+                              {activeResearchIntent?.mode === 'deep'
+                                ? '20 credits'
+                                : activeResearchIntent?.mode === 'quick'
+                                  ? '5 credits'
+                                  : '1 credit'}
+                            </button>
+                            <button
+                              type="submit"
+                              className="ink-button icon-send"
+                              disabled={!chatInput.trim() || !aiConfigured || chatBusy}
+                              aria-label="Send question"
+                            >
+                              <ArrowRight size={18} strokeWidth={1.75} />
+                            </button>
+                          </div>
                         </form>
                       </div>
                     </div>
