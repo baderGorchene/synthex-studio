@@ -1152,10 +1152,11 @@ a.ink-button, a.ink-button:hover { color: #fff; text-decoration: none; }
 
 /* ---------- Pen, marker and eraser: marks on the board, never part of the map ---------- */
 .sketch-world { position: absolute; top: 0; left: 0; z-index: 3; width: 1px; height: 1px; transform-origin: 0 0; pointer-events: none; }
+.sketch-world.is-marker-layer { mix-blend-mode: multiply; }
 .sketch-layer { position: absolute; top: 0; left: 0; overflow: visible; pointer-events: none; }
 .sketch-stroke { fill: none; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
 .sketch-stroke.is-pen { opacity: .95; }
-.sketch-stroke.is-marker { opacity: .5; mix-blend-mode: multiply; }
+.sketch-stroke.is-marker { opacity: .5; }
 /* strokes saved before colours existed */
 .sketch-stroke.is-legacy.is-pen { stroke: var(--ink); opacity: .9; }
 .sketch-stroke.is-legacy.is-marker { stroke: var(--ink); opacity: .16; mix-blend-mode: normal; }

@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import type { Viewport } from '@/types/canvas';
 import type { SketchStyle } from './inkPalette';
 
@@ -14,6 +14,57 @@ const widthOf = (stroke: SketchStroke) => stroke.width ?? LEGACY_WIDTH[stroke.to
 
 function StrokePath({ stroke, d }: { stroke: SketchStroke; d: string }) {
   return <path className={`sketch-stroke is-${stroke.tool} ${stroke.color ? '' : 'is-legacy'}`} d={d} strokeWidth={widthOf(stroke)} stroke={stroke.color} />;
+}
+
+type Rect = { x: number; y: number; width: number; height: number };
+
+// Pen ink is cut away wherever there is text, so writing on the board stays readable under a scribble.
+const TEXT_SELECTOR = '.knowledge-card, .relationship-label-layer text';
+const TEXT_PAD = 1.5;
+
+function strokeBounds(stroke: SketchStroke): Rect {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (let i = 0; i < stroke.points.length; i += 2) {
+    minX = Math.min(minX, stroke.points[i]); maxX = Math.max(maxX, stroke.points[i]);
+    minY = Math.min(minY, stroke.points[i + 1]); maxY = Math.max(maxY, stroke.points[i + 1]);
+  }
+  const half = widthOf(stroke) / 2;
+  return { x: minX - half, y: minY - half, width: maxX - minX + half * 2, height: maxY - minY + half * 2 };
+}
+
+const intersects = (a: Rect, b: Rect) => a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
+
+/** Line boxes of every piece of text that a pen stroke passes over, in world units. */
+function measureText(canvas: Element, viewport: Viewport, pens: Rect[]): Rect[] {
+  if (!pens.length) return [];
+  const origin = canvas.getBoundingClientRect();
+  const toWorld = (r: DOMRect): Rect => ({
+    x: (r.left - origin.left - viewport.pan.x) / viewport.zoom,
+    y: (r.top - origin.top - viewport.pan.y) / viewport.zoom,
+    width: r.width / viewport.zoom,
+    height: r.height / viewport.zoom
+  });
+  const boxes: Rect[] = [];
+  const add = (r: DOMRect) => {
+    if (r.width === 0 || r.height === 0) return;
+    const box = toWorld(r);
+    if (pens.some(pen => intersects(pen, box))) boxes.push({ x: box.x - TEXT_PAD, y: box.y - TEXT_PAD, width: box.width + TEXT_PAD * 2, height: box.height + TEXT_PAD * 2 });
+  };
+  const range = document.createRange();
+  for (const element of Array.from(canvas.querySelectorAll(TEXT_SELECTOR))) {
+    const bounds = toWorld(element.getBoundingClientRect());
+    if (!pens.some(pen => intersects(pen, bounds))) continue;
+    if (element instanceof SVGElement) { add(element.getBoundingClientRect()); continue; }
+    element.querySelectorAll('textarea, input').forEach(field => add(field.getBoundingClientRect()));
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT, {
+      acceptNode: node => node.textContent?.trim() ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT
+    });
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      range.selectNodeContents(node);
+      for (const rect of Array.from(range.getClientRects())) add(rect);
+    }
+  }
+  return boxes;
 }
 
 // Smooth the pointer samples with quadratic curves through their midpoints.
@@ -48,23 +99,75 @@ export function SketchLayer({ tool, viewport, strokes, style, onChange }: {
 
   const erase = (id: string) => onChange(current => current.filter(stroke => stroke.id !== id));
 
+  const maskId = `sketch-text-mask-${useId().replace(/:/g, '')}`;
+  const worldRef = useRef<HTMLDivElement>(null);
+  const viewportRef = useRef(viewport);
+  const [textBoxes, setTextBoxes] = useState<Rect[]>([]);
+  const penStrokes = strokes.filter(stroke => stroke.tool === 'pen');
+  const markerStrokes = strokes.filter(stroke => stroke.tool === 'marker');
+  const penBounds = [...penStrokes, ...(draft?.tool === 'pen' ? [draft] : [])].map(strokeBounds);
+  const penKey = penBounds.map(b => `${b.x},${b.y},${b.width},${b.height}`).join('|');
+  const penBoundsRef = useRef(penBounds);
+  useLayoutEffect(() => {
+    viewportRef.current = viewport;
+    penBoundsRef.current = penBounds;
+  });
+
+  // Re-measure when strokes change or when cards move, resize, appear or are edited.
+  useEffect(() => {
+    const canvas = worldRef.current?.closest('.graph-canvas');
+    if (!canvas) return;
+    let frame = 0;
+    const measure = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => setTextBoxes(measureText(canvas, viewportRef.current, penBoundsRef.current)));
+    };
+    measure();
+    if (!penBoundsRef.current.length) return () => cancelAnimationFrame(frame);
+    const world = canvas.querySelector('.graph-world');
+    // Panning only restyles the world itself, which leaves world coordinates unchanged.
+    const observer = new MutationObserver(records => { if (records.some(record => record.target !== world)) measure(); });
+    if (world) observer.observe(world, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['style', 'class'] });
+    canvas.addEventListener('input', measure);
+    document.fonts?.ready.then(measure).catch(() => {});
+    return () => {
+      cancelAnimationFrame(frame);
+      observer.disconnect();
+      canvas.removeEventListener('input', measure);
+    };
+  }, [penKey]);
+
+  const worldStyle = { transform: `translate(${viewport.pan.x}px, ${viewport.pan.y}px) scale(${viewport.zoom})` };
+
   return <>
-    <div className="sketch-world" style={{ transform: `translate(${viewport.pan.x}px, ${viewport.pan.y}px) scale(${viewport.zoom})` }}>
+    {/* Marker ink multiplies with the board like a real highlighter, so text shows through it. */}
+    <div className="sketch-world is-marker-layer" style={worldStyle}>
       <svg className={`sketch-layer ${erasing ? 'is-erasing' : ''}`} width="1" height="1" aria-hidden="true">
-        {strokes.map(stroke => {
-          const d = toPath(stroke.points);
-          return <g key={stroke.id}>
-            <StrokePath stroke={stroke} d={d} />
-            {erasing && <path
-              className="sketch-hit"
-              d={d}
-              strokeWidth={Math.max(widthOf(stroke), 18 / viewport.zoom)}
-              onPointerDown={event => { event.stopPropagation(); erase(stroke.id); }}
-              onPointerEnter={event => { if (event.buttons === 1) erase(stroke.id); }}
-            />}
-          </g>;
-        })}
-        {draft && <StrokePath stroke={draft} d={toPath(draft.points)} />}
+        {markerStrokes.map(stroke => <StrokePath key={stroke.id} stroke={stroke} d={toPath(stroke.points)} />)}
+        {draft?.tool === 'marker' && <StrokePath stroke={draft} d={toPath(draft.points)} />}
+      </svg>
+    </div>
+
+    <div className="sketch-world" ref={worldRef} style={worldStyle}>
+      <svg className={`sketch-layer ${erasing ? 'is-erasing' : ''}`} width="1" height="1" aria-hidden="true">
+        {textBoxes.length > 0 && <defs>
+          <mask id={maskId} maskUnits="userSpaceOnUse" x="-1000000" y="-1000000" width="2000000" height="2000000">
+            <rect x="-1000000" y="-1000000" width="2000000" height="2000000" fill="white" />
+            {textBoxes.map((box, index) => <rect key={index} x={box.x} y={box.y} width={box.width} height={box.height} rx={2} fill="black" />)}
+          </mask>
+        </defs>}
+        <g mask={textBoxes.length > 0 ? `url(#${maskId})` : undefined}>
+          {penStrokes.map(stroke => <StrokePath key={stroke.id} stroke={stroke} d={toPath(stroke.points)} />)}
+          {draft?.tool === 'pen' && <StrokePath stroke={draft} d={toPath(draft.points)} />}
+        </g>
+        {erasing && strokes.map(stroke => <path
+          key={stroke.id}
+          className="sketch-hit"
+          d={toPath(stroke.points)}
+          strokeWidth={Math.max(widthOf(stroke), 18 / viewport.zoom)}
+          onPointerDown={event => { event.stopPropagation(); erase(stroke.id); }}
+          onPointerEnter={event => { if (event.buttons === 1) erase(stroke.id); }}
+        />)}
       </svg>
     </div>
 
