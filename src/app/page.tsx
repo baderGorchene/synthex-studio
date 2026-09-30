@@ -1,12 +1,17 @@
 'use client';
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useRef, useState } from 'react';
 import Link from 'next/link';
 import {
   ArrowRight, ChevronDown, FileJson2, FileText, FolderArchive, GitBranch, Image as ImageIcon, Menu, Shapes, X
 } from 'lucide-react';
 import { SynthexLogo, SynthexMark } from '@/components/brand/SynthexLogo';
 import { CREDIT_RATES, REFILL_PACKS, SUBSCRIPTION_TIERS } from '@/lib/plans';
+import { HeroDemo } from '@/components/landing/HeroDemo';
+import { ChaosToMap } from '@/components/landing/ChaosToMap';
+import { ExperienceStory } from '@/components/landing/ExperienceStory';
+import { TypewriterComposer } from '@/components/landing/TypewriterComposer';
+import { useRevealOnScroll } from '@/components/landing/motion';
 
 const PLAN_ORDER = ['trial', 'byok', 'pro', 'team'] as const;
 const RECOMMENDED = 'pro';
@@ -40,133 +45,6 @@ const FAQS = [
     a: `${SUBSCRIPTION_TIERS.team.name} is ${usd(SUBSCRIPTION_TIERS.team.priceMonthlyUsd)} per seat a month and shares ${SUBSCRIPTION_TIERS.team.creditsMonthly.toLocaleString()} credits a month across the team, with shared maps and one review queue.`
   }
 ];
-
-/* ---------- Hero demo: the real Typeset notes, animated once ---------- */
-type DemoPhase = 'typing' | 'drafting' | 'review' | 'pressing' | 'kept';
-const DEMO_QUESTION = 'How does sleep affect memory?';
-const DEMO_DRAFTS = [
-  { id: 'd1', type: 'concept', title: 'Sleep spindles tag memories for replay', body: 'Brief bursts of activity in light sleep seem to mark which memories get replayed.', kind: 'Idea', x: 660, y: 36 },
-  { id: 'd2', type: 'concept', title: 'A lost night blocks new learning', body: 'After no sleep, the brain struggles to store new memories.', kind: 'Idea', x: 350, y: 262 },
-  { id: 'd3', type: 'source', title: 'Diekelmann & Born (2010)', body: 'The memory function of sleep. Nature Reviews Neuroscience.', kind: 'Source', x: 660, y: 282 }
-];
-
-function useReducedMotion() {
-  const [reduced, setReduced] = useState(false);
-  useEffect(() => {
-    const query = window.matchMedia('(prefers-reduced-motion: reduce)');
-    const update = () => setReduced(query.matches);
-    update();
-    query.addEventListener('change', update);
-    return () => query.removeEventListener('change', update);
-  }, []);
-  return reduced;
-}
-
-function LandingDemo() {
-  const reduced = useReducedMotion();
-  const [typed, setTyped] = useState('');
-  const [phase, setPhase] = useState<DemoPhase>('typing');
-  const [scale, setScale] = useState(1);
-  const frame = useRef<HTMLDivElement>(null);
-
-  // Scale the fixed 960px board to the column it sits in.
-  useEffect(() => {
-    const element = frame.current;
-    if (!element) return;
-    const fit = (width: number) => setScale(Math.min(1, width / 960));
-    fit(element.clientWidth);
-    const observer = new ResizeObserver(([entry]) => fit(entry.contentRect.width));
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, []);
-
-  // The story plays once: type the question, drafts land, "Keep all" presses, pins turn ink. Then it holds.
-  useEffect(() => {
-    if (reduced) return;
-    const timers: ReturnType<typeof setTimeout>[] = [];
-    const at = (ms: number, run: () => void) => timers.push(setTimeout(run, ms));
-    for (let i = 1; i <= DEMO_QUESTION.length; i++) at(500 + i * 42, () => setTyped(DEMO_QUESTION.slice(0, i)));
-    const typedAt = 500 + DEMO_QUESTION.length * 42;
-    at(typedAt + 300, () => setPhase('drafting'));
-    at(typedAt + 1300, () => setPhase('review'));
-    at(typedAt + 2500, () => setPhase('pressing'));
-    at(typedAt + 2660, () => setPhase('kept'));
-    return () => timers.forEach(clearTimeout);
-  }, [reduced]);
-
-  const shownPhase: DemoPhase = reduced ? 'kept' : phase;
-  const shownTyped = reduced ? DEMO_QUESTION : typed;
-  const draftsVisible = shownPhase !== 'typing';
-  const isDraft = draftsVisible && shownPhase !== 'kept';
-  const edge = (draft: boolean) => (draft && isDraft ? 'var(--proof)' : 'var(--faint)');
-
-  return (
-    <figure className="landing-demo" id="evidence">
-      <div className="landing-demo-frame" ref={frame} style={{ height: 540 * scale }}>
-        <div className="landing-demo-board" style={{ transform: `scale(${scale})` }} aria-hidden="true">
-          <svg className="landing-demo-lines" width="960" height="540" viewBox="0 0 960 540">
-            <path d="M 280 208 C 316 208, 310 110, 350 110" stroke={edge(false)} />
-            {draftsVisible && <>
-              <path d="M 590 110 C 625 110, 625 110, 660 110" stroke={edge(true)} strokeDasharray={isDraft ? '4 4' : undefined} />
-              <path d="M 280 230 C 318 230, 310 330, 350 330" stroke={edge(true)} strokeDasharray="1.5 5" strokeLinecap="round" />
-              <path d="M 590 330 C 625 330, 625 346, 660 346" stroke={edge(true)} strokeDasharray={isDraft ? '4 4' : undefined} />
-            </>}
-          </svg>
-          <span className="landing-demo-label" style={{ left: 294, top: 140 }}>explains</span>
-          {draftsVisible && <>
-            <span className={`landing-demo-label ${isDraft ? 'is-draft' : ''}`} style={{ left: 604, top: 88 }}>supports</span>
-            <span className={`landing-demo-label ${isDraft ? 'is-draft' : ''}`} style={{ left: 300, top: 268 }}>asks</span>
-            <span className={`landing-demo-label ${isDraft ? 'is-draft' : ''}`} style={{ left: 608, top: 314 }}>cites</span>
-          </>}
-
-          <article className="knowledge-card type-question" style={{ left: 40, top: 150, width: 240, rotate: '-0.3deg' }}>
-            <span className="note-pin" />
-            <h2>{DEMO_QUESTION}</h2>
-            <p className="node-summary">Your starting question.</p>
-            <p className="note-meta">Question</p>
-          </article>
-          <article className="knowledge-card type-concept" style={{ left: 350, top: 36, width: 240, rotate: '0.4deg' }}>
-            <span className="note-pin" />
-            <h2>Slow-wave sleep replays the day</h2>
-            <p className="node-summary">Deep sleep replays recent experiences into long-term memory.</p>
-            <p className="note-meta">Idea · From research</p>
-          </article>
-          {draftsVisible && DEMO_DRAFTS.map((note, index) => (
-            <article
-              key={note.id}
-              className={`knowledge-card type-${note.type} ${isDraft ? 'is-draft' : 'is-kept'}`}
-              style={{ left: note.x, top: note.y, width: 240, rotate: `${index % 2 ? -0.4 : 0.3}deg`, animationDelay: `${index * 120}ms` }}
-            >
-              <span className="note-pin" style={{ animationDelay: `${300 + index * 120}ms` }} />
-              <h2>{note.title}</h2>
-              <p className="node-summary">{note.body}</p>
-              <p className="note-meta">{note.kind} · {isDraft ? 'Draft' : 'From research'}</p>
-            </article>
-          ))}
-
-          {(shownPhase === 'review' || shownPhase === 'pressing') && (
-            <div className="draft-bar landing-demo-draftbar">
-              <span>2 ideas and 1 source drafted · nothing joins your map until you keep it</span>
-              <div>
-                <span className="text-button">Discard</span>
-                <span className="line-button">Review one by one</span>
-                <span className={`ink-button ${shownPhase === 'pressing' ? 'is-pressed' : ''}`}>Keep all</span>
-              </div>
-            </div>
-          )}
-
-          <div className="composer landing-demo-composer">
-            <div className="composer-input">
-              <span className={`landing-demo-input ${shownTyped ? '' : 'is-empty'}`}>{shownTyped || 'Ask a question to grow the map'}{shownPhase === 'typing' && shownTyped && <i className="landing-demo-caret" />}</span>
-              <span className="ink-button icon-send"><ArrowRight {...icon} /></span>
-            </div>
-          </div>
-        </div>
-      </div>
-      <figcaption className="note-meta">Example map. The notes are illustrative, not product results.</figcaption>
-    </figure>
-  );
-}
 
 /* ---------- Feature crops: small pieces of the real interface ---------- */
 function CropDrafts() {
@@ -252,18 +130,46 @@ function CropShare() {
 
 const FEATURES: Array<{ title: string; body: string; crop: React.ReactNode }> = [
   { title: 'Drafts you review', body: 'Research arrives as blue drafts on the board. Keep all of it, go one by one, or discard it. Nothing lands on your map by itself.', crop: <CropDrafts /> },
-  { title: 'Map and document, in sync', body: 'Open the document beside the map. Select an idea on one side and it lights up on the other; edit either and both follow.', crop: <CropDocument /> },
+  { title: 'Map and document, in sync', body: 'Open the document beside the map. Select an idea on one side and it lights up on the other. Edit either and both follow.', crop: <CropDocument /> },
   { title: 'Sources, numbered and cited', body: 'Every source gets a number. Claims show which sources back them, and the document lists them at the end.', crop: <CropSources /> },
-  { title: 'Relations you can read', body: 'Every line has a label and a pattern: solid supports, dashed challenges, dotted asks. The legend stays on the board.', crop: <CropRelations /> },
-  { title: 'Share anywhere', body: 'Export the map as PNG, SVG, Markdown, an Obsidian vault, Mermaid or JSON. Your thinking is never stuck here.', crop: <CropShare /> }
+  { title: 'Lines you can read', body: 'Every line has a label and a pattern: solid supports, dashed challenges, dotted asks. You can see an argument’s shape at a glance.', crop: <CropRelations /> }
+];
+
+/* Questions people carry around. The marquee repeats them, so the list is short. */
+const QUESTIONS = [
+  'Is intermittent fasting worth it?',
+  'Why is my team always behind schedule?',
+  'What do we actually know about long COVID?',
+  'Should I switch careers at 35?',
+  'How do vaccines train the immune system?',
+  'Which CRM should a 10-person team pick?',
+  'Did the printing press cause the Reformation?',
+  'Is nuclear power safer than solar?'
+];
+
+const MOMENTS = [
+  { who: 'Students & researchers', when: '…your advisor circles a paragraph and writes “source?”', tone: 'sticky' },
+  { who: 'Writers & journalists', when: '…the piece is due tomorrow and every claim needs a link.', tone: 'paper' },
+  { who: 'Product & strategy teams', when: '…everyone in the meeting has an opinion and nobody has evidence.', tone: 'paper' },
+  { who: 'The endlessly curious', when: '…you went down a rabbit hole and want to remember the way out.', tone: 'sticky' }
+];
+
+const PROMISES = [
+  { title: 'Every claim starts unverified', body: 'AI-drafted claims are flagged until you link evidence to them. Confidence has to be earned.' },
+  { title: 'Every source gets a number', body: 'Ideas point at the sources behind them, so you can check any line in two clicks.' },
+  { title: 'Nothing lands without you', body: 'Drafts stay blue until you keep them. Your map only ever holds what you decided belongs there.' }
 ];
 
 export default function MarketingLandingPage() {
   const [billingCycle, setBillingCycle] = useState<'monthly' | 'annual'>('monthly');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const root = useRef<HTMLDivElement>(null);
+  useRevealOnScroll(root);
+
+  const navLinks: Array<[string, string]> = [['#experience', 'How it feels'], ['#who', 'Who it’s for'], ['#pricing', 'Pricing'], ['#faq', 'FAQ']];
 
   return (
-    <div className="marketing-landing-page">
+    <div className="marketing-landing-page" ref={root}>
       <header className="landing-nav">
         <div className="landing-nav-inner">
           <Link href="/" className="landing-brand" aria-label="Synthex home">
@@ -271,9 +177,7 @@ export default function MarketingLandingPage() {
           </Link>
 
           <nav className="landing-nav-links" aria-label="Page">
-            <a href="#features">Product</a>
-            <a href="#pricing">Pricing</a>
-            <a href="#faq">FAQ</a>
+            {navLinks.map(([href, label]) => <a key={href} href={href}>{label}</a>)}
           </nav>
 
           <div className="landing-nav-actions">
@@ -293,10 +197,7 @@ export default function MarketingLandingPage() {
 
         {mobileMenuOpen && (
           <nav className="landing-mobile-menu" aria-label="Page">
-            <a href="#features" onClick={() => setMobileMenuOpen(false)}>Product</a>
-            <a href="#metaphor" onClick={() => setMobileMenuOpen(false)}>How it works</a>
-            <a href="#pricing" onClick={() => setMobileMenuOpen(false)}>Pricing</a>
-            <a href="#faq" onClick={() => setMobileMenuOpen(false)}>FAQ</a>
+            {navLinks.map(([href, label]) => <a key={href} href={href} onClick={() => setMobileMenuOpen(false)}>{label}</a>)}
             <Link href="/app">Open the app</Link>
             <Link href="/sign-in">Sign in</Link>
           </nav>
@@ -304,37 +205,122 @@ export default function MarketingLandingPage() {
       </header>
 
       <main>
-        <section className="landing-hero">
-          <div className="landing-bands" aria-hidden="true">{Array.from({ length: 12 }, (_, i) => <span key={i} />)}</div>
-          <div className="landing-hero-copy">
-            <h1>Think out loud. Get a map you can trust.</h1>
-            <p className="landing-lede">Ask a question or paste your notes. Synthex drafts a map with numbered sources, you keep what&apos;s right, then share it anywhere.</p>
-            <div className="landing-hero-actions">
-              <Link href="/sign-up" className="ink-button landing-cta">Start free <ArrowRight {...icon} /></Link>
-              <a href="#metaphor" className="text-button landing-link-button">See how it works ↓</a>
+        {/* 1. The hook: name the feeling, promise the relief, show it happening */}
+        <section className="lx-hero">
+          <div className="lx-hero-copy">
+            <p className="lx-eyebrow">A research board that thinks with you</p>
+            <h1>
+              From 37 open tabs to{' '}
+              <span className="lx-underline">one clear map.
+                <svg viewBox="0 0 300 24" preserveAspectRatio="none" aria-hidden="true"><path d="M 4 16 C 60 6, 120 20, 180 11 S 270 8, 296 14" pathLength={1} /></svg>
+              </span>
+            </h1>
+            <p className="lx-lede">Ask what you’re trying to figure out. Synthex reads the web, pins the ideas and sources to a board, and lets you keep only what holds up. You get research you can see, check and share.</p>
+            <div className="lx-hero-actions">
+              <Link href="/sign-up" className="ink-button landing-cta">Start thinking, free <ArrowRight {...icon} /></Link>
+              <a href="#experience" className="text-button landing-link-button">See how it feels ↓</a>
             </div>
-            <p className="note-meta landing-hero-meta">{SUBSCRIPTION_TIERS.trial.creditsMonthly} free credits for 3 days · No card needed to start</p>
+            <p className="note-meta lx-hero-meta">{SUBSCRIPTION_TIERS.trial.creditsMonthly} free credits · No card needed · Works with your own AI key too</p>
           </div>
-          <LandingDemo />
+          <div className="lx-hero-demo">
+            <p className="lx-annotation" aria-hidden="true">
+              watch: it drafts, <em>you</em> decide
+              <svg viewBox="0 0 90 60" aria-hidden="true"><path d="M 6 6 C 40 4, 70 18, 78 50" pathLength={1} /><path d="M 68 42 L 78 52 L 84 38" pathLength={1} /></svg>
+            </p>
+            <HeroDemo />
+          </div>
         </section>
 
-        <section id="metaphor" className="landing-section">
+        {/* 2. Social texture: the questions people bring, drifting past */}
+        <section className="lx-marquee" aria-label="Questions people map with Synthex">
+          <div className="lx-marquee-track">
+            {[...QUESTIONS, ...QUESTIONS].map((question, index) => (
+              <span key={index} className={`lx-marquee-note ${index % 3 === 0 ? 'is-sticky' : ''}`} aria-hidden={index >= QUESTIONS.length}>{question}</span>
+            ))}
+          </div>
+        </section>
+
+        {/* 3. The pain, then the transformation */}
+        <section id="chaos" className="landing-section lx-chaos-section">
+          <div className="landing-container lx-split">
+            <div className="lx-split-copy" data-reveal>
+              <p className="lx-eyebrow">You know this feeling</p>
+              <h2 className="landing-h2">Research shouldn’t feel like losing an argument with your browser.</h2>
+              <ul className="lx-pains">
+                <li data-reveal style={{ ['--d' as string]: '80ms' }}><span>Tabs you swear you’ll read later</span></li>
+                <li data-reveal style={{ ['--d' as string]: '200ms' }}><span>A notes app full of half-thoughts</span></li>
+                <li data-reveal style={{ ['--d' as string]: '320ms' }}><span>That one source you can’t find again</span></li>
+                <li data-reveal style={{ ['--d' as string]: '440ms' }}><span>An AI answer you have no way to check</span></li>
+              </ul>
+              <p className="lx-after" data-reveal style={{ ['--d' as string]: '600ms' }}>Synthex puts it all on one board, where every idea shows where it came from.</p>
+            </div>
+            <div data-reveal style={{ ['--d' as string]: '120ms' }}>
+              <ChaosToMap />
+            </div>
+          </div>
+        </section>
+
+        {/* 4. The experience, chapter by chapter, driven by scroll */}
+        <section id="experience" className="landing-section lx-story-section">
           <div className="landing-container">
-            <h2 className="landing-h2">From a question to a map you can share.</h2>
-            <ol className="landing-steps">
-              <li><span className="landing-step-num">1</span><h3>Ask</h3><p>Type what you&apos;re trying to figure out, or paste the notes you already have.</p></li>
-              <li><span className="landing-step-num">2</span><h3>Keep what&apos;s right</h3><p>Research lands as blue drafts with their sources; you keep, review or discard each one.</p></li>
-              <li><span className="landing-step-num">3</span><h3>Share anywhere</h3><p>Read it as a document, or export it as an image, Markdown, an Obsidian vault or JSON.</p></li>
-            </ol>
+            <div className="lx-section-head" data-reveal>
+              <p className="lx-eyebrow">How it feels</p>
+              <h2 className="landing-h2">Like having a research partner who shows their work.</h2>
+            </div>
+            <ExperienceStory />
           </div>
         </section>
 
+        {/* 5. Relatable moments: see yourself in it */}
+        <section id="who" className="landing-section lx-who-section">
+          <div className="landing-container">
+            <div className="lx-section-head" data-reveal>
+              <p className="lx-eyebrow">Who it’s for</p>
+              <h2 className="landing-h2">Made for the moment when…</h2>
+            </div>
+            <div className="lx-moments">
+              {MOMENTS.map((moment, index) => (
+                <figure key={moment.who} className={`lx-moment is-${moment.tone}`} data-reveal style={{ ['--d' as string]: `${index * 110}ms`, ['--tilt' as string]: `${[-1.6, 1.1, -0.8, 1.7][index]}deg` }}>
+                  <span className="note-pin" aria-hidden="true" />
+                  <blockquote>{moment.when}</blockquote>
+                  <figcaption>{moment.who}</figcaption>
+                </figure>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        {/* 6. The trust promise: the reason to pick this over a chatbot */}
+        <section className="landing-section lx-promise-section">
+          <div className="landing-container">
+            <h2 className="lx-promise-line" data-reveal>
+              The AI does the legwork.{' '}
+              <span className="lx-circle">You
+                <svg viewBox="0 0 200 90" preserveAspectRatio="none" aria-hidden="true"><path d="M 150 12 C 90 -4, 12 14, 10 46 C 8 80, 120 86, 176 64 C 204 52, 196 18, 132 10" pathLength={1} /></svg>
+              </span>{' '}get the last word.
+            </h2>
+            <div className="lx-promises">
+              {PROMISES.map((promise, index) => (
+                <article key={promise.title} data-reveal style={{ ['--d' as string]: `${200 + index * 140}ms` }}>
+                  <span className="lx-promise-num">{index + 1}</span>
+                  <h3>{promise.title}</h3>
+                  <p>{promise.body}</p>
+                </article>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        {/* 7. The details, for the people who read the spec */}
         <section id="features" className="landing-section">
           <div className="landing-container">
-            <h2 className="landing-h2">Built so you can check every line.</h2>
+            <div className="lx-section-head" data-reveal>
+              <p className="lx-eyebrow">The details</p>
+              <h2 className="landing-h2">Built so you can check every line.</h2>
+            </div>
             <div className="landing-features">
               {FEATURES.map(feature => (
-                <article className="landing-feature" key={feature.title}>
+                <article className="landing-feature" key={feature.title} data-reveal>
                   <div className="landing-feature-copy">
                     <h3>{feature.title}</h3>
                     <p>{feature.body}</p>
@@ -343,28 +329,39 @@ export default function MarketingLandingPage() {
                 </article>
               ))}
             </div>
+            <div className="lx-share-row" data-reveal>
+              <div className="lx-share-copy">
+                <h3>Share it anywhere</h3>
+                <p>PNG, SVG, a Markdown brief, an Obsidian vault, Mermaid or JSON. Your thinking never gets stuck here.</p>
+              </div>
+              <CropShare />
+            </div>
           </div>
         </section>
 
         <section id="pricing" className="landing-section landing-pricing">
           <div className="landing-container">
-            <div className="landing-pricing-head">
-              <h2 className="landing-h2">Plans</h2>
+            <div className="landing-pricing-head" data-reveal>
+              <div>
+                <p className="lx-eyebrow">Pricing</p>
+                <h2 className="landing-h2">Start free. Pay when it earns its keep.</h2>
+              </div>
               <div className="layout-switch" role="group" aria-label="Billing">
                 <button type="button" aria-pressed={billingCycle === 'monthly'} onClick={() => setBillingCycle('monthly')}>Monthly</button>
                 <button type="button" aria-pressed={billingCycle === 'annual'} onClick={() => setBillingCycle('annual')}>Yearly, save {ANNUAL_SAVING}%</button>
               </div>
             </div>
-            <div className="plan-columns is-four landing-plans">
+            <div className="plan-columns is-four landing-plans" data-reveal>
               {PLAN_ORDER.map(id => {
                 const plan = SUBSCRIPTION_TIERS[id];
                 const price = billingCycle === 'annual' ? plan.priceAnnualUsd : plan.priceMonthlyUsd;
                 const recommended = id === RECOMMENDED;
                 return (
                   <div key={id} className={`plan-column ${recommended ? 'is-recommended' : ''}`}>
+                    {recommended && <span className="lx-plan-flag">Most people pick this</span>}
                     <h3>{plan.name}</h3>
                     <p className="plan-price"><strong>{usd(price)}</strong> <span>{id === 'trial' ? 'for 3 days' : plan.perSeat ? 'per seat a month' : 'a month'}</span></p>
-                    <p className="note-meta">{recommended ? 'Recommended · ' : ''}{plan.creditsMonthly.toLocaleString()} credits a month</p>
+                    <p className="note-meta">{plan.creditsMonthly.toLocaleString()} credits a month</p>
                     <ul className="plan-features">{plan.features.map(feature => <li key={feature}>{feature}</li>)}</ul>
                     <Link href="/sign-up" className={recommended ? 'ink-button' : 'line-button'}>
                       {id === 'trial' ? 'Start free' : `Choose ${plan.name}`}
@@ -379,8 +376,11 @@ export default function MarketingLandingPage() {
 
         <section id="faq" className="landing-section">
           <div className="landing-container landing-faq-wrap">
-            <h2 className="landing-h2">Questions</h2>
-            <div className="landing-faq">
+            <div data-reveal>
+              <p className="lx-eyebrow">FAQ</p>
+              <h2 className="landing-h2">Fair questions.</h2>
+            </div>
+            <div className="landing-faq" data-reveal>
               {FAQS.map(faq => (
                 <details key={faq.q}>
                   <summary>{faq.q}<ChevronDown size={20} strokeWidth={1.75} aria-hidden="true" /></summary>
@@ -391,13 +391,15 @@ export default function MarketingLandingPage() {
           </div>
         </section>
 
-        <section className="landing-section landing-final">
+        {/* 8. Close on the user's own question, still being written */}
+        <section className="landing-section lx-final">
           <div className="landing-container">
-            <h2>What are you trying to figure&nbsp;out?</h2>
-            <Link href="/sign-up" className="composer landing-fake-composer">
-              <span>How does sleep affect memory? What do we actually know?</span>
-              <span className="ink-button">Build map <ArrowRight {...icon} /></span>
-            </Link>
+            <h2 data-reveal>What are you trying to figure&nbsp;out?</h2>
+            <p className="lx-lede" data-reveal style={{ ['--d' as string]: '120ms' }}>Bring the question. Leave with a map you can defend.</p>
+            <div data-reveal style={{ ['--d' as string]: '240ms' }}>
+              <TypewriterComposer />
+            </div>
+            <p className="note-meta lx-hero-meta">{SUBSCRIPTION_TIERS.trial.creditsMonthly} free credits · No card needed</p>
           </div>
         </section>
       </main>
@@ -405,7 +407,7 @@ export default function MarketingLandingPage() {
       <footer className="landing-footer">
         <div className="landing-container landing-footer-row">
           <Link href="/" className="landing-brand" aria-label="Synthex home"><SynthexMark size={18} /></Link>
-          <span>© {new Date().getFullYear()} Synthex</span>
+          <span>© {new Date().getFullYear()} Synthex · Made for people who like to know why</span>
           <nav aria-label="Footer">
             <Link href="/app">Open the app</Link>
             <a href="#pricing">Pricing</a>
@@ -417,3 +419,5 @@ export default function MarketingLandingPage() {
     </div>
   );
 }
+
+

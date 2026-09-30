@@ -970,15 +970,7 @@ a.ink-button, a.ink-button:hover { color: #fff; text-decoration: none; }
 .landing-mobile-menu { display: flex; flex-direction: column; padding: 8px 16px 16px; border-top: 1px solid var(--line); background: var(--canvas); animation: pop-in 160ms cubic-bezier(.16, 1, .3, 1) both; }
 .landing-mobile-menu a { display: flex; align-items: center; min-height: 48px; border-bottom: 1px solid var(--line); color: var(--ink); font-size: 16px; font-weight: 600; text-decoration: none; }
 
-.landing-hero { position: relative; max-width: 1440px; margin: 0 auto; padding: 96px 80px 72px; }
-.landing-bands { position: absolute; inset: 0 80px; z-index: 0; display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 24px; pointer-events: none; }
-.landing-bands span { background: #F5F5F1; }
-.landing-hero-copy { position: relative; z-index: 1; }
-.landing-hero h1 { max-width: 12ch; margin: 0; color: var(--ink); font-size: clamp(44px, 6.2vw, 88px); font-weight: 800; line-height: .98; letter-spacing: -.04em; text-wrap: balance; }
-.landing-lede { max-width: 560px; margin: 28px 0 0; color: var(--muted); font-size: 20px; line-height: 1.5; text-wrap: pretty; }
-.landing-hero-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 36px; }
 .landing-cta { min-height: 52px; padding: 0 22px; font-size: 16px; text-decoration: none; }
-.landing-hero-meta { margin-top: 16px; font-size: 12.5px; }
 
 .landing-demo { position: relative; z-index: 1; margin: 64px 0 0; }
 .landing-demo figcaption { margin-top: 12px; font-size: 12.5px; }
@@ -1004,12 +996,6 @@ a.ink-button, a.ink-button:hover { color: #fff; text-decoration: none; }
 .landing-section { padding: 112px 0; border-top: 1px solid var(--line); }
 .landing-h2 { max-width: 20ch; margin: 0; color: var(--ink); font-size: clamp(32px, 3.6vw, 52px); font-weight: 800; line-height: 1.02; letter-spacing: -.035em; text-wrap: balance; }
 
-.landing-steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 56px 0 0; padding: 0; list-style: none; }
-.landing-steps li { padding: 0 32px 0; border-left: 1px solid var(--line-strong); }
-.landing-steps li:first-child { padding-left: 0; border-left: 0; }
-.landing-step-num { display: block; color: var(--ink); font-size: 88px; font-weight: 800; line-height: .9; letter-spacing: -.05em; font-variant-numeric: tabular-nums; }
-.landing-steps h3 { margin: 24px 0 0; color: var(--ink); font-size: 24px; font-weight: 800; letter-spacing: -.02em; }
-.landing-steps p { max-width: 34ch; margin: 8px 0 0; color: var(--muted); font-size: 16px; line-height: 1.55; }
 
 .landing-features { margin-top: 56px; border-top: 4px solid var(--ink); }
 .landing-feature { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 24px 64px; align-items: center; padding: 56px 0; border-bottom: 1px solid var(--line); }
@@ -1059,11 +1045,6 @@ a.ink-button, a.ink-button:hover { color: #fff; text-decoration: none; }
 .landing-faq details[open] summary svg { rotate: 180deg; }
 .landing-faq details p { max-width: 64ch; margin: 0; padding: 0 0 20px; color: var(--muted); font-size: 15px; line-height: 1.6; }
 
-.landing-final h2 { max-width: 16ch; margin: 0; color: var(--ink); font-size: clamp(40px, 5vw, 60px); font-weight: 800; line-height: 1; letter-spacing: -.035em; text-wrap: balance; }
-.landing-fake-composer { flex-direction: row; align-items: center; justify-content: space-between; gap: 16px; max-width: 846px; margin-top: 40px; padding: 12px 12px 12px 24px; color: var(--faint); font-size: 20px; text-decoration: none; }
-.landing-fake-composer > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.landing-fake-composer .ink-button { flex: none; }
-.landing-fake-composer:hover .ink-button { background: #2A2C30; }
 
 .landing-footer { border-top: 1px solid var(--line); }
 .landing-footer-row { display: flex; flex-wrap: wrap; align-items: center; gap: 16px 24px; min-height: 72px; color: var(--faint); font-size: 12.5px; font-weight: 600; }
@@ -1073,8 +1054,6 @@ a.ink-button, a.ink-button:hover { color: #fff; text-decoration: none; }
 
 @media (max-width: 1100px) {
   .landing-container, .landing-nav-inner { padding: 0 40px; }
-  .landing-hero { padding: 72px 40px 56px; }
-  .landing-bands { inset: 0 40px; }
   .landing-feature { grid-template-columns: 1fr; }
   .landing-feature:nth-child(even) .landing-feature-copy { order: 0; }
   .landing-faq-wrap { grid-template-columns: 1fr; }
@@ -1084,17 +1063,8 @@ a.ink-button, a.ink-button:hover { color: #fff; text-decoration: none; }
   .landing-nav-inner { height: 64px; }
   .landing-nav-links, .landing-nav-actions .landing-link-button { display: none; }
   .landing-menu-button { display: inline-flex; }
-  .landing-hero { padding: 48px 16px 40px; }
-  .landing-bands { inset: 0 16px; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
-  .landing-bands span:nth-child(n+5) { display: none; }
-  .landing-hero h1 { font-size: 44px; }
-  .landing-lede { font-size: 18px; }
   .landing-demo { margin-top: 40px; }
   .landing-section { padding: 72px 0; }
-  .landing-steps { grid-template-columns: 1fr; gap: 32px; margin-top: 40px; }
-  .landing-steps li { padding: 24px 0 0; border-left: 0; border-top: 1px solid var(--line-strong); }
-  .landing-steps li:first-child { padding-top: 0; border-top: 0; }
-  .landing-step-num { font-size: 64px; }
   .landing-feature { padding: 40px 0; }
   .landing-feature-copy h3 { font-size: 24px; }
   .landing-crop { min-height: 0; padding: 24px 16px; }
@@ -1105,8 +1075,6 @@ a.ink-button, a.ink-button:hover { color: #fff; text-decoration: none; }
   .landing-line-grammar i { width: 72px; }
   .landing-share-list { grid-template-columns: 1fr; }
   .landing-plans { padding: 0 16px; }
-  .landing-fake-composer { font-size: 16px; padding-left: 16px; }
-  .landing-fake-composer > span:first-child { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
   .landing-footer-row nav { margin-left: 0; }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -1139,7 +1107,7 @@ a.ink-button, a.ink-button:hover { color: #fff; text-decoration: none; }
 
 /* Tabular figures also widen "." and ",", so large prices and sentence-like meta use proportional figures */
 .plan-price, .billing-balance, .billing-price, .search-result small, .billing-row .note-meta, .billing-foot .note-meta,
-.onboarding-foot, .landing-hero-meta, .landing-refill, .landing-demo figcaption, .chat-scope, .view-row-body { font-variant-numeric: proportional-nums; }
+.onboarding-foot, .landing-refill, .landing-demo figcaption, .chat-scope, .view-row-body { font-variant-numeric: proportional-nums; }
 .change-copy > .note-meta { color: var(--faint); font-size: 11.5px; text-transform: none; }
 .review-actions .text-button, .review-actions .text-button:hover { border: 0; background: none; }
 .review-actions .ink-button, .review-actions .ink-button:hover { border: 0; background: var(--ink); color: #fff; }
