@@ -486,13 +486,6 @@ a:hover > .synthex-logo .synthex-mark, button:hover > .synthex-logo .synthex-mar
 }
 .canvas-tool-dock .sidebar-tool-button:hover { border: 0; background: var(--canvas); color: var(--ink); }
 .canvas-tool-dock .sidebar-tool-button.active, .canvas-tool-dock .sidebar-tool-button.active:hover { background: var(--ink); color: #fff; }
-.canvas-tool-dock .tool-tooltip {
-  left: calc(100% + 10px); align-items: center; gap: 8px; padding: 6px 8px;
-  border: 1px solid var(--line); border-radius: 2px; background: #fff; box-shadow: 0 18px 40px -18px rgba(17, 18, 20, .3);
-  color: var(--ink); font-size: 12.5px; font-weight: 600;
-}
-.canvas-tool-dock .sidebar-tool-button:hover .tool-tooltip, .canvas-tool-dock .sidebar-tool-button:focus-visible .tool-tooltip { display: inline-flex; }
-.tool-tooltip kbd { padding: 0; border: 0; background: none; color: var(--faint); font: inherit; font-size: 11.5px; font-variant-numeric: tabular-nums; }
 .dock-menu {
   width: 280px; gap: 0; padding: 6px; border: 1px solid var(--line-strong); border-radius: 2px; background: #fff;
   box-shadow: 0 18px 40px -18px rgba(17, 18, 20, .3);
@@ -1331,3 +1324,84 @@ a.ink-button, a.ink-button:hover { color: #fff; text-decoration: none; }
 .graph-group .group-resize-handle.handle-e, .graph-group .group-resize-handle.handle-w { top: 28px; bottom: 28px; height: auto; width: 12px; }
 .graph-group .group-resize-handle.handle-e { right: -6px; left: auto; }
 .graph-group .group-resize-handle.handle-w { left: -6px; }
+
+/* ---------- Tool dock: icons at rest, a labelled panel on hover ---------- */
+/* Every row keeps its 44px icon column in place; hovering (or tabbing into) the dock widens the rows
+   to show each tool's name, what it does and its shortcut as keycaps. Collapse waits a beat so the
+   pointer can cross to the pen options or a menu without the dock snapping shut. */
+.keycaps { display: inline-flex; align-items: center; gap: 3px; }
+.keycap {
+  display: inline-grid; place-items: center; min-width: 22px; height: 22px; padding: 0 6px;
+  border: 1px solid var(--line-strong); border-bottom-width: 2px; border-radius: 4px;
+  background: linear-gradient(180deg, var(--paper, #fff) 0%, var(--canvas) 100%);
+  box-shadow: 0 1px 1px rgba(17, 18, 20, .06), inset 0 1px 0 rgba(255, 255, 255, .8);
+  color: var(--ink); font: 600 11px/1 var(--font-code); text-transform: uppercase;
+}
+
+.canvas-tool-dock .sidebar-drag-handle {
+  display: flex; align-items: center; justify-content: flex-start; gap: 8px; overflow: hidden;
+  padding: 0 0 0 14px; white-space: nowrap;
+}
+.canvas-tool-dock .sidebar-drag-handle svg { flex: none; }
+.canvas-tool-dock .dock-heading { color: var(--proof); font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.dock-heading-hint { margin-left: auto; padding-right: 10px; color: var(--faint); font-size: 11.5px; }
+.dock-heading, .dock-heading-hint { opacity: 0; transition: opacity 80ms linear 200ms; }
+
+.canvas-tool-dock .sidebar-tool-button {
+  display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; align-items: center; justify-items: start;
+  overflow: hidden; text-align: left;
+  transition: width 180ms cubic-bezier(.5, 0, .75, 0) 200ms, background-color 120ms cubic-bezier(.16, 1, .3, 1), color 120ms cubic-bezier(.16, 1, .3, 1);
+}
+.tool-icon { display: grid; place-items: center; width: 44px; height: 44px; }
+.tool-info { display: flex; flex-direction: column; gap: 1px; justify-self: stretch; min-width: 0; padding-left: 2px; }
+.tool-info strong { overflow: hidden; color: var(--ink); font-size: 13.5px; font-weight: 700; line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; }
+.tool-info small { overflow: hidden; color: var(--faint); font-size: 12px; font-weight: 500; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; }
+.tool-trailing { display: flex; align-items: center; padding: 0 10px 0 8px; }
+.tool-info, .tool-trailing { opacity: 0; transition: opacity 80ms linear 200ms; }
+.canvas-tool-dock .sidebar-tool-button.active .tool-info strong { color: #fff; }
+.canvas-tool-dock .sidebar-tool-button.active .tool-info small { color: rgba(255, 255, 255, .72); }
+.canvas-tool-dock .sidebar-tool-button.active .keycap { border-color: rgba(255, 255, 255, .28); background: rgba(255, 255, 255, .12); box-shadow: none; color: #fff; }
+.canvas-tool-dock .sidebar-tool-divider { width: 24px; margin: 4px 10px; transition: width 180ms cubic-bezier(.5, 0, .75, 0) 200ms; }
+
+/* Lock note sizes: a switch at the foot of the dock */
+.dock-lock-btn.is-locked .tool-icon { color: var(--proof); }
+.canvas-tool-dock .dock-lock-btn.is-locked:hover .tool-icon { color: var(--proof); }
+.dock-switch { position: relative; display: block; width: 30px; height: 18px; border-radius: 999px; background: var(--line-strong); transition: background-color 160ms cubic-bezier(.16, 1, .3, 1); }
+.dock-switch i { position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(17, 18, 20, .25); transition: translate 160ms cubic-bezier(.16, 1, .3, 1); }
+.dock-lock-btn.is-locked .dock-switch { background: var(--proof); }
+.dock-lock-btn.is-locked .dock-switch i { translate: 12px 0; }
+
+/* Add menu rows: text on the left, keycap on the right */
+.dock-add-record-menu button { flex-direction: row; align-items: center; justify-content: space-between; gap: 12px; }
+.dock-menu-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+
+/* Sit the dock in the band between the top bar and the minimap (≈490px dock, ≈206px minimap) rather than dead centre */
+@media (min-width: 761px) {
+  .canvas-tool-dock { top: max(72px, calc(50% - 318px)); transform: none; }
+}
+@media (hover: hover) and (min-width: 761px) {
+  .canvas-tool-dock .sidebar-tool-row { align-items: flex-start; }
+  /* invisible bridge over the gap to the pen/marker options, so hover carries across */
+  .sketch-options::before { content: ""; position: absolute; top: 0; right: 100%; bottom: 0; width: 16px; }
+  .canvas-tool-dock:hover .sidebar-tool-button, .canvas-tool-dock.is-expanded .sidebar-tool-button, .canvas-tool-dock:has(:focus-visible) .sidebar-tool-button,
+  .canvas-tool-dock:hover .sidebar-drag-handle, .canvas-tool-dock.is-expanded .sidebar-drag-handle, .canvas-tool-dock:has(:focus-visible) .sidebar-drag-handle {
+    width: 276px;
+    transition: width 220ms cubic-bezier(.16, 1, .3, 1) 60ms, background-color 120ms cubic-bezier(.16, 1, .3, 1), color 120ms cubic-bezier(.16, 1, .3, 1);
+  }
+  .canvas-tool-dock:hover .sidebar-tool-divider, .canvas-tool-dock.is-expanded .sidebar-tool-divider, .canvas-tool-dock:has(:focus-visible) .sidebar-tool-divider {
+    width: 256px; transition: width 220ms cubic-bezier(.16, 1, .3, 1) 60ms;
+  }
+  .canvas-tool-dock:hover :is(.tool-info, .tool-trailing, .dock-heading, .dock-heading-hint),
+  .canvas-tool-dock.is-expanded :is(.tool-info, .tool-trailing, .dock-heading, .dock-heading-hint),
+  .canvas-tool-dock:has(:focus-visible) :is(.tool-info, .tool-trailing, .dock-heading, .dock-heading-hint) {
+    opacity: 1; transition: opacity 160ms cubic-bezier(.16, 1, .3, 1) 140ms;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .canvas-tool-dock *, .canvas-tool-dock *::before { transition-duration: 0ms !important; }
+}
+@media (max-width: 760px) {
+  /* The phone row wraps instead of running off the right edge */
+  .full-canvas-shell .canvas-tool-dock { max-width: calc(100vw - 24px); }
+  .full-canvas-shell .canvas-tool-dock .sidebar-tool-row { flex-wrap: wrap; }
+}
