@@ -6,14 +6,14 @@
 import { deductUserCredits, topUpUserCredits } from './db.ts';
 import { isNeonConfigured } from './neon.ts';
 
-export { CREDIT_RATES, TIER_CREDIT_QUOTAS, type CreditAction } from './plans.ts';
-import { CREDIT_RATES, type CreditAction } from './plans.ts';
+export { CREDIT_RATES, TIER_CREDIT_QUOTAS, type CreditAction, type MeteredAction } from './plans.ts';
+import { CREDIT_RATES, type MeteredAction } from './plans.ts';
 
 
 /**
  * Calculates required context credits for an action and optional units (e.g. pages)
  */
-export function getActionCost(action: Extract<CreditAction, 'chat' | 'quick_research' | 'deep_research' | 'pdf_extract'>, units = 1): number {
+export function getActionCost(action: MeteredAction, units = 1): number {
   const baseRate = CREDIT_RATES[action] ?? 1;
   return Math.max(1, Math.round(baseRate * units));
 }
@@ -24,7 +24,7 @@ export function getActionCost(action: Extract<CreditAction, 'chat' | 'quick_rese
  */
 export function deductCredits(
   userIdentifier: string,
-  action: Extract<CreditAction, 'chat' | 'quick_research' | 'deep_research' | 'pdf_extract'>,
+  action: MeteredAction,
   metadata?: string,
   units = 1
 ):
@@ -59,7 +59,7 @@ export function deductCredits(
  */
 export async function refundCredits(
   userIdentifier: string,
-  action: Extract<CreditAction, 'chat' | 'quick_research' | 'deep_research' | 'pdf_extract'>,
+  action: MeteredAction,
   metadata?: string
 ): Promise<void> {
   await topUpUserCredits(userIdentifier, getActionCost(action), 'refund', metadata);

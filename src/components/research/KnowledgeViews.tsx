@@ -3,7 +3,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { Download, LoaderCircle, Plus, Trash2 } from 'lucide-react';
-import type { CanvasNode, Connection, DatabaseSnapshotSummary, GraphRevisionSummary, ResearchSession } from '@/types/canvas';
+import { RESEARCH_MODE_LABELS, type CanvasNode, type Connection, type DatabaseSnapshotSummary, type GraphRevisionSummary, type ResearchSession } from '@/types/canvas';
 import type { WorkspaceSection } from './WorkspaceSidebar';
 import { getLinkThumbnail } from './SourceMetadata';
 import { nodeLabel } from './nodes/BaseKnowledgeCard';
@@ -91,7 +91,7 @@ export function KnowledgeViews({
               <span className="view-row-main">
                 <strong>{session.query}</strong>
                 {session.summary && <span className="view-row-body">{session.summary}</span>}
-                <span className="note-meta">{[session.mode === 'deep' ? 'Deep' : 'Quick', `${kept} ${kept === 1 ? 'idea' : 'ideas'} kept`, `${discarded} discarded`, shortDate(session.createdAt)].join(' · ')}</span>
+                <span className="note-meta">{[RESEARCH_MODE_LABELS[session.mode] ?? 'Research', `${kept} ${kept === 1 ? 'idea' : 'ideas'} kept`, `${discarded} discarded`, shortDate(session.createdAt)].join(' · ')}</span>
                 {pending && <span className="view-row-draft">Drafts waiting on the map</span>}
               </span>
             </button></li>;

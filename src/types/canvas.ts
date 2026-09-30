@@ -259,7 +259,26 @@ export interface ResearchBlueprint {
   }>;
 }
 
-export type ResearchMode = 'quick' | 'deep';
+/**
+ * quick/deep: web research on a question. organize: sorts the user's own raw thinking into a map,
+ * no search. check: organize, then search whether the specifics are outdated or have better alternatives.
+ */
+export type ResearchMode = 'quick' | 'deep' | 'organize' | 'check';
+
+export const RESEARCH_MODE_LABELS: Record<ResearchMode, string> = {
+  quick: 'Quick research',
+  deep: 'Deep research',
+  organize: 'Organized thinking',
+  check: 'Plan check'
+};
+
+/** Longest input each mode accepts: research takes a question, organize and check take a dump of notes. */
+export const RESEARCH_INPUT_LIMITS: Record<ResearchMode, number> = {
+  quick: 500,
+  deep: 500,
+  organize: 6000,
+  check: 6000
+};
 export type ResearchChangeStatus = 'pending' | 'accepted' | 'rejected';
 
 export interface ResearchChange {
