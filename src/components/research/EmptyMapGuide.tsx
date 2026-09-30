@@ -1,9 +1,6 @@
 'use client';
 
-import { Caveat } from 'next/font/google';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-
-const hand = Caveat({ subsets: ['latin'], weight: ['500', '700'] });
 
 type Box = { left: number; top: number; right: number; bottom: number; width: number; height: number };
 type Size = { width: number; height: number };
@@ -27,7 +24,7 @@ type GuideNote = {
 const NOTES: GuideNote[] = [
   {
     id: 'composer',
-    target: '.map-start .composer textarea',
+    target: '.map-start .composer',
     lines: ['*Start here!* Ask a question,', 'dump your thoughts or paste notes.', 'AI only drafts: you keep what\'s right.'],
     place: (t, n) => [{ x: t.right + 64, y: t.top - 6 }, { x: t.right + 36, y: t.top - n.height - 40 }, { x: t.right - n.width, y: t.bottom + 130 }],
     bend: -0.4,
@@ -35,8 +32,8 @@ const NOTES: GuideNote[] = [
   },
   {
     id: 'note',
-    target: '.map-start .composer .line-button',
-    lines: ['...or build it *by hand*,', 'one note at a time'],
+    target: '.map-start .tool-clip',
+    lines: ['The *paperclip* (or type /)', 'picks a tool: research, or', 'just *write a note* by hand'],
     place: (t, n) => [{ x: t.left - n.width - 36, y: t.bottom + 66 }, { x: t.left + 10, y: t.bottom + 96 }],
     bend: 0.3,
     circle: true,
@@ -44,9 +41,9 @@ const NOTES: GuideNote[] = [
   },
   {
     id: 'tools',
-    target: '.canvas-tool-dock .sidebar-tool-row > button:nth-of-type(2)',
+    target: '.canvas-tool-dock button[aria-label="Connect ideas"]',
     lines: ['*Select* · *connect* ideas · *pan*', 'shortcuts: V · C · H'],
-    place: t => [{ x: t.right + 64, y: t.top - 44 }, { x: t.right + 36, y: t.top - 40 }],
+    place: t => [{ x: t.right + 64, y: t.top - 10 }, { x: t.right + 36, y: t.top - 10 }],
     bend: 0.3,
     tilt: -2
   },
@@ -70,7 +67,7 @@ const NOTES: GuideNote[] = [
     id: 'maps',
     target: '.topbar-project-trigger',
     lines: ['All your *maps* live here:', 'switch or start a new one.', 'Everything saves by itself'],
-    place: t => [{ x: t.left + 30, y: t.bottom + 62 }, { x: t.left + 70, y: t.bottom + 30 }],
+    place: t => [{ x: t.left + 30, y: t.bottom + 62 }, { x: t.left + 60, y: t.bottom + 28 }],
     bend: -0.3,
     tilt: -2
   },
@@ -81,14 +78,6 @@ const NOTES: GuideNote[] = [
     place: (t, n) => [{ x: t.left + t.width / 2 - n.width / 2 + 10, y: t.bottom + 64 }, { x: t.left + t.width / 2 - n.width / 2 + 20, y: t.bottom + 30 }],
     bend: 0.25,
     tilt: 1
-  },
-  {
-    id: 'ask',
-    target: '.ask-button',
-    lines: ['*Chat with your map.*', 'Answers cite your own notes'],
-    place: (t, n) => [{ x: t.left - n.width + 60, y: t.bottom + 112 }, { x: t.left - 20, y: t.bottom + 100 }, { x: t.right - n.width, y: t.bottom + 100 }],
-    bend: 0.3,
-    tilt: 2
   },
   {
     id: 'search',
@@ -304,7 +293,7 @@ export function EmptyMapGuide() {
   }, [layout]);
 
   return (
-    <div ref={layerRef} className={`empty-map-guide ${hand.className} ${ready ? 'is-ready' : ''}`} aria-hidden="true">
+    <div ref={layerRef} className={`empty-map-guide ${ready ? 'is-ready' : ''}`} aria-hidden="true">
       {/* Off-screen copies, used only to measure each note before placing it. */}
       <div className="guide-measure">
         {NOTES.map(note => (

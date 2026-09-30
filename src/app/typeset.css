@@ -176,6 +176,7 @@ body { font-size: 14px; }
   display: flex;
   flex-direction: column;
   color: var(--guide-ink);
+  font-family: var(--font-hand);
   font-size: clamp(17px, 1.1vw + 6px, 22px);
   font-weight: 500;
   line-height: 1.08;
