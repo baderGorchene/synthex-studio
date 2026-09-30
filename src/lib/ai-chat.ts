@@ -46,8 +46,16 @@ export interface ChatStreamEvent {
   error?: string;
 }
 
+export interface ChatHistoryTurn {
+  role: 'user' | 'assistant';
+  content: string;
+  referencedNodeIds?: string[];
+}
+
 export interface ChatOptions {
   selectedNodeId?: string;
+  /** Earlier turns of this conversation, oldest first (loaded server-side, never from the client). */
+  history?: ChatHistoryTurn[];
   projectId?: string;
   /** Aborts the model call, e.g. when the client disconnects. */
   signal?: AbortSignal;
@@ -55,6 +63,10 @@ export interface ChatOptions {
 
 const CHAT_TIMEOUT_MS = 90_000;
 const CONTEXT_TOKEN_BUDGET = 6000;
+const HISTORY_MAX_TURNS = 6;
+const HISTORY_MAX_CHARS = 6000;
+const HISTORY_TURN_MAX_CHARS = 1500;
+const FOLLOW_UP_SEED_LIMIT = 5;
 
 /* =====================================================================
    Output schema and prompt
@@ -108,7 +120,8 @@ Rules:
 1. Ground your reasoning strictly in the retrieved nodes, claims, and evidence links.
 2. Suggest a tool only when the user's intent is an action; otherwise set "toolCall" to null.
 3. Put only IDs of nodes that directly support your answer in "referencedNodeIds".
-4. Never invent sources or treat unverified claims as facts.`;
+4. Never invent sources or treat unverified claims as facts.
+5. Earlier turns of the conversation may precede the latest question. Use them to resolve follow-ups ("that", "the second one"), but ground every fact in the Graph Context of the latest message.`;
 
 function chatPrompt(contextMarkdown: string, question: string) {
   return `Graph Context:\n${contextMarkdown}\n\nUser Question: ${question}`;
@@ -175,13 +188,56 @@ function finalizeChat(output: Partial<ChatOutput> | null | undefined, graph: Kno
 }
 
 /* =====================================================================
+   Conversation memory
+===================================================================== */
+/** The most recent turns that fit the budget, oldest first, each trimmed. */
+function recentHistory(history: ChatHistoryTurn[] = []): ChatHistoryTurn[] {
+  const kept: ChatHistoryTurn[] = [];
+  let chars = 0;
+  for (const turn of history.slice(-HISTORY_MAX_TURNS).reverse()) {
+    const content = turn.content.length > HISTORY_TURN_MAX_CHARS
+      ? `${turn.content.slice(0, HISTORY_TURN_MAX_CHARS)}…`
+      : turn.content;
+    if (!content.trim()) continue;
+    if (chars + content.length > HISTORY_MAX_CHARS) break;
+    chars += content.length;
+    kept.unshift({ ...turn, content });
+  }
+  // A conversation sent to the model must open with a user turn.
+  while (kept[0]?.role === 'assistant') kept.shift();
+  return kept;
+}
+
+/**
+ * Retrieval input for a follow-up: the previous question joins the search text,
+ * and the nodes the previous answer cited seed the graph walk.
+ */
+function followUpRetrieval(question: string, history: ChatHistoryTurn[]) {
+  const previousQuestion = [...history].reverse().find(turn => turn.role === 'user')?.content;
+  const previousAnswer = [...history].reverse().find(turn => turn.role === 'assistant');
+  return {
+    query: previousQuestion ? `${previousQuestion.slice(0, 500)}\n${question}` : question,
+    extraSeedIds: (previousAnswer?.referencedNodeIds ?? []).slice(0, FOLLOW_UP_SEED_LIMIT)
+  };
+}
+
+/* =====================================================================
    Model calls
 ===================================================================== */
-function callSettings(provider: ProviderName, modelId: string, contextMarkdown: string, question: string, signal?: AbortSignal) {
+interface ChatRequest {
+  contextMarkdown: string;
+  question: string;
+  history: ChatHistoryTurn[];
+}
+
+function callSettings(provider: ProviderName, modelId: string, request: ChatRequest, signal?: AbortSignal) {
   return {
     model: languageModel(provider, modelId),
     system: CHAT_SYSTEM_PROMPT,
-    prompt: chatPrompt(contextMarkdown, question),
+    messages: [
+      ...request.history.map(turn => ({ role: turn.role, content: turn.content })),
+      { role: 'user' as const, content: chatPrompt(request.contextMarkdown, request.question) }
+    ],
     output: Output.object({ schema: chatOutputSchema, name: 'graph_answer' }),
     providerOptions: PROVIDER_OPTIONS,
     maxRetries: 0,
@@ -194,26 +250,28 @@ function toUsage(usage: { inputTokens?: number; outputTokens?: number } | undefi
   return usage ? { inputTokens: usage.inputTokens, outputTokens: usage.outputTokens } : undefined;
 }
 
-async function retrieveContext(question: string, graph: KnowledgeGraph, options: ChatOptions) {
+async function prepareRequest(question: string, graph: KnowledgeGraph, options: ChatOptions): Promise<ChatRequest> {
+  const history = recentHistory(options.history);
+  const retrieval = followUpRetrieval(question, history);
   const context = await buildGraphRAGContext({
     projectId: options.projectId ?? 'default',
     graph,
-    query: question,
+    query: retrieval.query,
     selectedNodeId: options.selectedNodeId,
+    extraSeedIds: retrieval.extraSeedIds,
     tokenBudget: CONTEXT_TOKEN_BUDGET
   });
-  return context.markdown;
+  return { contextMarkdown: context.markdown, question, history };
 }
 
 async function generateWithProvider(
   provider: ProviderName,
-  contextMarkdown: string,
-  question: string,
+  request: ChatRequest,
   graph: KnowledgeGraph,
   signal?: AbortSignal
 ): Promise<GraphAnswer> {
   return withModelFallback(provider, async modelId => {
-    const result = await generateText(callSettings(provider, modelId, contextMarkdown, question, signal));
+    const result = await generateText(callSettings(provider, modelId, request, signal));
     const usage = toUsage(result.totalUsage);
     logUsage('chat', provider, modelId, usage);
     return {
@@ -228,8 +286,7 @@ async function generateWithProvider(
 
 async function* streamWithProvider(
   provider: ProviderName,
-  contextMarkdown: string,
-  question: string,
+  request: ChatRequest,
   graph: KnowledgeGraph,
   signal?: AbortSignal
 ): AsyncGenerator<ChatStreamEvent, void, unknown> {
@@ -240,7 +297,7 @@ async function* streamWithProvider(
     // The SDK reports stream failures through onError and a generic rejection of `output`.
     let streamError: unknown;
     const result = streamText({
-      ...callSettings(provider, modelId, contextMarkdown, question, signal),
+      ...callSettings(provider, modelId, request, signal),
       onError: ({ error }) => { streamError = error; }
     });
 
@@ -292,12 +349,12 @@ async function* streamWithProvider(
 ===================================================================== */
 export async function askGraph(question: string, graph: KnowledgeGraph, options: ChatOptions = {}): Promise<GraphAnswer> {
   const plan = providerPlan();
-  const contextMarkdown = await retrieveContext(question, graph, options);
+  const request = await prepareRequest(question, graph, options);
 
   let lastError: unknown;
   for (const step of plan) {
     try {
-      const answer = await generateWithProvider(step.provider, contextMarkdown, question, graph, options.signal);
+      const answer = await generateWithProvider(step.provider, request, graph, options.signal);
       recordProviderOutcome(step.provider, true);
       return { ...answer, usedFallback: step.usedFallback };
     } catch (err) {
@@ -318,12 +375,12 @@ export async function* askGraphStream(
   const plan = providerPlan();
 
   yield { type: 'thinking', step: 'Retrieving graph subgraphs & semantic paths...' };
-  const contextMarkdown = await retrieveContext(question, graph, options);
+  const request = await prepareRequest(question, graph, options);
 
   for (const [index, step] of plan.entries()) {
     try {
       if (index > 0) yield { type: 'status', status: `Switching to ${step.provider}...` };
-      for await (const event of streamWithProvider(step.provider, contextMarkdown, question, graph, options.signal)) {
+      for await (const event of streamWithProvider(step.provider, request, graph, options.signal)) {
         yield event.type === 'done' ? { ...event, usedFallback: step.usedFallback } : event;
       }
       recordProviderOutcome(step.provider, true);

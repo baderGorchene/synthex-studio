@@ -47,6 +47,14 @@ type ChatLine = {
   toolCall?: ChatToolCall | null;
   isStreaming?: boolean;
   researchProgress?: ResearchLiveProgress;
+  savedToMap?: boolean;
+};
+type StoredChatMessage = {
+  role: 'user' | 'assistant';
+  content: string;
+  referencedNodeIds: string[];
+  provider?: 'OpenAI' | 'Gemini' | null;
+  model?: string | null;
 };
 type Modal = 'chat' | 'project' | 'search' | 'credits' | null;
 
@@ -226,6 +234,9 @@ export default function SynthexWorkspace() {
   const [chatInput, setChatInput] = useState('');
   const [chatBusy, setChatBusy] = useState(false);
   const [chatLines, setChatLines] = useState<ChatLine[]>([]);
+  // Conversation memory lives on the server; the thread id ties this transcript to it.
+  const [chatThreadId, setChatThreadId] = useState<string | null>(null);
+  const [chatProjectId, setChatProjectId] = useState<string | null>(null);
   const [activeResearchIntent, setActiveResearchIntent] = useState<{ mode: 'quick' | 'deep' } | null>(null);
   const chatInputRef = useRef<HTMLTextAreaElement>(null);
   const [activeSession, setActiveSession] = useState<ResearchSession | null>(null);
@@ -473,6 +484,40 @@ export default function SynthexWorkspace() {
   useEffect(() => {
     if (projectId && projects.length) void loadProject(projectId);
   }, [projectId, projects.length, loadProject]);
+
+  // Each map has its own chat thread: clear the transcript when the map changes, then restore the latest thread.
+  if (chatProjectId !== projectId) {
+    setChatProjectId(projectId);
+    setChatLines([]);
+    setChatThreadId(null);
+  }
+
+  useEffect(() => {
+    if (!projectId) return;
+    let cancelled = false;
+    fetch(`/api/ai/chat?projectId=${encodeURIComponent(projectId)}`, { cache: 'no-store' })
+      .then(response => (response.ok ? response.json() : null))
+      .then((data: { threadId: string | null; messages: StoredChatMessage[] } | null) => {
+        if (cancelled || !data?.threadId) return;
+        const restored: ChatLine[] = data.messages.map(message => ({
+          role: message.role,
+          text: message.content,
+          referencedNodeIds: message.referencedNodeIds,
+          provider: message.provider ?? undefined,
+          model: message.model ?? undefined
+        }));
+        // Never overwrite a conversation the user already started while this was loading.
+        setChatThreadId(current => current ?? data.threadId);
+        setChatLines(current => (current.length ? current : restored));
+      })
+      .catch(() => { });
+    return () => { cancelled = true; };
+  }, [projectId]);
+
+  const startNewChat = useCallback(() => {
+    setChatThreadId(newId());
+    setChatLines([]);
+  }, []);
 
   const collab = useCollaboration({
     projectId,
@@ -1200,7 +1245,7 @@ export default function SynthexWorkspace() {
           'Content-Type': 'application/json',
           'Accept': 'text/event-stream'
         },
-        body: JSON.stringify({ projectId, question, selectedNodeId: selectedNode?.id, stream: true })
+        body: JSON.stringify({ projectId, question, selectedNodeId: selectedNode?.id, threadId: chatThreadId, stream: true })
       });
 
       if (!response.ok) {
@@ -1271,7 +1316,9 @@ export default function SynthexWorkspace() {
               i++;
               try {
                 const eventData = JSON.parse(nextLine.slice(5).trim());
-                if (eventType === 'thinking' || eventType === 'status') {
+                if (eventType === 'thread' && typeof eventData.threadId === 'string') {
+                  setChatThreadId(eventData.threadId);
+                } else if (eventType === 'thinking' || eventType === 'status') {
                   setThinkingStep(eventData.step || eventData.status || null);
                 } else if (eventType === 'delta' && eventData.text) {
                   setThinkingStep(null);
@@ -1439,6 +1486,50 @@ export default function SynthexWorkspace() {
     });
     announce(`Added ${proposedNodes.length} cards and ${proposedEdges.length} connections to graph.`);
   }, [updateGraph, announce]);
+
+  /** Turns an assistant answer into a note linked to the ideas it cites. The user's click is the review. */
+  const saveAnswerToMap = useCallback((index: number) => {
+    const line = chatLines[index];
+    if (!line || line.role !== 'assistant' || line.savedToMap || !line.text.trim()) return;
+    const question = chatLines[index - 1]?.role === 'user' ? chatLines[index - 1].text : '';
+    const title = (question || line.text.split('\n').find(row => row.trim()) || 'AI answer').replace(/^#+\s*/, '').trim().slice(0, 120);
+    const noteId = `node-${newId()}`;
+    updateGraph(current => {
+      const cited = (line.referencedNodeIds ?? []).filter(id => current.nodesById[id]);
+      const anchor = cited.length ? current.nodesById[cited[0]] : null;
+      const maxX = Math.max(100, ...Object.values(current.nodesById).map(n => n.x + (n.width || 280)));
+      const minY = Math.min(120, ...Object.values(current.nodesById).map(n => n.y));
+      let next = addNode(current, {
+        id: noteId,
+        type: 'note',
+        title,
+        content: line.text,
+        x: anchor ? anchor.x + (anchor.width || 280) + 80 : maxX + 100,
+        y: anchor ? anchor.y : minY,
+        width: 320,
+        createdAt: Date.now(),
+        metadata: { origin: 'ai', rationale: 'Saved from Ask AI' }
+      });
+      for (const citedId of cited) {
+        next = addRelationship(next, {
+          id: `edge-${newId()}`,
+          from: noteId,
+          to: citedId,
+          label: 'references',
+          lineStyle: 'curved',
+          arrowhead: 'end',
+          strokePattern: strokeForLabel('references'),
+          color: 'neutral',
+          animated: false
+        });
+      }
+      return next;
+    });
+    setChatLines(current => current.map((item, i) => (i === index ? { ...item, savedToMap: true } : item)));
+    announce(line.referencedNodeIds?.length
+      ? `Saved the answer as a note linked to ${plural(line.referencedNodeIds.length, 'idea')}.`
+      : 'Saved the answer as a note.');
+  }, [chatLines, updateGraph, announce]);
 
   const handleConnectSuggestedNodes = useCallback((fromId: string, toId: string, label?: string) => {
     connectNodes(fromId, toId, label);
@@ -2081,9 +2172,14 @@ export default function SynthexWorkspace() {
                     )
                   ) : (
                     <div className="drawer-chat-pane">
-                      <p className="note-meta chat-scope">
-                        Answers use only what&apos;s on your map{selectedNode ? ` · On "${selectedNode.title.slice(0, 28)}"` : ''}
-                      </p>
+                      <div className="chat-scope chat-scope-row">
+                        <p className="note-meta">
+                          Answers use only what&apos;s on your map{selectedNode ? ` · On "${selectedNode.title.slice(0, 28)}"` : ''}
+                        </p>
+                        {chatLines.length > 0 && (
+                          <button type="button" className="text-button" onClick={startNewChat} disabled={chatBusy}>New chat</button>
+                        )}
+                      </div>
 
                       {!aiConfigured && (
                         <p className="chat-config-note">Add <code>OPENAI_API_KEY</code> or <code>GEMINI_API_KEY</code> to turn on Ask AI.</p>
@@ -2125,8 +2221,17 @@ export default function SynthexWorkspace() {
                                   />
                                 )}
 
-                                {!line.isStreaming && !line.researchProgress && line.referencedNodeIds && line.referencedNodeIds.length > 0 && (
-                                  <p className="note-meta">Cites {plural(line.referencedNodeIds.length, 'idea')}</p>
+                                {!line.isStreaming && !line.researchProgress && line.text.trim() && (
+                                  <div className="chat-answer-meta">
+                                    {line.referencedNodeIds && line.referencedNodeIds.length > 0 && (
+                                      <p className="note-meta">Cites {plural(line.referencedNodeIds.length, 'idea')}</p>
+                                    )}
+                                    {line.model && (
+                                      <button type="button" className="text-button" onClick={() => saveAnswerToMap(index)} disabled={line.savedToMap}>
+                                        {line.savedToMap ? 'Saved to map' : 'Save to map'}
+                                      </button>
+                                    )}
+                                  </div>
                                 )}
 
                                 {line.toolCall && (

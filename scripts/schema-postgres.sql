@@ -139,6 +139,25 @@ CREATE TABLE IF NOT EXISTS research_sessions (
 CREATE INDEX IF NOT EXISTS idx_research_sessions_project ON research_sessions(project_id, created_at DESC);
 
 -- ----------------------------------------------------------------------------
+-- 6b. Graph Chat Memory (per user, per project, per thread)
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS chat_messages (
+    id VARCHAR(64) PRIMARY KEY,
+    project_id VARCHAR(128) NOT NULL,
+    thread_id VARCHAR(64) NOT NULL,
+    user_key VARCHAR(128) NOT NULL,
+    role VARCHAR(16) NOT NULL,
+    content TEXT NOT NULL,
+    referenced_node_ids TEXT NOT NULL DEFAULT '[]',
+    tool_call TEXT,
+    provider VARCHAR(32),
+    model VARCHAR(64),
+    created_at BIGINT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_chat_messages_thread ON chat_messages(project_id, user_key, thread_id, created_at DESC);
+
+-- ----------------------------------------------------------------------------
 -- 7. Graph Revisions (Undo/Redo & Point-in-Time Checkpoints)
 -- ----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS graph_revisions (

@@ -1522,3 +1522,60 @@ test('research: Gemini deep research plans, runs two grounded hops, and links ho
     assert.deepEqual(result.usage, { inputTokens: 300, outputTokens: 120 });
   });
 });
+
+test('chat memory: messages round-trip per thread and stay private to their user', async () => {
+  const { saveChatMessages, getChatMessages, getLatestChatThreadId } = await import('../src/lib/db.ts');
+  const projectId = `test-memory-${Date.now()}`;
+  const base = { projectId, userKey: 'alice', referencedNodeIds: [], toolCall: null };
+  await saveChatMessages([
+    { ...base, id: `${projectId}-1`, threadId: 't1', role: 'user', content: 'First question', createdAt: 1000 },
+    { ...base, id: `${projectId}-2`, threadId: 't1', role: 'assistant', content: 'First answer', referencedNodeIds: ['n1'], toolCall: { tool: 'organize_layout', parameters: { strategy: 'compact' } }, provider: 'OpenAI', model: 'gpt-6-luna', createdAt: 1001 },
+    { ...base, id: `${projectId}-3`, threadId: 't2', role: 'user', content: 'Newer thread', createdAt: 2000 }
+  ]);
+  const thread = await getChatMessages(projectId, 'alice', 't1');
+  assert.deepEqual(thread.map(m => m.content), ['First question', 'First answer']);
+  assert.deepEqual(thread[1].referencedNodeIds, ['n1']);
+  assert.deepEqual(thread[1].toolCall, { tool: 'organize_layout', parameters: { strategy: 'compact' } });
+  assert.equal(await getLatestChatThreadId(projectId, 'alice'), 't2');
+  assert.deepEqual((await getChatMessages(projectId, 'alice', 't1', 1)).map(m => m.content), ['First answer'], 'limit keeps the newest');
+  assert.deepEqual(await getChatMessages(projectId, 'bob', 't1'), [], 'another user cannot read the thread');
+  assert.equal(await getLatestChatThreadId(projectId, 'bob'), null);
+});
+
+test('chat memory: earlier turns reach the model and follow-ups retrieve the previously cited cards', async () => {
+  const { askGraph } = await import('../src/lib/ai-service.ts');
+  const graph = normalizeGraph(
+    [concept('a', 'Alpha hub'), concept('b', 'Beta hub'), concept('c', 'Gamma hub'), concept('z', 'Zebra stripes camouflage')],
+    [relation('e1', 'a', 'b'), relation('e2', 'b', 'c'), relation('e3', 'a', 'c')]
+  );
+  let requestBody;
+  const handler = (url, body) => {
+    if (url.includes('/v1/embeddings')) return jsonResponse({}, 500);
+    if (url.includes('api.openai.com/v1/responses')) {
+      requestBody = body;
+      return openAiResponse({ answer: 'Predation pressure.', referencedNodeIds: ['z'], toolCall: null });
+    }
+    throw new Error(`unexpected fetch ${url}`);
+  };
+  await withMockedAI({ OPENAI_API_KEY: 'sk-test' }, handler, async () => {
+    const history = [
+      { role: 'assistant', content: 'Orphan greeting that must be dropped' },
+      { role: 'user', content: 'Why do zebras have stripes?' },
+      { role: 'assistant', content: 'Stripes may deter biting flies.', referencedNodeIds: ['z'] }
+    ];
+    const answer = await askGraph('What contradicts that?', graph, { projectId: `test-followup-${Date.now()}`, history });
+    assert.deepEqual(answer.referencedNodeIds, ['z']);
+
+    const input = JSON.stringify(requestBody.input);
+    assert.ok(input.includes('Why do zebras have stripes?'), 'previous question is sent');
+    assert.ok(input.includes('Stripes may deter biting flies.'), 'previous answer is sent');
+    assert.ok(!input.includes('Orphan greeting'), 'history starts with a user turn');
+    const lastMessage = JSON.stringify(requestBody.input.at(-1));
+    assert.ok(lastMessage.includes('What contradicts that?'));
+    assert.ok(lastMessage.includes('Zebra stripes camouflage'), 'the card cited earlier is in the retrieved context');
+
+    // Without history, the same vague question retrieves the best-connected cards instead.
+    await askGraph('What contradicts that?', graph, { projectId: `test-followup-none-${Date.now()}` });
+    assert.ok(!JSON.stringify(requestBody.input.at(-1)).includes('Zebra stripes camouflage'));
+  });
+});

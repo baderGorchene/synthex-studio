@@ -8,6 +8,8 @@ export interface GraphRAGContextOptions {
   graph: KnowledgeGraph;
   query: string;
   selectedNodeId?: string;
+  /** Additional walk seeds, e.g. nodes cited earlier in the conversation. */
+  extraSeedIds?: string[];
   tokenBudget?: number; // approximate token budget (chars / 4)
   maxNodes?: number;
 }
@@ -61,6 +63,7 @@ export async function buildGraphRAGContext(
     graph,
     query,
     selectedNodeId,
+    extraSeedIds = [],
     tokenBudget = 6000,
     maxNodes = 25
   } = options;
@@ -81,6 +84,10 @@ export async function buildGraphRAGContext(
   const seedIds: string[] = [];
   if (selectedNodeId && graph.nodesById[selectedNodeId]) {
     seedIds.push(selectedNodeId);
+  }
+
+  for (const id of extraSeedIds) {
+    if (graph.nodesById[id] && !seedIds.includes(id)) seedIds.push(id);
   }
 
   if (query.trim()) {

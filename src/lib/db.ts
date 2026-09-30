@@ -48,7 +48,10 @@ import {
   neonUpsertUser,
   neonDeductUserCredits,
   neonTopUpUserCredits,
-  neonGetCreditTransactions
+  neonGetCreditTransactions,
+  neonGetChatMessages,
+  neonGetLatestChatThreadId,
+  neonSaveChatMessages
 } from './neon.ts';
 
 const require = createRequire(import.meta.url);
@@ -124,6 +127,24 @@ declare global {
 }
 
 function ensureSchemaColumns(db: Database.Database) {
+  // Graph chat memory: one thread per user per project at a time, newest thread wins.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS chat_messages (
+      id TEXT PRIMARY KEY,
+      projectId TEXT NOT NULL,
+      threadId TEXT NOT NULL,
+      userKey TEXT NOT NULL,
+      role TEXT NOT NULL,
+      content TEXT NOT NULL,
+      referencedNodeIds TEXT NOT NULL DEFAULT '[]',
+      toolCall TEXT,
+      provider TEXT,
+      model TEXT,
+      createdAt INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS chat_messages_thread_idx ON chat_messages(projectId, userKey, threadId, createdAt);
+  `);
+
   const nodeColumns = [
     { name: 'metadata', type: 'TEXT' },
     { name: 'projectId', type: "TEXT NOT NULL DEFAULT 'default'" },
@@ -1217,6 +1238,81 @@ export interface UserRecord {
   contextCredits: number;
   trialEndsAt: number | null;
   createdAt: number;
+}
+
+export interface ChatMessageRecord {
+  id: string;
+  projectId: string;
+  threadId: string;
+  /** The signed-in user (or the local user); threads are private to them. */
+  userKey: string;
+  role: 'user' | 'assistant';
+  content: string;
+  referencedNodeIds: string[];
+  toolCall: unknown | null;
+  provider?: string | null;
+  model?: string | null;
+  createdAt: number;
+}
+
+type DbChatMessageRow = Omit<ChatMessageRecord, 'referencedNodeIds' | 'toolCall'> & { referencedNodeIds: string; toolCall: string | null };
+
+function parseJson<T>(raw: string | null | undefined, fallback: T): T {
+  if (!raw) return fallback;
+  try { return JSON.parse(raw) as T; } catch { return fallback; }
+}
+
+/** The most recent messages of a thread, oldest first. */
+export function getChatMessages(projectId: string, userKey: string, threadId: string, limit = 50): ChatMessageRecord[] | Promise<ChatMessageRecord[]> {
+  if (isNeonConfigured()) {
+    return neonGetChatMessages(projectId, userKey, threadId, limit);
+  }
+  const rows = getDatabase().prepare(`
+    SELECT * FROM chat_messages
+    WHERE projectId = ? AND userKey = ? AND threadId = ?
+    ORDER BY createdAt DESC, rowid DESC
+    LIMIT ?
+  `).all(projectId, userKey, threadId, limit) as DbChatMessageRow[];
+  return rows.reverse().map(row => ({
+    ...row,
+    referencedNodeIds: parseJson<string[]>(row.referencedNodeIds, []),
+    toolCall: parseJson<unknown>(row.toolCall, null)
+  }));
+}
+
+export function getLatestChatThreadId(projectId: string, userKey: string): string | null | Promise<string | null> {
+  if (isNeonConfigured()) {
+    return neonGetLatestChatThreadId(projectId, userKey);
+  }
+  const row = getDatabase().prepare(`
+    SELECT threadId FROM chat_messages
+    WHERE projectId = ? AND userKey = ?
+    ORDER BY createdAt DESC, rowid DESC
+    LIMIT 1
+  `).get(projectId, userKey) as { threadId: string } | undefined;
+  return row?.threadId ?? null;
+}
+
+export function saveChatMessages(messages: ChatMessageRecord[]): void | Promise<void> {
+  if (isNeonConfigured()) {
+    return neonSaveChatMessages(messages);
+  }
+  const db = getDatabase();
+  const insert = db.prepare(`
+    INSERT INTO chat_messages (id, projectId, threadId, userKey, role, content, referencedNodeIds, toolCall, provider, model, createdAt)
+    VALUES (@id, @projectId, @threadId, @userKey, @role, @content, @referencedNodeIds, @toolCall, @provider, @model, @createdAt)
+  `);
+  db.transaction(() => {
+    for (const message of messages) {
+      insert.run({
+        ...message,
+        referencedNodeIds: JSON.stringify(message.referencedNodeIds),
+        toolCall: message.toolCall == null ? null : JSON.stringify(message.toolCall),
+        provider: message.provider ?? null,
+        model: message.model ?? null
+      });
+    }
+  })();
 }
 
 export interface CreditTransaction {
