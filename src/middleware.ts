@@ -19,7 +19,7 @@ const clerkHandler = clerkMiddleware(async (auth, request) => {
   // switch to `strict: true` (nonces) once the app pages render dynamically.
   contentSecurityPolicy: {
     directives: {
-      'img-src': ['https:', 'data:', 'blob:'],          // OG images, favicons, pasted/inline uploads
+      'img-src': ['self', 'https:', 'data:', 'blob:'],  // brand art, OG images, favicons, pasted/inline uploads
       'media-src': ['self', 'https:', 'data:', 'blob:'],
       'frame-src': ['data:', 'blob:', 'https://storage.googleapis.com'], // PDF preview
       'style-src': ['https://fonts.googleapis.com'],
