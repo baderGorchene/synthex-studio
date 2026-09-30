@@ -25,8 +25,7 @@ export async function POST(req: NextRequest) {
     if (!starterProject) {
       starterProject = await createProjectInDb(
         `project-${randomUUID()}`,
-        'Synthex Studio Guide',
-        'rag',
+        'My first map',
         auth.user.id,
         auth.orgId
       );

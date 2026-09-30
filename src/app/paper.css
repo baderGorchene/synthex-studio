@@ -45,7 +45,6 @@ h1, h2, h3 { font-family: var(--font-hand); font-weight: 700; letter-spacing: 0;
 .knowledge-card h2 { font-family: var(--font-hand); font-size: 25px; font-weight: 700; line-height: 1.05; letter-spacing: 0; }
 .knowledge-card.type-question h2 { font-size: 32px; font-weight: 700; letter-spacing: 0; line-height: 1; }
 .knowledge-card.type-source h2, .knowledge-card.type-link h2 { font-size: 22px; }
-.map-starter strong { font-family: var(--font-hand); font-size: 23px; line-height: 1.1; }
 
 /* ---------- Side drawer: a notebook page ---------- */
 .workspace-drawer { background: var(--paper); }
