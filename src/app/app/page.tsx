@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import {
   BookOpenText, Check, ChevronDown,
   FileJson2, FileText, FolderArchive, GitBranch,
-  Image as ImageIcon, LoaderCircle, MoreHorizontal, Plus, Redo2,
+  Image as ImageIcon, LoaderCircle, MessagesSquare, MoreHorizontal, Plus, Redo2,
   Search, Shapes, Share, Square, Undo2, Upload, X
 } from 'lucide-react';
 import { GraphCanvas, adoptLegacyClusterMembers, membersOf } from '@/components/research/GraphCanvas';
@@ -1930,6 +1930,18 @@ export default function SynthexWorkspace() {
           </div>
 
           <div className="topbar-actions">
+            {/* Phones only: the chat panel gets its own button next to the "…" menu */}
+            {section === 'canvas' && (
+              <button
+                type="button"
+                className={`icon-button topbar-chat-button ${rightDrawerOpen ? 'is-active' : ''}`}
+                aria-label={rightDrawerOpen ? 'Close chat' : 'Open chat'}
+                aria-pressed={rightDrawerOpen}
+                onClick={() => { setRightDrawerOpen(value => !value); setOverflowMenuOpen(false); setProjectMenuOpen(false); setExportMenu(false); }}
+              >
+                <MessagesSquare size={19} strokeWidth={1.75} />
+              </button>
+            )}
             {/* Phones: one "…" menu holds search, undo/redo, Share and the other views */}
             <div className="menu-anchor topbar-overflow" ref={overflowMenuRef}>
               <button type="button" className="icon-button" aria-label="More actions" aria-expanded={overflowMenuOpen} onClick={() => { setOverflowMenuOpen(v => !v); setNavMenuOpen(false); setProjectMenuOpen(false); setExportMenu(false); }}><MoreHorizontal size={20} strokeWidth={1.75} /></button>
@@ -1944,6 +1956,10 @@ export default function SynthexWorkspace() {
                   {MORE_VIEWS.map(([key, label]) => (
                     <button key={key} type="button" role="menuitem" className={section === key ? 'is-active' : ''} onClick={() => { navigateTo(key); setOverflowMenuOpen(false); }}><strong>{label}</strong></button>
                   ))}
+                  {sketch.length > 0 && (<>
+                    <div className="menu-separator" />
+                    <button type="button" role="menuitem" onClick={() => { saveSketch(() => []); setOverflowMenuOpen(false); announce('Drawings cleared.'); }}><strong>Clear drawings</strong></button>
+                  </>)}
                 </div>
               )}
             </div>
