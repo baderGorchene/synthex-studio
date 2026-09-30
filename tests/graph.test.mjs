@@ -1579,3 +1579,16 @@ test('chat memory: earlier turns reach the model and follow-ups retrieve the pre
     assert.ok(!JSON.stringify(requestBody.input.at(-1)).includes('Zebra stripes camouflage'));
   });
 });
+
+test('to-do cards read their checklist from Markdown and keep other lines', async () => {
+  const { parseTodos, countTodos, todoContent } = await import('../src/utils/todo.ts');
+  const parsed = parseTodos('Launch prep\n- [ ] Draft post\n- [x] Book room\n  * [X] Nested done\n1. [ ] Numbered\n- plain bullet');
+  assert.deepEqual(parsed.todos.map(todo => [todo.line, todo.checked, todo.text]), [
+    [1, false, 'Draft post'], [2, true, 'Book room'], [3, true, 'Nested done'], [4, false, 'Numbered']
+  ]);
+  assert.equal(parsed.notes, 'Launch prep\n- plain bullet');
+  assert.equal(countTodos(''), 0);
+  assert.equal(countTodos(undefined, [{ id: 'a', text: 'Legacy', completed: true }]), 1);
+  assert.equal(todoContent('', [{ id: 'a', text: 'Legacy', completed: true }, { id: 'b', text: 'Open', completed: false }]), '- [x] Legacy\n- [ ] Open');
+  assert.equal(todoContent('- [ ] kept', [{ id: 'a', text: 'ignored', completed: false }]), '- [ ] kept');
+});

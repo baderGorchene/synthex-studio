@@ -21,6 +21,7 @@ export type CanvasTool = 'select' | 'connect' | 'hand' | 'pen' | 'marker' | 'era
 export const addableRecords = [
   { type: 'note', label: 'Note', description: 'An idea, hypothesis or free text', shortcut: 'N' },
   { type: 'claim', label: 'Claim', description: 'Something you can check against sources', shortcut: 'K' },
+  { type: 'task', label: 'To-do list', description: 'A checklist you can tick off', shortcut: 'T' },
   { type: 'source', label: 'Source', description: 'A link, paper or file', shortcut: 'S' },
   { type: 'image', label: 'Image', description: 'A diagram, chart or screenshot', shortcut: 'I' },
   { type: 'group', label: 'Cluster', description: 'A sheet that holds related notes', shortcut: 'G' }
@@ -241,7 +242,7 @@ export function CanvasToolDock({
             onClick={() => setAddMenuOpen(value => !value)}
           >
             <span className="tool-icon"><Plus {...icon} /></span>
-            <ToolInfo label="Add" description="Note, claim, source, image…" keys="N" />
+            <ToolInfo label="Add" description="Note, to-do, claim, source, image…" keys="N" />
           </button>
 
           {addMenuOpen && (

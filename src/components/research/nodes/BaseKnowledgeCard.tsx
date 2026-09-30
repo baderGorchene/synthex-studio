@@ -1,4 +1,4 @@
-import { Check, ExternalLink, FileText, Images, Maximize2, Pencil, BookOpen, CircleHelp, Layers2, Lightbulb, Link2, Quote, Sparkles } from 'lucide-react';
+import { Check, ExternalLink, FileText, Images, ListTodo, Maximize2, Pencil, BookOpen, CircleHelp, Layers2, Lightbulb, Link2, Quote, Sparkles } from 'lucide-react';
 import type { CanvasNode, SectionResizeHandle } from '@/types/canvas';
 import { formatFileSize } from '@/types/canvas';
 import type { CitationReference } from '@/utils/citation';
@@ -7,11 +7,13 @@ import { MarkdownEditor } from '../MarkdownEditor';
 import { MarkdownView } from '../MarkdownView';
 import { WebsiteLogo, WebsiteImage, getWebsiteDomain, getLinkThumbnail } from '../SourceMetadata';
 import { AttachedFileBadge, getFileCategory } from '../FileAndMediaModal';
+import { TodoList } from './TodoList';
+import { todoContent } from '@/utils/todo';
 
 export const nodeLabel: Record<string, string> = {
   note: 'Note', claim: 'Claim', source: 'Source', image: 'Image', group: 'Cluster',
   concept: 'Idea', hypothesis: 'Hypothesis', question: 'Question', link: 'Link', section: 'Cluster',
-  research_result: 'Research', task: 'Task', ai_insight: 'Insight'
+  research_result: 'Research', task: 'To-do', ai_insight: 'Insight'
 };
 // Stable per-note hang angle (-0.6°..0.6°) so the board reads as pinned paper, not a spreadsheet.
 function hangTilt(id: string) {
@@ -41,6 +43,7 @@ export function NodeGlyph({ type, fileName, fileType }: { type: string; fileName
       return <BookOpen {...props} />;
     }
     case 'note': return <FileText {...props} />;
+    case 'task': return <ListTodo {...props} />;
     case 'image': return <Images {...props} />;
     case 'group': case 'section': return <Layers2 {...props} />;
     case 'ai_insight': case 'research_result': return <Sparkles {...props} />;
@@ -234,7 +237,9 @@ export function BaseKnowledgeCard({
           />
         )}
 
-        {node.type === 'note' && isEditing ? (
+        {node.type === 'task' ? (
+          <TodoList content={todoContent(node.content, node.items)} onChange={onUpdateContent} autoFocus={selected && !node.content && !node.items?.length} />
+        ) : node.type === 'note' && isEditing ? (
           <MarkdownEditor className="card-markdown-editor" value={node.content || ''} onChange={onUpdateContent} ariaLabel="Edit note in Markdown" />
         ) : body && !isImage ? (
           <MarkdownView
