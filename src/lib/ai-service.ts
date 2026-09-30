@@ -1,10 +1,22 @@
-import type { ResearchMode, CanvasNode, CanvasNodeType } from '../types/canvas';
+import type { ResearchMode, CanvasNode } from '../types/canvas';
 import type { KnowledgeGraph } from './graph.ts';
-import type { ChatToolCall, ProposedNodeItem, ProposedRelationshipItem } from '../types/chat-tools';
 import { buildGraphRAGContext } from './rag/context-builder.ts';
 import { syncGraphVectors } from './rag/vector-store.ts';
 import { EMBEDDING_DIMENSION, GEMINI_EMBEDDING_MODEL, OPENAI_EMBEDDING_MODEL } from './rag/embeddings.ts';
-import { auditGraphTopology } from './graph-analyst.ts';
+import {
+  GEMINI_BACKUP_MODEL,
+  GEMINI_MODEL,
+  OPENAI_MODEL,
+  geminiKey,
+  openAiKey,
+  providerPlan,
+  runWithFallback,
+  type ProviderName
+} from './ai-providers.ts';
+
+// Chat lives in ai-chat.ts (AI SDK); research below still calls the provider APIs directly.
+export { askGraph, askGraphStream, sanitizeToolCall } from './ai-chat.ts';
+export type { GraphAnswer, ChatStreamEvent, ChatOptions } from './ai-chat.ts';
 
 export interface ResearchGeneration {
   summary: string;
@@ -23,57 +35,6 @@ export interface ResearchGeneration {
     evidence: string;
     confidence: number;
   }>;
-}
-
-type ProviderName = 'OpenAI' | 'Gemini';
-
-export interface GraphAnswer {
-  answer: string;
-  referencedNodeIds: string[];
-  provider?: ProviderName;
-  model?: string;
-  reasoningEffort?: 'medium';
-  usedFallback?: boolean;
-  toolCall?: ChatToolCall | null;
-}
-
-export interface ChatStreamEvent {
-  type: 'status' | 'thinking' | 'delta' | 'tool' | 'done' | 'error';
-  status?: string;
-  step?: string;
-  text?: string;
-  referencedNodeIds?: string[];
-  model?: string;
-  provider?: ProviderName;
-  usedFallback?: boolean;
-  toolCall?: ChatToolCall | null;
-  error?: string;
-}
-
-function extractProgressiveAnswer(raw: string): string {
-  const match = raw.match(/"answer"\s*:\s*"/);
-  if (!match || match.index === undefined) return '';
-  const start = match.index + match[0].length;
-  let text = '';
-  for (let i = start; i < raw.length; i++) {
-    const char = raw[i];
-    if (char === '\\') {
-      if (i + 1 < raw.length) {
-        const next = raw[i + 1];
-        if (next === '"') { text += '"'; i++; }
-        else if (next === 'n') { text += '\n'; i++; }
-        else if (next === 't') { text += '\t'; i++; }
-        else if (next === '\\') { text += '\\'; i++; }
-        else if (next === 'r') { i++; }
-        else { text += next; i++; }
-      }
-    } else if (char === '"') {
-      break;
-    } else {
-      text += char;
-    }
-  }
-  return text;
 }
 
 export interface ResearchResultPayload {
@@ -103,68 +64,6 @@ export interface AIStatus {
     openai: { configured: boolean; model: string; embeddings: string };
     gemini: { configured: boolean; model: string; embeddings: string };
   };
-}
-
-function openAiKey(): string {
-  return (process.env.OPENAI_API_KEY || '').trim().replace(/^[\"']|[\"']$/g, '');
-}
-
-function geminiKey(): string {
-  return (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '').trim().replace(/^[\"']|[\"']$/g, '');
-}
-
-/* =====================================================================
-   Provider selection
-
-   OpenAI is primary when configured. After an OpenAI failure (with Gemini
-   configured) requests go to Gemini first for a short cooldown, then OpenAI
-   is tried again. The cooldown is per server instance and self-expiring, so
-   one bad request never pins an instance to the fallback until restart.
-===================================================================== */
-const OPENAI_COOLDOWN_MS = 2 * 60_000;
-let openAiCooldownUntil = 0;
-
-function openAiCoolingDown(): boolean {
-  return Date.now() < openAiCooldownUntil;
-}
-
-function providerPlan(): Array<{ provider: ProviderName; usedFallback: boolean }> {
-  const hasOpenAI = Boolean(openAiKey());
-  const hasGemini = Boolean(geminiKey());
-  if (!hasOpenAI && !hasGemini) throw new Error('AI_NOT_CONFIGURED');
-  if (!hasGemini) return [{ provider: 'OpenAI', usedFallback: false }];
-  if (!hasOpenAI) return [{ provider: 'Gemini', usedFallback: false }];
-  if (openAiCoolingDown()) {
-    return [{ provider: 'Gemini', usedFallback: true }, { provider: 'OpenAI', usedFallback: false }];
-  }
-  return [{ provider: 'OpenAI', usedFallback: false }, { provider: 'Gemini', usedFallback: true }];
-}
-
-function recordProviderOutcome(provider: ProviderName, ok: boolean) {
-  if (provider !== 'OpenAI') return;
-  openAiCooldownUntil = ok ? 0 : Date.now() + OPENAI_COOLDOWN_MS;
-}
-
-async function runWithFallback<T extends { usedFallback?: boolean }>(
-  task: string,
-  run: (provider: ProviderName) => Promise<T>,
-  onSwitch?: (provider: ProviderName) => void
-): Promise<T> {
-  const plan = providerPlan();
-  let lastError: unknown;
-  for (const [index, step] of plan.entries()) {
-    if (index > 0) onSwitch?.(step.provider);
-    try {
-      const result = await run(step.provider);
-      recordProviderOutcome(step.provider, true);
-      return { ...result, usedFallback: step.usedFallback };
-    } catch (err) {
-      recordProviderOutcome(step.provider, false);
-      console.warn(`${step.provider} provider failed in ${task}:`, err instanceof Error ? err.message : err);
-      lastError = err;
-    }
-  }
-  throw lastError;
 }
 
 export function getAIStatus(): AIStatus {
@@ -218,134 +117,6 @@ export function getAIStatus(): AIStatus {
 }
 
 /* =====================================================================
-   Chat prompt & tool-call validation (shared by both providers)
-===================================================================== */
-const CHAT_TOOLS_DESCRIPTION = `Available Tools:
-1. 'research': Execute web-grounded research on a topic to generate new knowledge cards staged for human review.
-   Parameters: { "query": "string (specific research query)", "mode": "quick" | "deep" }
-   Use when: The user asks to research a topic, explore a concept further, or find external grounding.
-
-2. 'recommend_improvements': Audit graph topology for missing links, unverified claims, and blind spots.
-   Parameters: { "focusArea": "string (optional specific topic or question to focus on)" }
-   Use when: The user asks for recommendations, next steps, what is missing, or how to improve the graph.
-
-3. 'organize_layout': Rearrange the canvas layout (positions only; no content changes).
-   Parameters: { "strategy": "cluster_by_type" | "hierarchical" | "compact" }
-   Use when: The user asks to tidy, organize, arrange, cluster, or lay out the canvas.
-
-4. 'propose_nodes': Propose adding nodes and connections.
-   Parameters: {
-     "nodes": [{ "title": "string", "type": "concept" | "claim" | "question" | "hypothesis" | "note" | "source", "content": "string", "rationale": "string" }],
-     "relationships": [{ "fromTitle": "string", "toTitle": "string", "label": "string", "evidence": "string" }]
-   }
-   "fromTitle"/"toTitle" must match a proposed node title or an existing node title exactly.
-   Use when: The user asks to add, create, or link specific ideas, claims, or connections.
-
-Every tool call is shown to the user as a suggestion and only runs if they accept it.`;
-
-const CHAT_SYSTEM_PROMPT = `You are Synthex Studio's Agentic Knowledge Graph Assistant running with medium reasoning depth.
-You answer user inquiries with strict epistemic rigor based on the provided Knowledge Graph context, and you can suggest actions using tools.
-
-${CHAT_TOOLS_DESCRIPTION}
-
-Rules:
-1. Ground your reasoning strictly in the retrieved nodes, claims, and evidence links.
-2. If the user's intent is best fulfilled by taking an action (researching, recommending, organizing, or creating nodes), generate the corresponding "toolCall".
-3. If the user is simply asking a question, set "toolCall": null.
-4. Reference only valid node IDs that directly support your claims.
-5. Never invent sources or treat unverified claims as facts.
-6. Return your output strictly as a JSON object matching this schema:
-{
-  "answer": "string (markdown supported)",
-  "referencedNodeIds": ["string array of node IDs cited in the answer"],
-  "toolCall": {
-    "tool": "research" | "recommend_improvements" | "organize_layout" | "propose_nodes",
-    "parameters": { ... }
-  } | null
-}`;
-
-function chatUserPrompt(markdown: string, question: string) {
-  return `Graph Context:\n${markdown}\n\nUser Question: ${question}`;
-}
-
-const PROPOSABLE_NODE_TYPES = new Set<CanvasNodeType>(['concept', 'claim', 'question', 'hypothesis', 'note', 'source']);
-const LAYOUT_STRATEGIES = new Set(['cluster_by_type', 'hierarchical', 'compact']);
-
-function text(value: unknown, max: number): string {
-  return typeof value === 'string' ? value.trim().slice(0, max) : '';
-}
-
-/** Validate a model-proposed tool call; returns null for anything unusable. */
-function sanitizeToolCall(raw: unknown, graph: KnowledgeGraph): ChatToolCall | null {
-  if (!raw || typeof raw !== 'object') return null;
-  const { tool, parameters } = raw as { tool?: unknown; parameters?: unknown };
-  const p = (parameters && typeof parameters === 'object' ? parameters : {}) as Record<string, unknown>;
-
-  switch (tool) {
-    case 'research': {
-      const query = text(p.query, 500);
-      if (!query) return null;
-      return { tool, parameters: { query, mode: p.mode === 'deep' ? 'deep' : 'quick' } };
-    }
-    case 'recommend_improvements': {
-      const focusArea = text(p.focusArea, 500);
-      return { tool, parameters: focusArea ? { focusArea } : {}, analysis: auditGraphTopology(graph) };
-    }
-    case 'organize_layout': {
-      const strategy = LAYOUT_STRATEGIES.has(p.strategy as string) ? p.strategy : 'cluster_by_type';
-      return { tool, parameters: { strategy: strategy as 'cluster_by_type' | 'hierarchical' | 'compact' } };
-    }
-    case 'propose_nodes': {
-      const nodes: ProposedNodeItem[] = (Array.isArray(p.nodes) ? p.nodes : []).flatMap((item: unknown) => {
-        const n = (item && typeof item === 'object' ? item : {}) as Record<string, unknown>;
-        const title = text(n.title, 300);
-        if (!title || !PROPOSABLE_NODE_TYPES.has(n.type as CanvasNodeType)) return [];
-        return [{ title, type: n.type as CanvasNodeType, content: text(n.content, 4000), rationale: text(n.rationale, 1000) }];
-      }).slice(0, 12);
-      const relationships: ProposedRelationshipItem[] = (Array.isArray(p.relationships) ? p.relationships : []).flatMap((item: unknown) => {
-        const r = (item && typeof item === 'object' ? item : {}) as Record<string, unknown>;
-        const fromTitle = text(r.fromTitle, 300);
-        const toTitle = text(r.toTitle, 300);
-        if (!fromTitle || !toTitle) return [];
-        return [{ fromTitle, toTitle, label: text(r.label, 120) || 'related_to', evidence: text(r.evidence, 1000) }];
-      }).slice(0, 20);
-      if (nodes.length === 0 && relationships.length === 0) return null;
-      return { tool, parameters: { nodes, relationships } };
-    }
-    default:
-      return null;
-  }
-}
-
-function finalizeChat(
-  parsed: { answer?: unknown; referencedNodeIds?: unknown; toolCall?: unknown } | null,
-  graph: KnowledgeGraph
-): { answer: string; referencedNodeIds: string[]; toolCall: ChatToolCall | null } {
-  const referencedNodeIds = Array.isArray(parsed?.referencedNodeIds)
-    ? parsed.referencedNodeIds.filter((id: unknown): id is string => typeof id === 'string' && Boolean(graph.nodesById[id])).slice(0, 12)
-    : [];
-  return {
-    answer: typeof parsed?.answer === 'string' ? parsed.answer : '',
-    referencedNodeIds,
-    toolCall: sanitizeToolCall(parsed?.toolCall, graph)
-  };
-}
-
-/** Parse streamed JSON, tolerating a truncated closing brace, else keep the answer text seen so far. */
-function parseStreamedChat(fullContent: string) {
-  try {
-    return JSON.parse(fullContent);
-  } catch {
-    try {
-      const fixed = fullContent.trim().endsWith('}') ? fullContent : fullContent + '}';
-      return JSON.parse(fixed);
-    } catch {
-      return { answer: extractProgressiveAnswer(fullContent) || fullContent, referencedNodeIds: [] };
-    }
-  }
-}
-
-/* =====================================================================
    Research helpers
 ===================================================================== */
 export type ResearchStreamEvent =
@@ -381,6 +152,10 @@ const RESEARCH_JSON_SHAPE = `{
     }
   ]
 }`;
+
+function text(value: unknown, max: number): string {
+  return typeof value === 'string' ? value.trim().slice(0, max) : '';
+}
 
 /** Canonical form used to match a cited URL against the URLs a search actually returned. */
 function canonicalUrl(raw: string): string | null {
@@ -432,10 +207,10 @@ interface OpenAIWebResult {
 }
 
 class OpenAIProvider {
-  readonly model = 'gpt-6-luna';
+  readonly model = OPENAI_MODEL;
   readonly reasoningEffort = 'medium' as const;
 
-  private async chatCompletion(messages: Array<{ role: string; content: string }>, timeoutMs: number, stream = false) {
+  private async chatCompletion(messages: Array<{ role: string; content: string }>, timeoutMs: number) {
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -448,7 +223,6 @@ class OpenAIProvider {
         model: this.model,
         reasoning_effort: this.reasoningEffort,
         response_format: { type: 'json_object' },
-        ...(stream ? { stream: true } : {}),
         messages
       })
     });
@@ -552,117 +326,6 @@ class OpenAIProvider {
       verified.push({ title: seen.title || new URL(seen.url).hostname, url: seen.url });
     }
     return dedupeSources(verified, limit);
-  }
-
-  async chat(
-    question: string,
-    projectId: string,
-    graph: KnowledgeGraph,
-    selectedNodeId?: string
-  ): Promise<GraphAnswer> {
-    if (!openAiKey()) throw new Error('OPENAI_NOT_CONFIGURED');
-
-    const ragContext = await buildGraphRAGContext({
-      projectId,
-      graph,
-      query: question,
-      selectedNodeId,
-      tokenBudget: 6000
-    });
-
-    const content = await this.jsonCompletion([
-      { role: 'system', content: CHAT_SYSTEM_PROMPT },
-      { role: 'user', content: chatUserPrompt(ragContext.markdown, question) }
-    ], 90000);
-
-    const parsed = JSON.parse(content);
-    if (!parsed || typeof parsed.answer !== 'string' || !Array.isArray(parsed.referencedNodeIds)) {
-      throw new Error('OPENAI_MALFORMED_OUTPUT');
-    }
-
-    return {
-      ...finalizeChat(parsed, graph),
-      provider: 'OpenAI',
-      model: this.model,
-      reasoningEffort: this.reasoningEffort
-    };
-  }
-
-  async *chatStream(
-    question: string,
-    projectId: string,
-    graph: KnowledgeGraph,
-    selectedNodeId?: string
-  ): AsyncGenerator<ChatStreamEvent, void, unknown> {
-    if (!openAiKey()) throw new Error('OPENAI_NOT_CONFIGURED');
-
-    yield { type: 'thinking', step: 'Retrieving graph subgraphs & semantic paths...' };
-
-    const ragContext = await buildGraphRAGContext({
-      projectId,
-      graph,
-      query: question,
-      selectedNodeId,
-      tokenBudget: 6000
-    });
-
-    yield { type: 'thinking', step: `Reasoning over graph with ${this.model} (${this.reasoningEffort} reasoning)...` };
-
-    const response = await this.chatCompletion([
-      { role: 'system', content: CHAT_SYSTEM_PROMPT },
-      { role: 'user', content: chatUserPrompt(ragContext.markdown, question) }
-    ], 90000, true);
-
-    if (!response.body) throw new Error('OPENAI_NO_STREAM_BODY');
-
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let fullContent = '';
-    let lastEmittedLength = 0;
-    let buffer = '';
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
-
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed.startsWith('data:')) continue;
-        if (trimmed === 'data: [DONE]') continue;
-
-        try {
-          const json = JSON.parse(trimmed.slice(5).trim());
-          const delta = json.choices?.[0]?.delta?.content || '';
-          if (delta) {
-            fullContent += delta;
-            const currentAnswer = extractProgressiveAnswer(fullContent);
-            if (currentAnswer.length > lastEmittedLength) {
-              const newChars = currentAnswer.slice(lastEmittedLength);
-              lastEmittedLength = currentAnswer.length;
-              yield { type: 'delta', text: newChars };
-            }
-          }
-        } catch {
-          // ignore partial chunks
-        }
-      }
-    }
-
-    const final = finalizeChat(parseStreamedChat(fullContent), graph);
-    if (final.toolCall) yield { type: 'tool', toolCall: final.toolCall };
-
-    yield {
-      type: 'done',
-      text: final.answer,
-      referencedNodeIds: final.referencedNodeIds,
-      model: this.model,
-      provider: 'OpenAI',
-      toolCall: final.toolCall
-    };
   }
 
   async research(
@@ -834,8 +497,8 @@ function groundingQueries(grounding: { webSearchQueries?: unknown }): string[] {
 }
 
 class GeminiProvider {
-  readonly model = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
-  readonly fallbackModel = 'gemini-3.5-flash';
+  readonly model = GEMINI_MODEL;
+  readonly fallbackModel = GEMINI_BACKUP_MODEL;
 
   private requestBody(prompt: string, schema: object, useSearch: boolean) {
     return JSON.stringify({
@@ -848,12 +511,12 @@ class GeminiProvider {
   }
 
   /** POST to the model, retrying once on the fallback model for rate limits (429) or overload (503). */
-  private async post(method: 'generateContent' | 'streamGenerateContent', body: string, timeoutMs: number) {
+  private async post(body: string, timeoutMs: number) {
     const key = geminiKey();
     if (!key) throw new Error('GEMINI_NOT_CONFIGURED');
 
     const execute = (model: string) => fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${model}:${method}${method === 'streamGenerateContent' ? '?alt=sse' : ''}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
@@ -878,172 +541,12 @@ class GeminiProvider {
   }
 
   private async generate(prompt: string, schema: object, useSearch: boolean) {
-    const { response, model } = await this.post('generateContent', this.requestBody(prompt, schema, useSearch), 120000);
+    const { response, model } = await this.post(this.requestBody(prompt, schema, useSearch), 120000);
     const body = await response.json();
     const candidate = body.candidates?.[0];
     const responseText = candidate?.content?.parts?.find((part: { text?: string }) => part.text)?.text;
     if (typeof responseText !== 'string') throw new Error('GEMINI_INVALID_RESPONSE');
     return { data: JSON.parse(responseText), grounding: candidate.groundingMetadata || {}, model };
-  }
-
-  private readonly chatSchema = {
-    type: 'OBJECT',
-    properties: {
-      answer: { type: 'STRING' },
-      referencedNodeIds: { type: 'ARRAY', items: { type: 'STRING' } },
-      toolCall: {
-        type: 'OBJECT',
-        properties: {
-          tool: { type: 'STRING', enum: ['research', 'recommend_improvements', 'organize_layout', 'propose_nodes'] },
-          parameters: {
-            type: 'OBJECT',
-            properties: {
-              query: { type: 'STRING' },
-              mode: { type: 'STRING', enum: ['quick', 'deep'] },
-              focusArea: { type: 'STRING' },
-              strategy: { type: 'STRING', enum: ['cluster_by_type', 'hierarchical', 'compact'] },
-              nodes: {
-                type: 'ARRAY',
-                items: {
-                  type: 'OBJECT',
-                  properties: {
-                    title: { type: 'STRING' },
-                    type: { type: 'STRING', enum: ['concept', 'claim', 'question', 'hypothesis', 'note', 'source'] },
-                    content: { type: 'STRING' },
-                    rationale: { type: 'STRING' }
-                  },
-                  required: ['title', 'type']
-                }
-              },
-              relationships: {
-                type: 'ARRAY',
-                items: {
-                  type: 'OBJECT',
-                  properties: {
-                    fromTitle: { type: 'STRING' },
-                    toTitle: { type: 'STRING' },
-                    label: { type: 'STRING' },
-                    evidence: { type: 'STRING' }
-                  },
-                  required: ['fromTitle', 'toTitle', 'label']
-                }
-              }
-            }
-          }
-        },
-        required: ['tool', 'parameters']
-      }
-    },
-    required: ['answer', 'referencedNodeIds']
-  };
-
-  private chatPrompt(markdown: string, question: string) {
-    return `${CHAT_SYSTEM_PROMPT.replace(/\n6\. Return your output[\s\S]*$/, '\n6. Omit "toolCall" when no action is needed.')}
-
-${chatUserPrompt(markdown, question)}`;
-  }
-
-  async chat(
-    question: string,
-    projectId: string,
-    graph: KnowledgeGraph,
-    selectedNodeId?: string
-  ): Promise<GraphAnswer> {
-    const ragContext = await buildGraphRAGContext({
-      projectId,
-      graph,
-      query: question,
-      selectedNodeId,
-      tokenBudget: 5000
-    });
-
-    const res = await this.generate(this.chatPrompt(ragContext.markdown, question), this.chatSchema, false);
-    const result = res.data;
-    if (!result || typeof result.answer !== 'string' || !Array.isArray(result.referencedNodeIds)) {
-      throw new Error('GEMINI_MALFORMED_OUTPUT');
-    }
-
-    return {
-      ...finalizeChat(result, graph),
-      provider: 'Gemini',
-      model: res.model
-    };
-  }
-
-  async *chatStream(
-    question: string,
-    projectId: string,
-    graph: KnowledgeGraph,
-    selectedNodeId?: string
-  ): AsyncGenerator<ChatStreamEvent, void, unknown> {
-    yield { type: 'thinking', step: 'Retrieving graph subgraphs & semantic paths...' };
-
-    const ragContext = await buildGraphRAGContext({
-      projectId,
-      graph,
-      query: question,
-      selectedNodeId,
-      tokenBudget: 5000
-    });
-
-    yield { type: 'thinking', step: `Reasoning with ${this.model}...` };
-
-    const { response, model } = await this.post(
-      'streamGenerateContent',
-      this.requestBody(this.chatPrompt(ragContext.markdown, question), this.chatSchema, false),
-      90000
-    );
-    if (!response.body) throw new Error('GEMINI_NO_STREAM_BODY');
-
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let fullContent = '';
-    let lastEmittedLength = 0;
-    let buffer = '';
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
-
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed.startsWith('data:')) continue;
-        try {
-          const json = JSON.parse(trimmed.slice(5).trim());
-          const parts = json.candidates?.[0]?.content?.parts;
-          const chunk = Array.isArray(parts)
-            ? parts.map((part: { text?: string; thought?: boolean }) => (part.thought ? '' : part.text || '')).join('')
-            : '';
-          if (!chunk) continue;
-          fullContent += chunk;
-          const currentAnswer = extractProgressiveAnswer(fullContent);
-          if (currentAnswer.length > lastEmittedLength) {
-            const newChars = currentAnswer.slice(lastEmittedLength);
-            lastEmittedLength = currentAnswer.length;
-            yield { type: 'delta', text: newChars };
-          }
-        } catch {
-          // ignore partial chunks
-        }
-      }
-    }
-
-    if (!fullContent) throw new Error('GEMINI_INVALID_RESPONSE');
-    const final = finalizeChat(parseStreamedChat(fullContent), graph);
-    if (final.toolCall) yield { type: 'tool', toolCall: final.toolCall };
-
-    yield {
-      type: 'done',
-      text: final.answer,
-      referencedNodeIds: final.referencedNodeIds,
-      model,
-      provider: 'Gemini',
-      toolCall: final.toolCall
-    };
   }
 
   async research(
@@ -1199,43 +702,6 @@ Use Google Search Grounding to find verified citations, empirical data, and oppo
 ===================================================================== */
 const openaiProvider = new OpenAIProvider();
 const geminiProvider = new GeminiProvider();
-
-export async function askGraph(
-  question: string,
-  graph: KnowledgeGraph,
-  selectedNodeId?: string,
-  projectId = 'default'
-): Promise<GraphAnswer> {
-  return runWithFallback('chat', provider => (provider === 'OpenAI' ? openaiProvider : geminiProvider)
-    .chat(question, projectId, graph, selectedNodeId));
-}
-
-export async function* askGraphStream(
-  question: string,
-  graph: KnowledgeGraph,
-  selectedNodeId?: string,
-  projectId = 'default'
-): AsyncGenerator<ChatStreamEvent, void, unknown> {
-  const plan = providerPlan();
-  for (const [index, step] of plan.entries()) {
-    // Once answer text or a tool call has reached the client, switching providers would duplicate output.
-    let emittedOutput = false;
-    try {
-      if (index > 0) yield { type: 'status', status: `Switching to ${step.provider}...` };
-      const provider = step.provider === 'OpenAI' ? openaiProvider : geminiProvider;
-      for await (const event of provider.chatStream(question, projectId, graph, selectedNodeId)) {
-        if (event.type === 'delta' || event.type === 'tool') emittedOutput = true;
-        yield event.type === 'done' ? { ...event, usedFallback: step.usedFallback } : event;
-      }
-      recordProviderOutcome(step.provider, true);
-      return;
-    } catch (err) {
-      recordProviderOutcome(step.provider, false);
-      console.warn(`${step.provider} provider failed in chatStream:`, err instanceof Error ? err.message : err);
-      if (emittedOutput || index === plan.length - 1) throw err;
-    }
-  }
-}
 
 export async function researchGraph(
   query: string,

@@ -1253,6 +1253,17 @@ test('search index: vectors are only compared with vectors from the same embeddi
   });
 });
 
+const openAiResponse = output => jsonResponse({
+  id: 'resp_1', created_at: 1, model: 'gpt-6-luna',
+  output: [{ type: 'message', role: 'assistant', id: 'msg_1', content: [{ type: 'output_text', text: JSON.stringify(output), annotations: [] }] }],
+  usage: { input_tokens: 120, output_tokens: 30 }
+});
+const geminiResponse = output => jsonResponse({
+  candidates: [{ content: { role: 'model', parts: [{ text: JSON.stringify(output) }] }, finishReason: 'STOP' }],
+  usageMetadata: { promptTokenCount: 100, candidatesTokenCount: 20, totalTokenCount: 120 }
+});
+const noTool = { query: null, mode: null, focusArea: null, strategy: null, nodes: null, relationships: null };
+
 test('chat: tool calls are validated, and a failed OpenAI call falls back to Gemini with a cooldown', async () => {
   const { askGraph, getAIStatus } = await import('../src/lib/ai-service.ts');
   const graph = normalizeGraph([concept('c1', 'Existing idea')], []);
@@ -1260,66 +1271,122 @@ test('chat: tool calls are validated, and a failed OpenAI call falls back to Gem
   let geminiUp = true;
   const handler = (url, body) => {
     if (url.includes('/v1/embeddings') || url.includes(':batchEmbedContents')) return jsonResponse({}, 500);
-    if (url.includes('api.openai.com/v1/chat/completions')) {
-      if (!openAiUp) return jsonResponse({ error: 'overloaded' }, 500);
-      return jsonResponse({ choices: [{ message: { content: JSON.stringify({
-        answer: 'Tidy it.', referencedNodeIds: ['c1', 'ghost'], toolCall: { tool: 'organize_layout', parameters: { strategy: 'spiral' } }
-      }) } }] });
+    if (url.includes('api.openai.com/v1/responses')) {
+      if (!openAiUp) return jsonResponse({ error: { message: 'overloaded', type: 'server_error', code: 'server_error' } }, 500);
+      assert.equal(body.reasoning.effort, 'medium');
+      assert.equal(body.store, false, 'responses are not stored at OpenAI');
+      assert.equal(body.text.format.type, 'json_schema');
+      assert.equal(body.text.format.strict, true);
+      return openAiResponse({
+        answer: 'Tidy it.', referencedNodeIds: ['c1', 'ghost'], toolCall: { tool: 'organize_layout', parameters: { ...noTool, strategy: 'hierarchical' } }
+      });
     }
     if (url.includes(':generateContent')) {
-      if (!geminiUp) return jsonResponse({}, 500);
+      if (!geminiUp) return jsonResponse({ error: { code: 500, message: 'down', status: 'INTERNAL' } }, 500);
       assert.ok(JSON.stringify(body.generationConfig).includes('fromTitle'), 'Gemini schema can express propose_nodes');
-      return jsonResponse({ candidates: [{ content: { parts: [{ text: JSON.stringify({
+      return geminiResponse({
         answer: 'Adding it.', referencedNodeIds: ['c1'],
         toolCall: { tool: 'propose_nodes', parameters: {
-          nodes: [{ title: 'New claim', type: 'claim', content: 'x' }, { title: 'Bad', type: 'section' }],
-          relationships: [{ fromTitle: 'New claim', toTitle: 'Existing idea', label: 'supports' }]
+          ...noTool,
+          nodes: [{ title: 'New claim', type: 'claim', content: 'x', rationale: '' }, { title: '  ', type: 'note', content: '', rationale: '' }],
+          relationships: [{ fromTitle: 'New claim', toTitle: 'Existing idea', label: 'supports', evidence: '' }]
         } }
-      }) }] } }] });
+      });
     }
     throw new Error(`unexpected fetch ${url}`);
   };
   await withMockedAI({ OPENAI_API_KEY: 'sk-test', GEMINI_API_KEY: 'g-test' }, handler, async calls => {
-    const fallback = await askGraph('Add a claim', graph, undefined, `test-chat-${Date.now()}`);
+    const fallback = await askGraph('Add a claim', graph, { projectId: `test-chat-${Date.now()}` });
     assert.equal(fallback.provider, 'Gemini');
     assert.equal(fallback.usedFallback, true);
     assert.equal(fallback.toolCall.tool, 'propose_nodes');
-    assert.deepEqual(fallback.toolCall.parameters.nodes.map(n => n.title), ['New claim'], 'invalid node types are dropped');
+    assert.deepEqual(fallback.toolCall.parameters.nodes.map(n => n.title), ['New claim'], 'blank nodes are dropped');
     assert.equal(fallback.toolCall.parameters.relationships.length, 1);
+    assert.deepEqual(fallback.usage, { inputTokens: 100, outputTokens: 20 });
     assert.equal(getAIStatus().usingFallback, true);
 
     calls.length = 0;
-    await askGraph('Again', graph, undefined, 'test-chat-2');
-    assert.ok(!calls.some(c => c.url.includes('chat/completions')), 'OpenAI is skipped during the cooldown');
+    await askGraph('Again', graph, { projectId: 'test-chat-2' });
+    assert.ok(!calls.some(c => c.url.includes('api.openai.com/v1/responses')), 'OpenAI is skipped during the cooldown');
 
     // A Gemini failure during the cooldown goes back to OpenAI, which clears the cooldown.
     openAiUp = true;
     geminiUp = false;
-    const recovered = await askGraph('Tidy up', graph, undefined, 'test-chat-3');
+    const recovered = await askGraph('Tidy up', graph, { projectId: 'test-chat-3' });
     assert.equal(recovered.provider, 'OpenAI');
     assert.equal(recovered.usedFallback, false);
     assert.deepEqual(recovered.referencedNodeIds, ['c1'], 'unknown node ids are dropped');
-    assert.deepEqual(recovered.toolCall, { tool: 'organize_layout', parameters: { strategy: 'cluster_by_type' } });
+    assert.deepEqual(recovered.toolCall, { tool: 'organize_layout', parameters: { strategy: 'hierarchical' } });
     assert.equal(getAIStatus().usingFallback, false);
+  });
+});
+
+test('chat: sanitizeToolCall rejects or repairs malformed tool calls', async () => {
+  const { sanitizeToolCall } = await import('../src/lib/ai-service.ts');
+  const graph = normalizeGraph([concept('c1', 'Existing idea')], []);
+  assert.equal(sanitizeToolCall(null, graph), null);
+  assert.equal(sanitizeToolCall({ tool: 'delete_everything', parameters: {} }, graph), null);
+  assert.equal(sanitizeToolCall({ tool: 'research', parameters: { query: '   ' } }, graph), null);
+  assert.deepEqual(sanitizeToolCall({ tool: 'research', parameters: { query: 'x', mode: 'extreme' } }, graph), { tool: 'research', parameters: { query: 'x', mode: 'quick' } });
+  assert.deepEqual(sanitizeToolCall({ tool: 'organize_layout', parameters: { strategy: 'spiral' } }, graph), { tool: 'organize_layout', parameters: { strategy: 'cluster_by_type' } });
+  assert.equal(sanitizeToolCall({ tool: 'propose_nodes', parameters: { nodes: [{ title: 'x', type: 'section' }], relationships: null } }, graph), null);
+  assert.ok(sanitizeToolCall({ tool: 'recommend_improvements', parameters: { focusArea: null } }, graph).analysis, 'audit is attached server-side');
+});
+
+test('chat: Gemini retries once on its backup model when the main model is rate limited', async () => {
+  const { askGraph } = await import('../src/lib/ai-service.ts');
+  const graph = normalizeGraph([concept('c1', 'Existing idea')], []);
+  const handler = url => {
+    if (url.includes(':batchEmbedContents')) return jsonResponse({}, 500);
+    if (url.includes('gemini-3.8-flash:generateContent')) return jsonResponse({ error: { code: 429, message: 'quota', status: 'RESOURCE_EXHAUSTED' } }, 429);
+    if (url.includes('gemini-3.5-flash:generateContent')) return geminiResponse({ answer: 'Backup answer.', referencedNodeIds: [], toolCall: null });
+    throw new Error(`unexpected fetch ${url}`);
+  };
+  await withMockedAI({ GEMINI_API_KEY: 'g-test' }, handler, async () => {
+    const answer = await askGraph('hi', graph, { projectId: `test-backup-${Date.now()}` });
+    assert.equal(answer.model, 'gemini-3.5-flash');
+    assert.equal(answer.answer, 'Backup answer.');
+    assert.equal(answer.toolCall, null);
+  });
+});
+
+test('chat: an aborted request stops without falling back', async () => {
+  const { askGraph } = await import('../src/lib/ai-service.ts');
+  const graph = normalizeGraph([concept('c1', 'Existing idea')], []);
+  const abort = new AbortController();
+  const handler = url => {
+    if (url.includes('/v1/embeddings') || url.includes(':batchEmbedContents')) return jsonResponse({}, 500);
+    if (url.includes('api.openai.com/v1/responses')) {
+      abort.abort();
+      throw Object.assign(new Error('The operation was aborted.'), { name: 'AbortError' });
+    }
+    throw new Error(`fallback should not run: ${url}`);
+  };
+  await withMockedAI({ OPENAI_API_KEY: 'sk-test', GEMINI_API_KEY: 'g-test' }, handler, async calls => {
+    await assert.rejects(askGraph('hi', graph, { projectId: `test-abort-${Date.now()}`, signal: abort.signal }));
+    assert.ok(!calls.some(c => c.url.includes('generativelanguage')), 'no Gemini call after abort');
   });
 });
 
 test('chat stream: Gemini answers are streamed incrementally', async () => {
   const { askGraphStream } = await import('../src/lib/ai-service.ts');
   const graph = normalizeGraph([concept('c1', 'Existing idea')], []);
-  const payload = JSON.stringify({ answer: 'Hello streamed world', referencedNodeIds: ['c1'] });
+  const payload = JSON.stringify({ answer: 'Hello streamed world', referencedNodeIds: ['c1'], toolCall: null });
   const chunks = [payload.slice(0, 20), payload.slice(20, 30), payload.slice(30)];
   const handler = url => {
     if (url.includes(':batchEmbedContents')) return jsonResponse({}, 500);
-    if (url.includes(':streamGenerateContent?alt=sse')) {
-      const sse = chunks.map(text => `data: ${JSON.stringify({ candidates: [{ content: { parts: [{ text }] } }] })}\n\n`).join('');
+    if (url.includes(':streamGenerateContent')) {
+      const sse = chunks.map((text, i) => `data: ${JSON.stringify({
+        candidates: [{ content: { role: 'model', parts: [{ text }] }, ...(i === chunks.length - 1 ? { finishReason: 'STOP' } : {}) }],
+        ...(i === chunks.length - 1 ? { usageMetadata: { promptTokenCount: 50, candidatesTokenCount: 10, totalTokenCount: 60 } } : {})
+      })}\n\n`).join('');
       return new Response(sse, { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
     }
     throw new Error(`unexpected fetch ${url}`);
   };
   await withMockedAI({ GEMINI_API_KEY: 'g-test' }, handler, async () => {
     const events = [];
-    for await (const event of askGraphStream('hi', graph, undefined, `test-stream-${Date.now()}`)) events.push(event);
+    for await (const event of askGraphStream('hi', graph, { projectId: `test-stream-${Date.now()}` })) events.push(event);
     const deltas = events.filter(e => e.type === 'delta');
     assert.ok(deltas.length > 1, 'more than one delta event');
     assert.equal(deltas.map(e => e.text).join(''), 'Hello streamed world');
@@ -1327,6 +1394,7 @@ test('chat stream: Gemini answers are streamed incrementally', async () => {
     assert.equal(done.type, 'done');
     assert.equal(done.usedFallback, false, 'Gemini as the only provider is not a fallback');
     assert.deepEqual(done.referencedNodeIds, ['c1']);
+    assert.deepEqual(done.usage, { inputTokens: 50, outputTokens: 10 });
   });
 });
 

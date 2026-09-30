@@ -54,25 +54,41 @@ export async function POST(request: Request) {
 
     if (wantsStream) {
       const encoder = new TextEncoder();
+      // Stops the model call when the client disconnects or cancels the stream.
+      const cancel = new AbortController();
+      const signal = AbortSignal.any([request.signal, cancel.signal]);
+      let open = true;
       const stream = new ReadableStream({
         async start(controller) {
+          const send = (event: string, data: unknown) => {
+            if (open) controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+          };
           try {
-            for await (const event of askGraphStream(question, graph, selectedNodeId, projectId)) {
-              controller.enqueue(encoder.encode(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`));
+            for await (const event of askGraphStream(question, graph, { selectedNodeId, projectId, signal })) {
+              send(event.type, event);
             }
-            if (creditsRemaining !== undefined) {
-              controller.enqueue(encoder.encode(`event: credits\ndata: ${JSON.stringify({ creditsRemaining })}\n\n`));
-            }
-            controller.close();
+            if (creditsRemaining !== undefined) send('credits', { creditsRemaining });
           } catch (err) {
-            console.error('Graph chat stream failed:', err);
+            if (signal.aborted) {
+              console.info('Graph chat stream cancelled by the client.');
+            } else {
+              console.error('Graph chat stream failed:', err);
+            }
             await refund();
             const errorMsg = err instanceof Error && err.message === 'AI_NOT_CONFIGURED'
               ? 'AI is not configured on the server.'
               : 'The graph assistant could not answer. Your credit was refunded.';
-            controller.enqueue(encoder.encode(`event: error\ndata: ${JSON.stringify({ error: errorMsg })}\n\n`));
-            controller.close();
+            send('error', { error: errorMsg });
+          } finally {
+            if (open) {
+              open = false;
+              controller.close();
+            }
           }
+        },
+        cancel() {
+          open = false;
+          cancel.abort();
         }
       });
 
@@ -87,7 +103,7 @@ export async function POST(request: Request) {
 
     let result: Awaited<ReturnType<typeof askGraph>>;
     try {
-      result = await askGraph(question, graph, selectedNodeId, projectId);
+      result = await askGraph(question, graph, { selectedNodeId, projectId, signal: request.signal });
     } catch (err) {
       await refund();
       throw err;
