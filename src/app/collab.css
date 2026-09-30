@@ -1,0 +1,117 @@
+/* Live collaboration: who's here (top bar), their pens and what they're working on (board). Each person has one
+   colour (--peer), kept clear of proof blue, which stays reserved for AI drafts. */
+
+/* ---------- Top bar ---------- */
+.presence-bar { position: relative; display: flex; align-items: center; margin-right: 6px; }
+.presence-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  height: 40px;
+  padding: 0 6px 0 10px;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+}
+.presence-trigger:hover, .presence-trigger[aria-expanded="true"] { border-color: var(--line-strong); background: var(--paper); }
+.presence-status { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12.5px; font-weight: 700; white-space: nowrap; }
+.presence-status i { width: 8px; height: 8px; border-radius: 50%; background: #2B8A3E; box-shadow: 0 0 0 0 rgba(43, 138, 62, .45); animation: presence-pulse 2.4s ease-out infinite; }
+.presence-bar.is-connecting .presence-status i, .presence-bar.is-reconnecting .presence-status i { background: #E8590C; animation: status-blink 1.1s steps(2, jump-none) infinite; }
+.presence-bar.is-reconnecting .presence-status { color: #C2410C; }
+@keyframes presence-pulse { 0% { box-shadow: 0 0 0 0 rgba(43, 138, 62, .45); } 70%, 100% { box-shadow: 0 0 0 7px rgba(43, 138, 62, 0); } }
+
+.presence-avatars { display: inline-flex; align-items: center; flex-direction: row-reverse; }
+.presence-avatars .presence-avatar { margin-left: -8px; animation: presence-in 260ms cubic-bezier(.16, 1, .3, 1) both; }
+.presence-avatars .presence-avatar:last-child { margin-left: 0; }
+.presence-avatar {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border: 2px solid var(--paper);
+  border-radius: 50%;
+  background: var(--peer, var(--faint));
+  color: #fff;
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  box-shadow: 0 2px 6px -2px rgba(17, 18, 20, .45);
+}
+.presence-avatar.is-self { outline: 1.5px dashed var(--faint); outline-offset: 1px; }
+.presence-avatar.is-more { background: var(--ink); }
+@keyframes presence-in { from { opacity: 0; scale: .6; } to { opacity: 1; scale: 1; } }
+
+.presence-menu { position: absolute; z-index: 80; top: calc(100% + 8px); right: 0; width: 300px; padding: 12px; }
+.presence-menu-title { margin: 0 0 8px; color: var(--ink); font-family: var(--font-hand); font-size: 22px; font-weight: 700; }
+.presence-menu ul { display: flex; flex-direction: column; gap: 2px; margin: 0; padding: 0; list-style: none; }
+.presence-menu li { display: flex; align-items: center; gap: 10px; min-height: 48px; padding: 4px 4px 4px 2px; border-top: 1px solid var(--line); }
+.presence-menu li:first-child { border-top: 0; }
+.presence-who { display: flex; flex: 1; min-width: 0; flex-direction: column; }
+.presence-who strong { overflow: hidden; color: var(--ink); font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
+.presence-who small { overflow: hidden; color: var(--muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.presence-jump { width: 36px; height: 36px; }
+.presence-empty { margin: 8px 0 0; font-size: 12.5px; line-height: 1.45; }
+
+/* ---------- Board ---------- */
+.presence-layer { position: absolute; inset: 0; z-index: 30; pointer-events: none; }
+.presence-outline {
+  position: absolute;
+  border: 2px solid var(--peer);
+  border-radius: 4px;
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--peer) 14%, transparent);
+  transition: left 120ms linear, top 120ms linear, width 120ms linear, height 120ms linear;
+}
+.presence-outline.is-editing { border-style: dashed; }
+.presence-tag {
+  position: absolute;
+  left: -2px;
+  bottom: 100%;
+  padding: 3px 8px 2px;
+  border-radius: 3px 3px 3px 0;
+  background: var(--peer);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+  transform: scale(var(--inv-zoom, 1));
+  transform-origin: 0 100%;
+}
+.presence-outline.is-editing .presence-tag { font-family: var(--font-hand); font-size: 16px; }
+
+/* The pen: a small pointer in their colour with a name tag, the same size at any zoom, gliding between updates. */
+.presence-cursor { position: absolute; top: 0; left: 0; transition: transform 90ms linear; will-change: transform; }
+.presence-cursor-inner { transform: scale(var(--inv-zoom, 1)); transform-origin: 0 0; }
+.presence-cursor svg { display: block; filter: drop-shadow(0 2px 3px rgba(17, 18, 20, .35)); }
+.presence-cursor path { fill: var(--peer); stroke: #fff; stroke-width: 1.5; stroke-linejoin: round; }
+.presence-cursor-name {
+  position: absolute;
+  top: 18px;
+  left: 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px 3px 3px;
+  border-radius: 999px;
+  background: var(--peer);
+  color: #fff;
+  font-family: var(--font-hand);
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+  box-shadow: 0 4px 10px -4px rgba(17, 18, 20, .5);
+}
+.presence-cursor-name b { display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: rgba(255, 255, 255, .25); font-family: var(--font-ui); font-size: 10px; }
+
+@media (max-width: 760px) {
+  .presence-status { display: none; }
+  .presence-menu { position: fixed; top: 64px; right: 8px; left: 8px; width: auto; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .presence-status i, .presence-avatars .presence-avatar { animation: none; }
+  .presence-cursor, .presence-outline { transition: none; }
+}

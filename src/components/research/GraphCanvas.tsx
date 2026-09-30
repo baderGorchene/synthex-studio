@@ -1,6 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import type { PresencePeer } from '@/components/collab/useCollaboration';
+import { initialsOf } from '@/components/collab/PresenceBar';
 import { ExternalLink, Pencil, Trash2 } from 'lucide-react';
 import type { CanvasNode, Connection, Coordinates, SectionResizeHandle, CanvasNodeType, Viewport } from '@/types/canvas';
 import type { KnowledgeGraph } from '@/lib/graph';
@@ -460,7 +462,7 @@ export function GraphCanvas({
   graph, selectedNodeIds, viewport, setViewport, activeTool, spacePressed, linkingFromId,
   autoFitKey, editingNoteId, onSelectNode, onSelectMultipleNodes, onClearSelection, onClickAway, onCancelLinking, onMoveNodes, onConnect,
   onStartLinking, onToggleGroup, onEditNote, onUpdateNote, onUpdateRelationship, onDeleteRelationship, onResizeGroup, onOpenGroup,
-  onAddRecordWithData, onDeleteNodes, onAssignCluster, projectId, isResizeLocked = false, draftIds, detachingIds, keptIds, sketch, sketchStyle, onSketchChange, onOpenEditor, placingIds, onPlaced
+  onAddRecordWithData, onDeleteNodes, onAssignCluster, presence, onPointerWorld, projectId, isResizeLocked = false, draftIds, detachingIds, keptIds, sketch, sketchStyle, onSketchChange, onOpenEditor, placingIds, onPlaced
 }: {
   graph: KnowledgeGraph;
   selectedNodeIds: string[];
@@ -490,6 +492,10 @@ export function GraphCanvas({
   onDeleteNodes?: (ids: string[]) => void;
   /** Notes were dropped into a cluster (id) or out of every cluster (null). Without it, membership never changes. */
   onAssignCluster?: (ids: string[], clusterId: string | null) => void;
+  /** Teammates on this map: their cursors and the notes they have selected or are writing in. */
+  presence?: PresencePeer[];
+  /** Where the pointer is on the board (world coordinates), or null when it leaves. Shared as our live cursor. */
+  onPointerWorld?: (point: Coordinates | null) => void;
   projectId?: string;
   isResizeLocked?: boolean;
   /** Node and edge ids that are AI drafts: rendered in proof blue, read-only until kept. */
@@ -1425,11 +1431,14 @@ export function GraphCanvas({
       onWheel={zoomAtPointer}
       onPointerDown={startCanvasPointerDown}
       onPointerMove={event => {
-        if (!linkingFromId) return;
+        if (!linkingFromId && !onPointerWorld) return;
         const rect = canvasRef.current?.getBoundingClientRect();
         if (!rect) return;
-        setCursorWorld({ x: (event.clientX - rect.left - viewport.pan.x) / viewport.zoom, y: (event.clientY - rect.top - viewport.pan.y) / viewport.zoom });
+        const point = { x: (event.clientX - rect.left - viewport.pan.x) / viewport.zoom, y: (event.clientY - rect.top - viewport.pan.y) / viewport.zoom };
+        onPointerWorld?.(point);
+        if (linkingFromId) setCursorWorld(point);
       }}
+      onPointerLeave={() => onPointerWorld?.(null)}
       style={{
         // Squared notebook paper: 32px squares (10 per 320px module), panned and zoomed with the map.
         backgroundSize: `${32 * viewport.zoom}px ${32 * viewport.zoom}px`,
@@ -1603,6 +1612,37 @@ export function GraphCanvas({
             </g>
           ))}
         </svg>
+
+        {/* Teammates: an outline in their colour round what they've selected, a tag on what they're writing in, and their pen. */}
+        {presence && presence.length > 0 && (
+          <div className="presence-layer" aria-hidden="true" style={{ ['--inv-zoom' as string]: 1 / Math.max(0.05, viewport.zoom) }}>
+            {presence.flatMap(peer => {
+              const ids = new Set([...peer.selection, ...(peer.editing ? [peer.editing] : [])]);
+              return [...ids].map(id => {
+                const box = nodeBounds[id];
+                if (!box || !visibleIds.has(id)) return null;
+                const editing = peer.editing === id;
+                return (
+                  <div
+                    key={`${peer.clientId}-${id}`}
+                    className={`presence-outline ${editing ? 'is-editing' : ''}`}
+                    style={{ left: box.x - 6, top: box.y - 6, width: box.width + 12, height: box.height + 12, ['--peer' as string]: peer.user.color }}
+                  >
+                    <span className="presence-tag">{editing ? `${peer.user.name} is writing…` : peer.user.name}</span>
+                  </div>
+                );
+              });
+            })}
+            {presence.map(peer => peer.cursor && (
+              <div key={peer.clientId} className="presence-cursor" style={{ transform: `translate(${peer.cursor.x}px, ${peer.cursor.y}px)`, ['--peer' as string]: peer.user.color }}>
+                <div className="presence-cursor-inner">
+                  <svg width="20" height="22" viewBox="0 0 20 22"><path d="M2 2 L17 11 L10 12.5 L6.5 19.5 Z" /></svg>
+                  <span className="presence-cursor-name"><b>{initialsOf(peer.user.name)}</b>{peer.user.name}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
       {sketch && onSketchChange && <SketchLayer tool={activeTool} viewport={viewport} strokes={sketch} style={sketchStyle || DEFAULT_SKETCH_STYLE} onChange={onSketchChange} />}
       {linkingFromId && <div className="canvas-instruction" role="status"><span>Now click the idea to connect it to</span><button type="button" className="text-button" onClick={onCancelLinking}>Cancel</button></div>}

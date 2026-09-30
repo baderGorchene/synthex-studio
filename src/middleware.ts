@@ -9,6 +9,16 @@ const isPublicRoute = createRouteMatcher([
   '/uploads/(.*)'
 ]);
 
+// Live collaboration connects the browser to the sync server over WebSocket; allow only that origin.
+const collabOrigin = (() => {
+  try {
+    const url = new URL(process.env.COLLAB_SERVER_URL || '');
+    return /^wss?:$/.test(url.protocol) ? url.origin : null;
+  } catch {
+    return null;
+  }
+})();
+
 const clerkHandler = clerkMiddleware(async (auth, request) => {
   if (!isPublicRoute(request)) {
     await auth.protect();
@@ -20,6 +30,7 @@ const clerkHandler = clerkMiddleware(async (auth, request) => {
   contentSecurityPolicy: {
     directives: {
       'img-src': ['self', 'https:', 'data:', 'blob:'],  // brand art, OG images, favicons, pasted/inline uploads
+      ...(collabOrigin ? { 'connect-src': [collabOrigin] } : {}),
       'media-src': ['self', 'https:', 'data:', 'blob:'],
       'frame-src': ['data:', 'blob:', 'https://storage.googleapis.com'], // PDF preview
       'style-src': ['https://fonts.googleapis.com'],

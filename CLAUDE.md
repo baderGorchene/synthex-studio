@@ -51,6 +51,9 @@ This module contains the pure functions: `normalizeGraph` (which rejects duplica
 - Graph RAG (`src/lib/rag/`): embeddings go into a `sqlite-vec` store. `vector-store.ts` does hybrid search and `graph-walker.ts` extracts the reasoning subgraph. `context-builder.ts` assembles a context that fits a token budget. On serverless/Neon, sqlite-vec can fail to load, and the code degrades without it. `PUT /api/graph` calls `indexGraphNodes` to keep embeddings current.
 - `graph-analyst.ts` / `graph-organizer.ts` provide AI-assisted analysis and layout of the graph.
 
+### Live collaboration (optional)
+`collab-server/` is a separate Hocuspocus (Yjs) relay, deployed on its own (Cloud Run, `--max-instances=1`). It holds open maps in memory only; the database stays the source of truth and every client keeps autosaving the merged map through `PUT /api/graph`. `GET /api/collab/token` does the usual project-access check and signs a 10-minute HMAC token (`src/lib/collab-token.ts`, `COLLAB_SECRET`) bound to one map, which the server verifies. `src/components/collab/useCollaboration.ts` syncs notes and links as two Y.Maps keyed by id (the first client in a room seeds it from its loaded graph), shares presence (cursor, selection, editing), and rebases the undo stack onto teammates' edits so undo only reverts your own. With `COLLAB_SERVER_URL`/`COLLAB_SECRET` unset, everything runs as before. The CSP `connect-src` allows the collab origin.
+
 ### Uploads
 `POST /api/upload` stores a file in GCS when `GCS_BUCKET_NAME` is set (`storage-gcs.ts`). Otherwise it writes to `public/uploads/{projectId}/`. On read-only serverless filesystems it falls back to an inline data URI. Nodes store only the returned URL. `PUT /api/graph` rejects bodies over 5 MB, so large base64 payloads in nodes will break autosave.
 

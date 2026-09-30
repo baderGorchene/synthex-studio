@@ -13,6 +13,7 @@ const eslintConfig = defineConfig([
     "build/**",
     "next-env.d.ts",
     "synthex_canvas.tsx",
+    "collab-server/node_modules/**",
   ]),
 ]);
 

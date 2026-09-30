@@ -8,6 +8,8 @@ import {
   Search, Shapes, Share, Square, Undo2, Upload, X
 } from 'lucide-react';
 import { GraphCanvas, adoptLegacyClusterMembers, membersOf } from '@/components/research/GraphCanvas';
+import { useCollaboration, type PresencePeer, type RemoteChange } from '@/components/collab/useCollaboration';
+import { PresenceBar } from '@/components/collab/PresenceBar';
 import { KnowledgeViews } from '@/components/research/KnowledgeViews';
 import { NodeInspector } from '@/components/research/NodeInspector';
 import { NoteEditor } from '@/components/research/NoteEditor';
@@ -311,6 +313,25 @@ export default function SynthexWorkspace() {
 
   const lastRevisionTime = useRef(Date.now());
 
+  // ---- Live collaboration -------------------------------------------------------------------------------------
+  // A graph that arrived from teammates. Our undo history is rebased onto it, so Ctrl+Z only ever takes back our own
+  // edits and never a teammate's.
+  const remoteGraphRef = useRef<KnowledgeGraph | null>(null);
+  const applyRemoteGraph = useCallback((next: KnowledgeGraph, changed: RemoteChange) => {
+    const rebase = (snapshot: KnowledgeGraph): KnowledgeGraph => {
+      const nodesById = { ...snapshot.nodesById };
+      const edgesById = { ...snapshot.edgesById };
+      for (const id of changed.nodes) { if (next.nodesById[id]) nodesById[id] = next.nodesById[id]; else delete nodesById[id]; }
+      for (const id of changed.edges) { if (next.edgesById[id]) edgesById[id] = next.edgesById[id]; else delete edgesById[id]; }
+      for (const [id, edge] of Object.entries(edgesById)) if (!nodesById[edge.from] || !nodesById[edge.to]) delete edgesById[id];
+      return { ...snapshot, nodesById, edgesById };
+    };
+    undoStack.current = undoStack.current.map(rebase);
+    redoStack.current = redoStack.current.map(rebase);
+    remoteGraphRef.current = next;
+    setGraph(next);
+  }, []);
+
   const restoreRevision = useCallback(async (revisionId: string) => {
     try {
       const res = await fetch('/api/revisions', {
@@ -453,8 +474,37 @@ export default function SynthexWorkspace() {
     if (projectId && projects.length) void loadProject(projectId);
   }, [projectId, projects.length, loadProject]);
 
+  const collab = useCollaboration({
+    projectId,
+    ready: Boolean(loadedProject) && loadedProject === projectId && !loading,
+    graph,
+    onRemoteGraph: applyRemoteGraph,
+    onPeerJoined: user => announce(`${user.name} joined this map.`),
+    onPeerLeft: user => announce(`${user.name} left this map.`)
+  });
+  const { setSelection: shareSelection, setEditing: shareEditing } = collab;
+  useEffect(() => { shareSelection(selectedIds); }, [selectedIds, shareSelection]);
+  useEffect(() => { shareEditing(editingNoteId || editorId); }, [editingNoteId, editorId, shareEditing]);
+
+  const jumpToPeer = useCallback((peer: PresencePeer) => {
+    const target = peer.cursor
+      || (() => {
+        const node = graphRef.current.nodesById[peer.editing || peer.selection[0] || ''];
+        return node ? { x: node.x + (node.width || 280) / 2, y: node.y + 80 } : null;
+      })();
+    if (!target) return;
+    const stage = document.querySelector('.graph-canvas')?.getBoundingClientRect();
+    const width = stage?.width || window.innerWidth;
+    const height = stage?.height || window.innerHeight;
+    setViewport(current => ({ zoom: current.zoom, pan: { x: width / 2 - target.x * current.zoom, y: height / 2 - target.y * current.zoom } }));
+    announce(`Jumped to ${peer.user.name}.`);
+  }, [announce]);
+
   useEffect(() => {
     if (!loadedProject || loadedProject !== projectId || loading) return;
+    // Everyone on a live map saves the merged map; teammates' edits wait a little longer so the person who made
+    // them usually saves first, and only our own edits make history snapshots.
+    const fromTeammate = graph === remoteGraphRef.current;
     setSaveState('saving');
     const timer = setTimeout(async () => {
       try {
@@ -464,7 +514,7 @@ export default function SynthexWorkspace() {
         }));
         setSaveState('saved');
         const now = Date.now();
-        if (now - lastRevisionTime.current > 120_000) {
+        if (!fromTeammate && now - lastRevisionTime.current > 120_000) {
           lastRevisionTime.current = now;
           fetch('/api/revisions', {
             method: 'POST',
@@ -482,7 +532,7 @@ export default function SynthexWorkspace() {
         setSaveState('error');
         announce(error instanceof Error ? error.message : 'Changes could not be saved.');
       }
-    }, 450);
+    }, fromTeammate ? 1500 + Math.round(Math.random() * 1000) : 450);
     return () => clearTimeout(timer);
   }, [graph, projectId, loadedProject, loading, announce]);
 
@@ -1827,6 +1877,7 @@ export default function SynthexWorkspace() {
                 </div>
               )}
             </div>
+            <PresenceBar status={collab.status} peers={collab.peers} self={collab.self} onJumpTo={jumpToPeer} titleOf={id => graph.nodesById[id]?.title} />
             <UserNav contextCredits={userAuth?.contextCredits} subscriptionTier={userAuth?.subscriptionTier} onOpenCreditsModal={() => setModal('credits')} onWorkspaceChange={() => void loadProjects()} />
           </div>
           <input ref={fileRef} type="file" accept="application/json,.json" hidden onChange={handleImport} />
@@ -1895,6 +1946,8 @@ export default function SynthexWorkspace() {
                   onAddRecordWithData={addRecord}
                   projectId={projectId}
                   isResizeLocked={isResizeLocked}
+                  presence={collab.peers}
+                  onPointerWorld={collab.status === 'off' ? undefined : collab.setCursor}
                 />}
 
                 {!loading && Object.keys(displayGraph.nodesById).length > 0 && (
