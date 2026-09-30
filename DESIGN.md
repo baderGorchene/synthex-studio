@@ -137,7 +137,7 @@ The world refuses the pastel sticky-note whiteboard and the glowing neural graph
 AI never writes to the map directly, and the visual system encodes that. Drafts arrive as a separate proof-blue layer with dashed hairlines, and they only turn ink when kept.
 
 **Key Characteristics:**
-- Paper notes on a field of faint column bands (280px column + 40px gutter module, panned and zoomed with the map).
+- Paper notes on squared notebook paper: 32px squares in light notebook blue (`rgba(84,150,212,.26)`), panned and zoomed with the map. The blue is softer and cooler than proof blue so it never reads as a draft.
 - One typeface, one hairline, 2px corners everywhere.
 - Rule weight encodes node type: question 4px, idea/note 2px, source 1px, hypothesis dotted.
 - Proof blue is reserved for drafts and selection.
@@ -228,9 +228,11 @@ The signature component: a white sheet pinned to the board.
 - **Rule weight by type:** question 4px, idea/note 2px, source and link 1px, hypothesis 2px dotted.
 - **Pin:** 20px ink disc, top-centre.
 - **Content:** title (type-scaled), muted summary, meta line.
-- **Hover / selected:** shadow lifts; selection adds a 2px proof outline offset 5px plus resize handles.
+- **Hover:** shadow deepens.
+- **Selected (unpinned):** no outline. The pin pops up and away (translate 10px -22px, -40°, fades, 260ms) and the sheet lifts 12px and swings -0.8° onto a longer, softer shadow, as if flying free of the board; deselecting reverses it (320ms). Resize handles are 9px proof squares.
 - **Grabbed:** scales 1.035, lifts 4px, tilts with the drag; pin rises.
-- **Custom accent:** the inspector accent tints only the top rule and pin; the border stays hairline and the paper stays white.
+- **Colour:** chosen in the editor (Plain paper, red, orange, green, blue, purple, pink). A coloured note gets a 9% paper tint, its top rule and pin in the colour; titles stay ink. Drafts always stay proof blue. Stored as a hex `node.color`; legacy named colours render as plain.
+- **Edit tab:** selecting one note or cluster never opens a panel. An ink "Edit" tab rises from behind the lifted sheet's top edge (260ms, 140ms after the lift); Enter does the same.
 
 ### Draft Note (AI draft layer)
 - **Style:** dashed hairline sides and bottom, solid proof top rule, proof pin, proof title and meta, proof-ink summary, meta reads "… · Draft". Draft edges and arrowheads render in proof blue.
@@ -284,6 +286,73 @@ Curved connectors with labels in plain 12/500 muted type on a field-coloured bac
 
 ### Known gaps (shipped, not yet resolved)
 - Relation labels render beneath notes, so a label whose edge midpoint falls under a note is hidden.
-- The top bar and the inspector are not yet rebuilt to this system; they carry older chrome (blue-glyph buttons, a credits pill, a pill-shaped properties tab).
-- The inspector still offers a 10-colour accent palette that tints rule and pin; the system tolerates it but does not endorse it.
-- Line pattern is stored per edge, not derived from the relation label. Research-created edges default to solid, so the dashed/dotted grammar holds only where edges were set by hand or seeded.
+- Line pattern is stored per edge. Choosing a relation preset now derives the pattern from the label (`strokeForLabel`) unless the pattern was already set by hand, but research-created edges still default to solid.
+- Menus and popovers that unmount when closed (views, share, map switcher, dock menus) have no 120ms exit; only the drawer, trash bar and toast animate out.
+- SVG/PNG export (`src/lib/canvas-export.ts`) still uses its own coloured palette and one emoji; it is outside this system until that module is restyled.
+
+## Logo
+
+Two overlapping squares in an 18×18 box: an **ink square 12×12 at (0,0)** and a **proof-blue square 10×10 at (8,8)**, read as "a note pinned onto the grid, your thinking plus the AI's draft". The wordmark "Synthex" is Schibsted Grotesk 800, −0.02em, ink.
+
+- `SynthexLogo` renders inline SVG (`size`, `withWordmark` default true); `SynthexMark` is the mark alone for the footer and collapsed states.
+- Top bar: 18px mark beside a 17px wordmark, no box around it.
+- Icons come from file conventions: `src/app/icon.svg` (transparent, vector, any size) and `src/app/apple-icon.tsx` (180px, `ImageResponse`, field `#FAFAF8` behind the mark).
+- The only motion: on hover in a nav or the top bar, the blue square shifts 1px down-right over 160ms (the pin presses).
+
+## Motion grammar
+
+- **Easing:** out `cubic-bezier(.16,1,.3,1)`; in, for things leaving, `cubic-bezier(.5,0,.75,.3)`. No bounce, elastic or overshoot.
+- **Durations:** 120ms state changes; 160–200ms popovers, tabs, drawer, dialogs; 300–440ms the note moments. Nothing over 600ms except the one-time landing demo.
+- **Authored note moments:** draft arrival (`note-land` 420ms, `pin-in` at +300ms); removal (`pin-pop` 300ms, `note-drop` 440ms after 130ms, node removed at 580ms); the research status blink on the proof square.
+- **Keep:** kept drafts get `.is-kept` for 400ms after `saveReview` succeeds. The pin goes proof → ink over 200ms with a 1px press (`pin-press` 160ms); title, summary and meta colour follow over 200ms. Nothing else moves.
+- **Popovers and menus:** enter with opacity 0→1 and `translate: 0 -4px → 0`, 160ms (`pop-in`). No scale.
+- **Drawer:** `translate: 16px → 0` plus fade, 200ms out-easing; closes in 160ms in-easing.
+- **Layout switch:** the document pane slides in from 24px (`doc-in`, 220ms); the map resizes without animation.
+- **Selection:** the proof outline appears instantly; the document's highlighted block fades its background in 160ms.
+- **Buttons:** hover changes colour only (120ms); `:active` presses `translate: 0 1px`. No hover lift or scale anywhere; notes deepen their shadow only.
+- **Toast:** `translate: 0 8px → 0` plus fade, 200ms; leaves in 160ms at the end of its 3.6s life.
+- **FAQ chevron:** rotates 180° in 160ms.
+- **Removed:** marching dashes and dots on relations (the `animated` field is kept but never rendered), pulse glows, rotating rings, hover lifts, the trash-bin bounce.
+- **Reduced motion:** every animation above is off; state changes are instant and removal skips straight to removal.
+
+## More components
+
+### Right drawer (Properties / Ask AI)
+White paper, hairline, 2px corners, the float shadow. Underline tabs at 14/600: muted, the active tab ink with a 2px ink underline; the selection count is plain "(2)". Ask AI opens with one meta line, "Answers use only what's on your map", has "Audit my map" as its only tool, and speaks in plain paragraphs: your line 14/600 ink, the answer 14.5 body, references as a meta line ("Cites 3 ideas"). Its compose box reuses the composer (1.5px ink border, 44px ink send button) with the cost as meta text ("1 credit"). Research steps are a numbered list; only the running step carries the proof square.
+
+### Properties form
+Labels 12.5/600 muted; inputs and selects 44px, 1px `rule-strong`, 2px corners, 15px text. Type offers Idea, Question, Claim, Hypothesis, Note, Source. Origin and relations sit on one meta line. "Remove from map" is a red (#B42318) text button and plays the pin-detach.
+
+### Tool dock
+White paper, float shadow, 44px buttons; the active tool is an ink fill with a white icon. Tooltips are 12.5px on paper with the shortcut in a plain `<kbd>` set as meta. The add and tidy menus are text rows (14/700 name, one meta line). Note-size locking lives in More views.
+
+### Clusters
+Open: a hand-drawn pen loop round its notes (two wobbly strokes, 1.6px ink at 70% and 1px at 40%, seeded by the cluster id so it never jitters, starting past the corner and overshooting its end), with no fill so the grid shows through. The title (15/800) and meta sit on a strip of masking tape (`rgba(234,232,223,.95)`, torn ends, -1.4°) across the top-left of the loop; "Fold / Unfold" is a text button at top-right. Selected: the pen line turns proof blue. Folded: a white sheet taped to the board by the same tape, lifting like a note when selected. Both stay resizable. In Properties a cluster takes a colour (ink, red, orange, green, blue, purple, pink: the pen line, a 22% tint of the tape and, when folded, the sheet's top rule) and a line width on a slider (1–6px), stored in `node.color` and `metadata.penWidth` (older S/M/L values still read as 1.2 / 1.8 / 3px). A coloured cluster keeps its colour when selected; its tape gets the proof underline.
+
+### Pen, marker and eraser
+Dock tools P (pen), B (marker) and E (eraser) draw on the board only: marks never enter the graph, the document or AI context, and are saved per map in the viewer's browser. While the pen or marker is active, a flyout beside the dock offers a width slider with a live stroke preview (pen 1–10px, marker 6–40px) and six colours. Pen colours are inks (ink, red, green, blue, purple, orange); marker colours are highlighters (yellow, green, pink, orange, blue, grey) drawn at 50% with multiply. These are the user's own marks, so they may use colour; proof blue is deliberately not offered. The last size and colour per tool are remembered. The eraser removes a whole stroke on click or drag. Strokes drawn before colours existed keep their original ink look. "Clear drawings" sits in More views.
+
+### Canvas chrome
+Trash bar: white, hairline, "Drop to remove"; over it, ink fill and white text. Connect hint: the draft bar's shape in ink. Marquee: 1px proof border over a 6% proof wash, square corners. Relation options: a views-menu popover of text-row presets plus three segmented controls (line, pattern, arrow); relations are grey, drafts are proof.
+
+### Views
+A 960px column on the field with white paper sections. Heading 30/800 plus one tabular meta line; no icon tiles. Tables have hairline rows, 14px text, tabular numbers and a sticky 12.5/700 muted header. Claim status is text with a leading glyph: ● supported (ink), ◐ weakly supported, disputed or contradicted (muted), ○ unverified, open or outdated (faint); the word is always shown. Research runs waiting on the map say "Drafts waiting on the map" in proof.
+
+### Dialogs and popovers
+Map switcher: a popover listing maps as rows with a "New map" form (Name, Empty map / Guided example, "Create map"). Review drafts: the query as title, a meta line, each draft under a 2px proof top rule with 44px "Keep" (ink) and "Discard" (text), footer "Keep all" and "Save decisions". Search: a command palette with an 18px input and rows (15/700 title, meta "Idea · 2 sources"). Credits and plans: columns separated by 1px rules, the recommended plan under a 4px ink rule with the ink button, numbers 40/800. Credits in the top bar are a 12.5/600 muted text button.
+
+### Landing page
+The same world, louder: a 72px sticky nav on the field; a hero on a 12-column grid (80px margins, 24px gutters, `column-band` stripes) with an 88px/800 headline and one ink CTA; a demo board built from the real note classes that plays once (the question types, three drafts land 120ms apart, "Keep all" presses, pins turn ink) and holds, showing the final state under reduced motion; three numbered steps on rules; alternating feature rows with real interface crops; plan columns on white paper; a `<details>` FAQ; a final composer-shaped link to sign-up. Prices, plan names and credit numbers come from `src/lib/plans.ts`.
+
+### Sign in / sign up
+Split layout: the logo and one 60px line on the field, Clerk on white. Clerk is styled only through `appearance` (ink primary and text, white background, 2px radius, the UI font).
+
+### Full-screen editor
+Opened from the Edit tab or Enter. The board stays visible behind a 14px blur over a 42% field wash; the editor is white paper (max 1180 × 820, the float shadow) that rises 16px as it fades in. The left half is a piece of the squared board where the note lands and re-pins itself as a live preview of every change; the right half is the Properties form (title, type, colour, text, sources, "Remove from map"). Changes save as you type; "Done", × , Esc or a click on the blur closes it and focus returns to where it was. Tab stays inside the dialog, and while it is open canvas shortcuts are off. On phones it fills the screen with the preview above the form.
+
+### Placement
+- **Notes never overlap.** Notes keep at least 8px of board between them (clusters are areas, not obstacles). While a dragged or resized note sits on another, it shows a red "No room here" tab and a red dashed outline; dropping there snaps everything that moved back to where it started (a resize reverts to its old size).
+- **New items spawn unpinned.** An item added from the dock or a shortcut appears in the middle of the visible board with no pin, lifted and dashed, under an ink "Drag me to an empty spot" tab. As soon as it sits on free board (straight away if the centre was empty) the pin presses in and it becomes an ordinary note.
+- **Cluster corners:** on hover or selection each corner shows a 3px pen bracket (cluster colour, proof when selected and uncoloured) with a 44px grab area; edges are invisible strips you can drag too.
+- **Folded clusters** list every member title on its own dotted row (30px each) and grow to fit; the header row (Edit, open, Unfold) sits under the tape.
+- **Clusters resize from what you see:** handles start from the loop's on-screen bounds (it is stretched round its notes), so a drag answers at once; a cluster can't shrink smaller than its notes.

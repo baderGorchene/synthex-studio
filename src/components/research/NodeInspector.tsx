@@ -1,6 +1,9 @@
 import { useState } from 'react';
-import { Check, ExternalLink, FileText, Images, LoaderCircle, Maximize2, Paperclip, Sparkles, Trash2, Upload, X } from 'lucide-react';
-import { CanvasNode, CanvasNodeType, ELEMENT_PALETTE, formatFileSize } from '@/types/canvas';
+import { ExternalLink, FileText, Images, LoaderCircle, Maximize2, Paperclip, Trash2, Upload, X } from 'lucide-react';
+import { CanvasNode, CanvasNodeType, formatFileSize } from '@/types/canvas';
+import { nodeLabel } from './nodes/BaseKnowledgeCard';
+import { CLUSTER_COLORS, CLUSTER_RANGE, clusterWidth } from './inkPalette';
+import { WidthSlider } from './WidthSlider';
 import { uploadFile } from '@/lib/upload';
 import { MarkdownEditor } from './MarkdownEditor';
 import { CustomSelect } from './CustomSelect';
@@ -8,21 +11,7 @@ import { WebsiteLogo, WebsiteImage, getWebsiteDomain, extractYouTubeVideoId } fr
 import { AttachedFileBadge, FileViewerModal, ImageViewerModal } from './FileAndMediaModal';
 import { extractPageNumber } from '@/utils/citation';
 
-const types: Array<{ id: CanvasNodeType; label: string }> = [
-  { id: 'note', label: 'Note & Idea' },
-  { id: 'claim', label: 'Claim & Inquiry' },
-  { id: 'source', label: 'Document & Source' },
-  { id: 'image', label: 'Media & Figure' },
-  { id: 'link', label: 'Link & Website' },
-  { id: 'group', label: 'Knowledge cluster' },
-  { id: 'concept', label: 'Concept (legacy)' },
-  { id: 'hypothesis', label: 'Hypothesis (legacy)' },
-  { id: 'question', label: 'Question (legacy)' },
-  { id: 'section', label: 'Knowledge cluster (legacy)' },
-  { id: 'task', label: 'Research task' },
-  { id: 'research_result', label: 'Research result' },
-  { id: 'ai_insight', label: 'AI insight' }
-];
+const types: CanvasNodeType[] = ['concept', 'question', 'claim', 'hypothesis', 'note', 'source'];
 
 export function NodeInspector({
   node, relationshipCount, onUpdate, onDelete, onClose, floating = false, hideHeader = false, projectId, allNodes = []
@@ -47,55 +36,47 @@ export function NodeInspector({
     <aside className={`inspector-panel ${floating ? 'floating-inspector' : ''}`} aria-label="Node details">
       {!hideHeader && (
         <div className="inspector-head">
-          <div className="inspector-title"><span className="panel-overline">Knowledge record</span><h2>Details</h2></div>
+          <div className="inspector-title"><h2>Details</h2></div>
           <button className="icon-button" aria-label="Close details" onClick={onClose}><X size={17} /></button>
         </div>
       )}
       <label className="field-label" htmlFor="node-title">Title</label>
-      <input id="node-title" className="field-input title-input" maxLength={500} value={node.title} onChange={event => onUpdate({ title: event.target.value })} onBlur={() => { if (!node.title.trim()) onUpdate({ title: node.type === 'group' || node.type === 'section' ? 'Untitled cluster' : 'Untitled record' }); }} />
+      <input id="node-title" className="field-input title-input" maxLength={500} value={node.title} onChange={event => onUpdate({ title: event.target.value })} onBlur={() => { if (!node.title.trim()) onUpdate({ title: node.type === 'group' || node.type === 'section' ? 'Untitled cluster' : 'Untitled idea' }); }} />
 
-      <label className="field-label" htmlFor="node-kind">Record type</label>
-      <CustomSelect className="field-input" ariaLabel="Record type" value={node.type} options={types.map(item => ({ value: item.id, label: item.label }))} onChange={value => {
+      <label className="field-label" htmlFor="node-kind">Type</label>
+      <CustomSelect className="field-input" ariaLabel="Type" value={node.type} options={(types.includes(node.type) ? types : [node.type, ...types]).map(id => ({ value: id, label: nodeLabel[id] || 'Idea' }))} onChange={value => {
         const type = value as CanvasNodeType;
         onUpdate({ type, ...(type === 'claim' && !node.metadata?.claimStatus ? { metadata: { ...node.metadata, claimStatus: 'unverified' } } : {}) });
       }} />
 
-      <div className="inspector-color-section">
-        <div className="inspector-color-head">
-          <label className="field-label" style={{ margin: 0 }}>Color accent</label>
-          {node.color && (
-            <button
-              type="button"
-              className="color-reset-btn"
-              onClick={() => onUpdate({ color: undefined })}
-              title="Reset to default color"
-            >
-              Reset
+      {/* Colour: a cluster's pen line and tape, or a note's paper tint, top rule and pin. The first swatch clears it. */}
+      <span className="field-label" id="item-colour">Colour</span>
+      <div className="swatch-row" role="radiogroup" aria-labelledby="item-colour">
+        {CLUSTER_COLORS.map(swatch => {
+          const isCluster = node.type === 'group' || node.type === 'section';
+          const plain = swatch.id === 'ink';
+          const label = plain ? (isCluster ? 'Ink' : 'Plain paper') : swatch.label;
+          const checked = plain ? !node.color?.startsWith('#') || node.color === swatch.hex : node.color === swatch.hex;
+          return (
+            <button key={swatch.id} type="button" role="radio" aria-checked={checked} aria-label={label} title={label}
+              onClick={() => onUpdate({ color: plain ? undefined : swatch.hex })}>
+              <i className={plain && !isCluster ? 'is-plain' : undefined} style={{ background: plain && !isCluster ? '#fff' : swatch.hex }} />
             </button>
-          )}
-        </div>
-        <div className="inspector-palette-grid" role="radiogroup" aria-label="Select accent color">
-          {ELEMENT_PALETTE.map(hex => {
-            const isSelected = node.color?.toLowerCase() === hex.toLowerCase();
-            return (
-              <button
-                key={hex}
-                type="button"
-                role="radio"
-                aria-checked={isSelected}
-                className={`palette-swatch ${isSelected ? 'is-selected' : ''}`}
-                style={{ backgroundColor: hex }}
-                onClick={() => onUpdate({ color: isSelected ? undefined : hex })}
-                title={`Accent: ${hex}`}
-              >
-                {isSelected && <Check size={12} className="swatch-check" />}
-              </button>
-            );
-          })}
-        </div>
+          );
+        })}
       </div>
 
-      <label className="field-label" htmlFor="node-content">Notes & Content</label>
+      {(node.type === 'group' || node.type === 'section') && <>
+        <WidthSlider
+          label="Line width"
+          value={clusterWidth(node.metadata?.penWidth)}
+          {...CLUSTER_RANGE}
+          color={node.color?.startsWith('#') ? node.color : '#111214'}
+          onChange={penWidth => onUpdate({ metadata: { ...node.metadata, penWidth } })}
+        />
+      </>}
+
+      <label className="field-label" htmlFor="node-content">Text</label>
       {node.type === 'note' ? <MarkdownEditor className="inspector-markdown-editor" ariaLabel="Note content in Markdown" value={node.content || ''} onChange={content => onUpdate({ content })} /> : <textarea id="node-content" className="field-input field-textarea" maxLength={50000} placeholder="Add a description, evidence, or a working thought…" value={node.content || ''} onChange={event => onUpdate({ content: event.target.value })} />}
 
       {node.type === 'image' && (
@@ -110,7 +91,7 @@ export function NodeInspector({
         <label className="field-label" htmlFor="claim-status">Evidence status</label>
         <CustomSelect className="field-input" ariaLabel="Evidence status" value={node.metadata?.claimStatus || 'unverified'} options={[
           { value: 'unverified', label: 'Unverified' },
-          { value: 'open_question', label: '❓ Open inquiry / Question' },
+          { value: 'open_question', label: 'Open question' },
           { value: 'weakly_supported', label: 'Weakly supported' },
           { value: 'supported', label: 'Supported' },
           { value: 'disputed', label: 'Disputed' },
@@ -123,13 +104,15 @@ export function NodeInspector({
         <EvidenceInspectorSection node={node} allNodes={allNodes} onUpdate={onUpdate} />
       )}
 
-      <div className="inspector-facts">
-        <div><span>Origin</span><strong>{node.metadata?.origin || 'user'}</strong></div>
-        <div><span>Relationships</span><strong>{relationshipCount}</strong></div>
-        {typeof node.metadata?.confidence === 'number' && <div><span>AI confidence</span><strong>{Math.round(node.metadata.confidence * 100)}%</strong></div>}
-      </div>
+      <p className="note-meta inspector-meta">
+        {[
+          node.metadata?.origin === 'ai' ? 'From research' : 'Added by you',
+          `${relationshipCount} ${relationshipCount === 1 ? 'relation' : 'relations'}`,
+          typeof node.metadata?.confidence === 'number' ? `${Math.round(node.metadata.confidence * 100)}% confidence` : null
+        ].filter(Boolean).join(' · ')}
+      </p>
       {node.metadata?.rationale && <p className="inspector-rationale">{node.metadata.rationale}</p>}
-      <button className="danger-button" title="Delete record (Delete / Backspace)" onClick={onDelete}><Trash2 size={15} /> Delete record</button>
+      <button className="text-button danger-text inspector-remove" title="Remove from map (Delete / Backspace)" onClick={onDelete}>Remove from map</button>
     </aside>
   );
 }
@@ -198,27 +181,26 @@ function EvidenceInspectorSection({
   return (
     <div className="inspector-evidence-section">
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <label className="field-label" style={{ margin: 0 }}>Grounding & Evidence ({evidenceList.length})</label>
+        <label className="field-label" style={{ margin: 0 }}>Sources cited ({evidenceList.length})</label>
         <button
           type="button"
           className="inspector-action-btn"
           onClick={() => setIsAdding(prev => !prev)}
           title="Add evidence citation"
         >
-          <span>{isAdding ? 'Cancel' : '+ Add Citation'}</span>
+          <span>{isAdding ? 'Cancel' : 'Cite a source'}</span>
         </button>
       </div>
 
       {isAdding && (
-        <div className="evidence-citation-card" style={{ background: '#f0fdf4', borderColor: '#bbf7d0' }}>
-          <span style={{ fontSize: 11, fontWeight: 700, color: '#166534' }}>Attach Source Citation</span>
+        <div className="evidence-citation-card">
+          <span className="evidence-form-title">Cite a source</span>
           <select
             className="field-input"
             value={sourceId}
             onChange={e => setSourceId(e.target.value)}
-            style={{ fontSize: 11, padding: '4px 6px' }}
           >
-            <option value="">-- Choose source / document --</option>
+            <option value="">Choose a source</option>
             {sources.map(s => (
               <option key={s.id} value={s.id}>
                 {s.title} {s.fileName ? `(${s.fileName})` : ''}
@@ -233,24 +215,24 @@ function EvidenceInspectorSection({
               value={page}
               onChange={e => setPage(e.target.value)}
               className="field-input"
-              style={{ width: '80px', fontSize: 11, padding: '4px 6px' }}
+              style={{ width: '96px' }}
             />
             <select
               className="field-input"
               value={relation}
               onChange={e => setRelation(e.target.value as 'supports' | 'contradicts')}
-              style={{ flex: 1, fontSize: 11, padding: '4px 6px' }}
+              style={{ flex: 1 }}
             >
               <option value="supports">Supports claim</option>
               <option value="contradicts">Contradicts claim</option>
             </select>
           </div>
           <textarea
-            placeholder="Quote excerpt from source..."
+            placeholder="Quote from the source"
             value={excerpt}
             onChange={e => setExcerpt(e.target.value)}
             className="field-input field-textarea"
-            style={{ minHeight: '50px', fontSize: 11 }}
+            style={{ minHeight: '72px' }}
           />
           <button
             type="button"
@@ -259,8 +241,7 @@ function EvidenceInspectorSection({
             onClick={handleAddCitation}
             style={{ alignSelf: 'flex-end' }}
           >
-            <Check size={12} />
-            <span>Link Evidence</span>
+            <span>Cite it</span>
           </button>
         </div>
       )}
@@ -274,15 +255,6 @@ function EvidenceInspectorSection({
           <div key={idx} className="evidence-citation-card">
             <div className="evidence-citation-top">
               <div style={{ display: 'flex', alignItems: 'center', gap: 5, minWidth: 0 }}>
-                <span
-                  style={{
-                    width: 7,
-                    height: 7,
-                    borderRadius: '50%',
-                    backgroundColor: item.relation === 'contradicts' ? '#f43f5e' : '#10b981',
-                    flexShrink: 0
-                  }}
-                />
                 <span className="evidence-citation-title" title={srcNode?.title || item.sourceId}>
                   {srcNode?.title || item.sourceId}
                 </span>
@@ -306,8 +278,8 @@ function EvidenceInspectorSection({
             )}
 
             <div className="evidence-citation-actions">
-              <small style={{ color: '#64748b', fontSize: 10 }}>
-                {item.relation === 'contradicts' ? 'Refuting source' : 'Grounding source'}
+              <small className="note-meta">
+                {item.relation === 'contradicts' ? 'Contradicts the claim' : 'Supports the claim'}
               </small>
               {isPdf && srcNode?.fileData && (
                 <button
@@ -383,7 +355,7 @@ function ImageInspectorSection({
   return (
     <div className="inspector-media-section">
       <label className="field-label" style={{ display: 'flex', alignItems: 'center', gap: 6, margin: 0 }}>
-        <Images size={14} style={{ color: '#111214' }} />
+        <Images size={14} strokeWidth={1.75} />
         <span>Figure & Media Asset</span>
       </label>
 
@@ -436,7 +408,7 @@ function ImageInspectorSection({
         </div>
       )}
 
-      <label className="field-label" htmlFor="figure-caption" style={{ marginTop: 10 }}>Caption / Legend</label>
+      <label className="field-label" htmlFor="figure-caption" style={{ marginTop: 10 }}>Caption</label>
       <input
         id="figure-caption"
         className="field-input"
@@ -579,7 +551,7 @@ function SourceInspectorSection({
 
   return (
     <>
-      <label className="field-label" htmlFor="node-url">Source URL or Paper Link</label>
+      <label className="field-label" htmlFor="node-url">Link</label>
       <div className="url-edit-row">
         <input
           id="node-url"
@@ -630,8 +602,7 @@ function SourceInspectorSection({
           </>
         ) : (
           <>
-            <Sparkles size={13} />
-            <span>Auto-fetch website metadata</span>
+            <span>Fetch title and preview</span>
           </>
         )}
       </button>
@@ -640,7 +611,7 @@ function SourceInspectorSection({
 
       {/* Document / File attachment */}
       <div className="inspector-doc-attachment-zone">
-        <label className="field-label" style={{ marginTop: 8 }}>Attached File (PDF, TXT, JSON, CSV...)</label>
+        <label className="field-label" style={{ marginTop: 8 }}>Attached file</label>
         {hasAttachedDoc ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 4 }}>
             <AttachedFileBadge

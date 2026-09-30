@@ -200,9 +200,9 @@ export function Minimap({
           type="button"
           className="canvas-minimap-toggle-btn"
           onClick={toggleOpen}
-          aria-label="Open canvas overview minimap"
+          aria-label="Open the map overview"
         >
-          <Map size={15} />
+          <Map size={18} strokeWidth={1.75} />
           <span className="minimap-toggle-text">Map</span>
         </button>
       </div>
@@ -213,35 +213,34 @@ export function Minimap({
     <div
       className="canvas-minimap-card"
       role="complementary"
-      aria-label="Canvas overview minimap"
+      aria-label="Map overview"
       onPointerDown={e => e.stopPropagation()}
     >
       <div className="canvas-minimap-header">
         <div className="canvas-minimap-title-wrap">
-          <Map size={13} className="text-[#6B6F76]" />
-          <span className="canvas-minimap-title">Minimap</span>
+          <span className="canvas-minimap-title">Map</span>
           <span className="canvas-minimap-badge">{nodes.length}</span>
         </div>
         <div className="canvas-minimap-actions">
           {onFitCanvas && (
             <button
               type="button"
-              className="canvas-minimap-action-btn"
-              title="Fit entire knowledge graph to view"
-              aria-label="Fit graph to view"
+              className="canvas-minimap-action-btn icon-button"
+              title="Fit the map to the screen"
+              aria-label="Fit the map to the screen"
               onClick={onFitCanvas}
             >
-              <Maximize2 size={12} />
+              <Maximize2 size={16} strokeWidth={1.75} />
             </button>
           )}
           <button
             type="button"
-            className="canvas-minimap-action-btn"
+            className="canvas-minimap-action-btn icon-button"
             title="Collapse minimap (M)"
             aria-label="Collapse minimap"
             onClick={toggleOpen}
           >
-            <ChevronDown size={13} />
+            <ChevronDown size={16} strokeWidth={1.75} />
           </button>
         </div>
       </div>

@@ -7,13 +7,8 @@ import "./typeset.css";
 const grotesk = Schibsted_Grotesk({ subsets: ["latin"], variable: "--font-grotesk" });
 
 export const metadata: Metadata = {
-  title: "Synthex Studio — Grounded Semantic Knowledge Graph",
-  description: "Build a connected knowledge graph, trace evidence, and extend research with grounded AI.",
-  icons: {
-    icon: "/logo.png",
-    shortcut: "/logo.png",
-    apple: "/logo.png",
-  },
+  title: "Synthex Studio",
+  description: "Ask a question, get a sourced map you can check, keep what's right, share it anywhere.",
 };
 
 export default function RootLayout({

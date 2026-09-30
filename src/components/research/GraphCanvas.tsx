@@ -1,20 +1,23 @@
 'use client';
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { ChevronDown, ExternalLink, Layers2, Sparkles, Trash2 } from 'lucide-react';
+import { ExternalLink, Pencil, Trash2 } from 'lucide-react';
 import type { CanvasNode, Connection, Coordinates, SectionResizeHandle, CanvasNodeType, Viewport } from '@/types/canvas';
-import { hexToRgba } from '@/types/canvas';
 import type { KnowledgeGraph } from '@/lib/graph';
 import { RelationshipControls } from './RelationshipControls';
 import { getLinkThumbnail, extractYouTubeVideoId } from './SourceMetadata';
-import { NodeCard, NodeGlyph } from './nodes';
+import { NodeCard } from './nodes';
 
+// Relations are ink-grey; only drafts are proof blue. The keys stay so stored edge colours still resolve.
+const RELATION_GREY = '#6B6F76';
 const RELATION_PALETTE: Record<string, string> = {
-  neutral: '#6B6F76', indigo: '#6366f1', emerald: '#10b981', rose: '#f43f5e',
-  amber: '#f59e0b', sky: '#0ea5e9', purple: '#a855f7'
+  neutral: RELATION_GREY, indigo: RELATION_GREY, emerald: RELATION_GREY, rose: RELATION_GREY,
+  amber: RELATION_GREY, sky: RELATION_GREY, purple: RELATION_GREY
 };
 import { FileViewerModal, ImageViewerModal } from './FileAndMediaModal';
 import { Minimap } from './Minimap';
+import { SketchLayer, type SketchStroke } from './SketchLayer';
+import { DEFAULT_SKETCH_STYLE, clusterWidth, type SketchStyle } from './inkPalette';
 import { uploadFile } from '@/lib/upload';
 import { extractPageNumber, type CitationReference } from '@/utils/citation';
 type Gesture =
@@ -30,18 +33,43 @@ export function membersOf(group: CanvasNode, nodes: CanvasNode[]): CanvasNode[] 
   const height = group.height || 360;
   return nodes.filter(node => {
     if (node.id === group.id || node.type === 'group' || node.type === 'section') return false;
-    if (node.sectionId === group.id) return true;
-    if (!node.sectionId) {
+    // Template maps store the unprefixed cluster id ("guide-section-x") while the cluster itself is
+    // "project-…-guide-section-x"; accept that suffix match too.
+    if (node.sectionId && (node.sectionId === group.id || group.id.endsWith(`-${node.sectionId}`))) return true;
+    // No reference, or a reference to a cluster that doesn't exist: membership is "inside the loop".
+    const sectionExists = node.sectionId && nodes.some(other => other.id === node.sectionId || other.id.endsWith(`-${node.sectionId}`));
+    if (!sectionExists) {
       return node.x >= group.x && node.y >= group.y && node.x < group.x + width && node.y < group.y + height;
     }
     return false;
   });
 }
 
+type Box = { x: number; y: number; width: number; height: number };
+const NOTE_GAP = 8; // notes keep at least this much board between them
+
+/** Ids in `boxes` that would overlap a visible note that isn't moving. Clusters are areas, not obstacles. */
+function collidingIds(boxes: Record<string, Box>, nodes: CanvasNode[], bounds: Record<string, Box>, visible: Set<string>) {
+  const hits: string[] = [];
+  for (const [id, box] of Object.entries(boxes)) {
+    for (const other of nodes) {
+      if (other.id in boxes || other.type === 'group' || other.type === 'section' || !visible.has(other.id)) continue;
+      const ob = bounds[other.id];
+      if (!ob) continue;
+      if (box.x < ob.x + ob.width + NOTE_GAP && box.x + box.width + NOTE_GAP > ob.x && box.y < ob.y + ob.height + NOTE_GAP && box.y + box.height + NOTE_GAP > ob.y) {
+        hits.push(id);
+        break;
+      }
+    }
+  }
+  return hits;
+}
+
 export function groupBounds(group: CanvasNode, members: CanvasNode[]) {
   if (group.metadata?.collapsed === true) {
-    const width = Math.min(group.width || 360, 380);
-    const height = 106;
+    // A folded cluster is a taped sheet listing every note by title, so it grows with them.
+    const width = 340;
+    const height = 76 + Math.max(1, members.length) * 30;
     return { x: group.x, y: group.y, width, height };
   }
 
@@ -228,12 +256,11 @@ export function relationPath(
   };
 }
 
-function DottedRelationship({ path, color, colorKey, arrowhead, animated }: {
+function DottedRelationship({ path, color, colorKey, arrowhead }: {
   path: string;
   color: string;
   colorKey: string;
   arrowhead: Connection['arrowhead'];
-  animated: boolean;
 }) {
   const measureRef = useRef<SVGPathElement>(null);
   const [dots, setDots] = useState<Coordinates[]>([]);
@@ -260,7 +287,7 @@ function DottedRelationship({ path, color, colorKey, arrowhead, animated }: {
 
   return <>
     <path ref={measureRef} className="relationship-measure-path" d={path} />
-    {dots.map((dot, index) => <circle key={index} className={`relationship-dot ${animated ? 'animated' : ''}`} style={animated ? { animationDelay: `${index * 45}ms` } : undefined} cx={dot.x} cy={dot.y} r="1.8" fill={color} />)}
+    {dots.map((dot, index) => <circle key={index} className="relationship-dot" cx={dot.x} cy={dot.y} r="1.8" fill={color} />)}
     {(arrowhead === 'end' || arrowhead === 'both' || arrowhead === 'start') && <path
       className="relationship-arrow-anchor"
       d={path}
@@ -270,8 +297,39 @@ function DottedRelationship({ path, color, colorKey, arrowhead, animated }: {
   </>;
 }
 
+// A hand-drawn pen outline: points walk the rectangle with a small, stable wobble (seeded by the cluster id),
+// and the stroke starts a little past the corner and overshoots its end, the way a pen loop never quite closes.
+function penOutline(width: number, height: number, seedText: string, pass: number) {
+  let seed = pass * 7919;
+  for (let i = 0; i < seedText.length; i++) seed = (seed * 31 + seedText.charCodeAt(i)) | 0;
+  const rand = () => { seed = (seed * 1103515245 + 12345) | 0; return ((seed >>> 8) & 0xffff) / 0xffff - 0.5; };
+  const inset = 4 + pass * 1.5;
+  const w = Math.max(40, width - inset * 2), h = Math.max(40, height - inset * 2);
+  const corners: Array<[number, number]> = [[inset, inset], [inset + w, inset], [inset + w, inset + h], [inset, inset + h]];
+  const points: Array<[number, number]> = [];
+  corners.forEach(([x0, y0], side) => {
+    const [x1, y1] = corners[(side + 1) % 4];
+    const length = Math.hypot(x1 - x0, y1 - y0);
+    const steps = Math.max(2, Math.round(length / 56));
+    const nx = -(y1 - y0) / length, ny = (x1 - x0) / length;
+    for (let k = 0; k < steps; k++) {
+      const t = k / steps, wobble = rand() * 2.6;
+      points.push([x0 + (x1 - x0) * t + nx * wobble + rand() * 1.2, y0 + (y1 - y0) * t + ny * wobble + rand() * 1.2]);
+    }
+  });
+  const start = points[0];
+  const end: [number, number] = [start[0] + 14 + rand() * 6, start[1] + rand() * 3]; // overshoot past the start
+  let d = `M ${start[0] - 6} ${start[1] + 2 + rand() * 2}`;
+  const path = [...points, start, end];
+  for (let i = 0; i < path.length - 1; i++) {
+    const [ax, ay] = path[i], [bx, by] = path[i + 1];
+    d += ` Q ${ax.toFixed(1)} ${ay.toFixed(1)} ${((ax + bx) / 2).toFixed(1)} ${((ay + by) / 2).toFixed(1)}`;
+  }
+  return `${d} L ${end[0].toFixed(1)} ${end[1].toFixed(1)}`;
+}
+
 function GroupCard({
-  node, members, relationCount, isCollapsed, selected, isGrabbed, dragTilt = 0, onToggle, onOpen, onStartResize, isResizeLocked
+  node, members, relationCount, isCollapsed, selected, isGrabbed, dragTilt = 0, width, height, onEdit, onToggle, onOpen, onStartResize, isResizeLocked
 }: {
   node: CanvasNode;
   members: CanvasNode[];
@@ -280,94 +338,76 @@ function GroupCard({
   selected: boolean;
   isGrabbed?: boolean;
   dragTilt?: number;
+  width: number;
+  height: number;
+  onEdit?: () => void;
   onToggle: () => void;
   onOpen: () => void;
   onStartResize: (event: React.PointerEvent, handle: SectionResizeHandle) => void;
   isResizeLocked?: boolean;
 }) {
-  const customColor = node.color;
+  // Open: a pen loop drawn round its notes, titled on a strip of tape. Folded: a sheet of paper taped to the board.
+  // A cluster may carry the user's colour (pen line and a tint of washi tape) and a line weight, set in Properties.
+  const color = node.color?.startsWith('#') ? node.color : undefined;
+  const count = `${members.length} ${members.length === 1 ? 'idea' : 'ideas'}${relationCount ? ` · ${relationCount} ${relationCount === 1 ? 'relation' : 'relations'}` : ''}`;
   return (
     <article
-      className={`graph-group ${isCollapsed ? 'is-folded' : ''} ${selected ? 'is-selected' : ''} ${isGrabbed ? 'is-grabbed' : ''}`}
+      className={`graph-group ${isCollapsed ? 'is-folded' : ''} ${selected ? 'is-selected' : ''} ${isGrabbed ? 'is-grabbed' : ''} ${color ? 'has-color' : ''}`}
       style={{
-        transform: isGrabbed ? `scale(1.012) rotate(${dragTilt * 0.35}deg)` : undefined,
-        transition: isGrabbed ? 'box-shadow 0.14s ease, border-color 0.14s ease' : 'transform 0.15s cubic-bezier(0.16,1,0.3,1), box-shadow 0.15s ease',
-        ...(customColor ? {
-          backgroundColor: hexToRgba(customColor, isCollapsed ? 0.07 : 0.09),
-          borderColor: customColor,
-          borderStyle: isCollapsed ? 'solid' : 'dashed',
-          borderWidth: isCollapsed ? '1.5px' : '2px',
-          ...(isCollapsed ? {
-            boxShadow: `0 1px 3px rgba(17, 18, 20, 0.08), 0 4px 0 -1px #ffffff, 0 4px 0 0 ${customColor}, 0 8px 0 -2px #ffffff, 0 8px 0 -1px ${customColor}, 0 12px 20px -3px rgba(17, 18, 20, 0.1)`
-          } : {})
-        } : {})
+        ...(isGrabbed ? { transform: `scale(1.012) rotate(${dragTilt * 0.35}deg)` } : {}),
+        ...(color ? { ['--cluster-ink' as `--${string}`]: color } : {}),
+        ['--cluster-weight' as `--${string}`]: `${clusterWidth(node.metadata?.penWidth)}px`
       }}
     >
-      <div className="graph-group-heading">
-        <span
-          className="group-mark"
-          style={customColor ? {
-            backgroundColor: customColor,
-            borderColor: customColor,
-            color: '#ffffff'
-          } : undefined}
-        >
-          {isCollapsed ? <Sparkles size={14} /> : <Layers2 size={15} />}
-        </span>
-        <div className="group-title-wrap">
-          <strong>{node.title}</strong>
-          <span style={customColor ? { color: customColor } : undefined}>
-            {isCollapsed
-              ? `${members.length} ${members.length === 1 ? 'item' : 'items'} in cluster`
-              : `${members.length} ${members.length === 1 ? 'node' : 'nodes'} · ${relationCount} ${relationCount === 1 ? 'relationship' : 'relationships'}`}
-          </span>
-        </div>
+      {!isCollapsed && (
+        <svg className="group-pen" width={width} height={height} aria-hidden="true">
+          <path className="group-pen-stroke" d={penOutline(width, height, node.id, 0)} />
+          <path className="group-pen-stroke is-second" d={penOutline(width, height, node.id, 1)} />
+        </svg>
+      )}
+
+      <div className="group-tape">
+        <strong>{node.title}</strong>
+        <span className="note-meta">{count}</span>
+      </div>
+
+      <div className="group-actions">
+        {onEdit && (
+          <button
+            type="button"
+            className="note-edit-button is-inline"
+            aria-label={`Edit ${node.title}`}
+            title="Edit (Enter)"
+            onPointerDown={event => event.stopPropagation()}
+            onClick={event => { event.stopPropagation(); onEdit(); }}
+          >
+            <Pencil size={14} strokeWidth={1.75} /><span>Edit</span>
+          </button>
+        )}
         <button
           className="icon-button group-open"
-          aria-label="Open cluster sub-canvas"
-          title="Open cluster sub-canvas"
+          aria-label="Open this cluster on its own"
+          title="Open this cluster on its own"
           onPointerDown={event => event.stopPropagation()}
           onClick={event => { event.stopPropagation(); onOpen(); }}
         >
-          <ExternalLink size={13} />
+          <ExternalLink size={16} strokeWidth={1.75} />
         </button>
         <button
-          className="icon-button group-fold"
-          aria-label={isCollapsed ? 'Unfold knowledge cluster' : 'Fold knowledge cluster'}
-          title={isCollapsed ? 'Unfold knowledge cluster' : 'Fold knowledge cluster'}
+          className="text-button group-fold"
+          aria-expanded={!isCollapsed}
           onPointerDown={event => event.stopPropagation()}
           onClick={event => { event.stopPropagation(); onToggle(); }}
         >
-          <ChevronDown size={15} />
+          {isCollapsed ? 'Unfold' : 'Fold'}
         </button>
       </div>
 
-      {isCollapsed ? (
-        <div className="group-folded-preview">
-          <div className="folded-cluster-stats">
-            <span className="folded-bullet" style={customColor ? { color: customColor } : undefined}>●</span>
-            <span className="folded-summary-text">
-              {members.length} {members.length === 1 ? 'item' : 'items'} in cluster
-              {relationCount > 0 ? ` · ${relationCount} ${relationCount === 1 ? 'connection' : 'connections'}` : ''}
-            </span>
-          </div>
-          <div className="folded-chips" aria-label="Contained notes and sources">
-            {members.slice(0, 3).map(member => (
-              <span key={member.id} className={`folded-chip type-${member.type}`} title={member.title}>
-                <NodeGlyph type={member.type} />
-                <span className="folded-chip-title">{member.title}</span>
-              </span>
-            ))}
-            {members.length > 3 && (
-              <span className="folded-chip folded-chip-more">+{members.length - 3} more</span>
-            )}
-            {members.length === 0 && (
-              <span className="folded-chip-empty">Empty cluster · click to open</span>
-            )}
-          </div>
-        </div>
-      ) : (
-        <div className="group-crease" aria-hidden="true"><i /><i /><i /></div>
+      {isCollapsed && (
+        <ul className="group-folded-list" aria-label="Notes in this cluster">
+          {members.map(member => <li key={member.id} title={member.title}><span>{member.title}</span></li>)}
+          {members.length === 0 && <li className="note-meta">Empty. Unfold it to add notes.</li>}
+        </ul>
       )}
 
       {!isCollapsed && !isResizeLocked && (['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'] as SectionResizeHandle[]).map(handle => (
@@ -388,13 +428,13 @@ export function GraphCanvas({
   graph, selectedNodeIds, viewport, setViewport, activeTool, spacePressed, linkingFromId,
   autoFitKey, editingNoteId, onSelectNode, onSelectMultipleNodes, onClearSelection, onClickAway, onCancelLinking, onMoveNodes, onConnect,
   onStartLinking, onToggleGroup, onEditNote, onUpdateNote, onUpdateRelationship, onDeleteRelationship, onResizeGroup, onOpenGroup,
-  onAddRecordWithData, onDeleteNodes, projectId, isResizeLocked = false, draftIds, detachingIds
+  onAddRecordWithData, onDeleteNodes, projectId, isResizeLocked = false, draftIds, detachingIds, keptIds, sketch, sketchStyle, onSketchChange, onOpenEditor, placingIds, onPlaced
 }: {
   graph: KnowledgeGraph;
   selectedNodeIds: string[];
   viewport: Viewport;
   setViewport: React.Dispatch<React.SetStateAction<Viewport>>;
-  activeTool: 'select' | 'connect' | 'hand';
+  activeTool: 'select' | 'connect' | 'hand' | 'pen' | 'marker' | 'eraser';
   spacePressed: boolean;
   linkingFromId: string | null;
   autoFitKey: number;
@@ -422,6 +462,14 @@ export function GraphCanvas({
   draftIds?: Set<string>;
   /** Node ids playing the pin-detach animation before removal. */
   detachingIds?: string[];
+  keptIds?: string[];
+  sketch?: SketchStroke[];
+  sketchStyle?: SketchStyle;
+  onOpenEditor?: (id: string) => void;
+  /** New items not yet pinned: they stay unpinned until they sit on free board. */
+  placingIds?: string[];
+  onPlaced?: (id: string) => void;
+  onSketchChange?: (update: (strokes: SketchStroke[]) => SketchStroke[]) => void;
 }) {
   const canvasRef = useRef<HTMLDivElement>(null);
   const gesture = useRef<Gesture | null>(null);
@@ -489,6 +537,19 @@ export function GraphCanvas({
     }
     return bounds;
   }, [nodes, groups, nodeHeights]);
+
+  const [blockedIds, setBlockedIds] = useState<string[]>([]);
+  const blockedRef = useRef<string[]>([]);
+
+  // A new item pins itself as soon as it sits on free board (straight away if its spawn spot was empty).
+  useEffect(() => {
+    if (!placingIds?.length || !onPlaced) return;
+    for (const id of placingIds) {
+      const box = nodeBounds[id];
+      if (!box || !nodeHeights[id] || draggedNodeIds.includes(id)) continue; // wait for its real height, and for the drop
+      if (!collidingIds({ [id]: box }, nodes, nodeBounds, visibleIds).length) onPlaced(id);
+    }
+  }, [placingIds, onPlaced, nodeBounds, nodeHeights, nodes, visibleIds, draggedNodeIds]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -791,6 +852,10 @@ export function GraphCanvas({
         const minH = isGroup ? 220 : 100;
         const nextWidth = Math.max(minW, width + (handle.includes('e') ? dx : handle.includes('w') ? -dx : 0));
         const nextHeight = Math.max(minH, height + (handle.includes('s') ? dy : handle.includes('n') ? -dy : 0));
+        if (!isGroup) {
+          const hits = collidingIds({ [current.node.id]: { x: nextX, y: nextY, width: nextWidth, height: nextHeight } }, nodes, nodeBounds, visibleIds);
+          if (hits.join() !== blockedRef.current.join()) { blockedRef.current = hits; setBlockedIds(hits); }
+        }
         onResizeGroup(current.node.id, { x: nextX, y: nextY, width: nextWidth, height: nextHeight });
       } else {
         pendingMoveEvent.current = { clientX: event.clientX, clientY: event.clientY, shiftKey: event.shiftKey };
@@ -949,6 +1014,17 @@ export function GraphCanvas({
               setIsOverTrash(isOver);
             }
 
+            // Notes may not land on other notes: flag the collision now, snap back on drop.
+            const movingBoxes: Record<string, Box> = {};
+            for (const [id, point] of Object.entries(cur.origins)) {
+              const moving = graph.nodesById[id];
+              const box = nodeBounds[id];
+              if (!moving || !box || moving.type === 'group' || moving.type === 'section') continue;
+              movingBoxes[id] = { x: point.x + finalDx, y: point.y + finalDy, width: box.width, height: box.height };
+            }
+            const hits = collidingIds(movingBoxes, nodes, nodeBounds, visibleIds);
+            if (hits.join() !== blockedRef.current.join()) { blockedRef.current = hits; setBlockedIds(hits); }
+
             onMoveNodes(
               Object.fromEntries(
                 Object.entries(cur.origins).map(([id, point]) => [id, { x: point.x + finalDx, y: point.y + finalDy }])
@@ -986,9 +1062,16 @@ export function GraphCanvas({
         if (isTrashDrop && nodesToDelete.length > 0) {
           onDeleteNodes?.(nodesToDelete);
           gesture.current = null;
+          blockedRef.current = []; setBlockedIds([]);
           return;
         }
+        // Dropped on another note: everything that moved goes back to where it started.
+        if (blockedRef.current.length) onMoveNodes(gesture.current.origins);
+      } else if (gesture.current?.kind === 'resize' && blockedRef.current.length) {
+        const { id, x, y, width, height } = gesture.current.node;
+        onResizeGroup(id, { x, y, width, height });
       }
+      if (blockedRef.current.length) { blockedRef.current = []; setBlockedIds([]); }
       gesture.current = null;
     };
     const cancel = () => {
@@ -1003,6 +1086,7 @@ export function GraphCanvas({
       setDragTilt(0);
       setIsOverTrash(false);
       setMarqueeBox(null);
+      blockedRef.current = []; setBlockedIds([]);
       gesture.current = null;
     };
     window.addEventListener('pointermove', move);
@@ -1077,7 +1161,9 @@ export function GraphCanvas({
   const startGroupResize = (event: React.PointerEvent, node: CanvasNode, handle: SectionResizeHandle) => {
     if (isResizeLocked) return;
     event.preventDefault(); event.stopPropagation();
-    gesture.current = { kind: 'resize', start: { x: event.clientX, y: event.clientY }, node, handle };
+    // Resize from what is on screen (the loop is stretched round its notes), not the stored size underneath.
+    const shown = nodeBounds[node.id];
+    gesture.current = { kind: 'resize', start: { x: event.clientX, y: event.clientY }, node: shown ? { ...node, ...shown } : node, handle };
   };
 
   const startNodeResize = (event: React.PointerEvent, node: CanvasNode, handle: SectionResizeHandle) => {
@@ -1272,19 +1358,11 @@ export function GraphCanvas({
         setCursorWorld({ x: (event.clientX - rect.left - viewport.pan.x) / viewport.zoom, y: (event.clientY - rect.top - viewport.pan.y) / viewport.zoom });
       }}
       style={{
-        // Typeset Grid column module: a 280px column + 40px gutter, panned and zoomed with the map.
-        backgroundSize: `${320 * viewport.zoom}px 100%`,
-        backgroundPosition: `${viewport.pan.x}px 0`
+        // Squared notebook paper: 32px squares (10 per 320px module), panned and zoomed with the map.
+        backgroundSize: `${32 * viewport.zoom}px ${32 * viewport.zoom}px`,
+        backgroundPosition: `${viewport.pan.x}px ${viewport.pan.y}px`
       }}
     >
-      <div className="canvas-rules" aria-hidden="true"><span>KNOWLEDGE PLANE</span><span>FOLD TO FOCUS</span></div>
-
-      {nodes.length > 25 && renderedVisibleNodes.length + renderedGroups.length < nodes.length && (
-        <div className="canvas-perf-pill" title="Hardware-accelerated viewport virtualization active for 60 FPS performance">
-          <span className="perf-dot" />
-          <span>60 FPS · {renderedVisibleNodes.length + renderedGroups.length}/{nodes.length} cards</span>
-        </div>
-      )}
 
       {screenMarquee && screenMarquee.width > 2 && screenMarquee.height > 2 && (
         <div
@@ -1301,7 +1379,7 @@ export function GraphCanvas({
       <div className="graph-world" style={{ transform: `translate(${viewport.pan.x}px, ${viewport.pan.y}px) scale(${viewport.zoom})` }}>
         <svg className="relationship-layer" width="100000" height="100000">
           <defs>
-            {(['neutral', 'indigo', 'emerald', 'rose', 'amber', 'sky', 'purple'] as const).map(color => (
+            {(['neutral', 'draft'] as const).map(color => (
               <marker
                 key={color}
                 id={`relation-arrow-${color}`}
@@ -1312,7 +1390,7 @@ export function GraphCanvas({
                 orient="auto-start-reverse"
                 markerUnits="strokeWidth"
               >
-                <path d="M0,0 L0,6 L7,3 z" fill={RELATION_PALETTE[color] || '#111214'} />
+                <path d="M0,0 L0,6 L7,3 z" fill={color === 'draft' ? '#1F3DFF' : RELATION_GREY} />
               </marker>
             ))}
             <marker id="relation-preview-arrow" markerWidth="8" markerHeight="8" refX="5.5" refY="3" orient="auto">
@@ -1322,8 +1400,9 @@ export function GraphCanvas({
           {edges.map(({ edge, path }) => {
             const isDotted = edge.strokePattern === 'dotted';
             const isDashed = edge.strokePattern === 'dashed';
-            const isSolid = !isDotted && !isDashed;
-            const strokeColor = draftIds?.has(edge.id) ? '#1F3DFF' : RELATION_PALETTE[edge.color || 'neutral'] || '#111214';
+            const isDraft = Boolean(draftIds?.has(edge.id));
+            const strokeColor = isDraft ? '#1F3DFF' : RELATION_PALETTE[edge.color || 'neutral'] || RELATION_GREY;
+            const arrowKey = isDraft ? 'draft' : 'neutral';
 
             return (
               <g key={edge.id} className="relationship-mark">
@@ -1332,35 +1411,18 @@ export function GraphCanvas({
                 {isDotted ? <DottedRelationship
                   path={path}
                   color={strokeColor}
-                  colorKey={edge.color || 'neutral'}
+                  colorKey={arrowKey}
                   arrowhead={edge.arrowhead || 'end'}
-                  animated={Boolean(edge.animated)}
                 /> : <path
-                  className={`relationship-stroke ${edge.animated && isDashed ? 'relationship-animated-dashed' : ''}`}
+                  className="relationship-stroke"
                   d={path}
                   stroke={strokeColor}
                   strokeDasharray={isDashed ? '8 8' : undefined}
                   strokeLinecap="round"
                   strokeLinejoin="round"
-                  opacity={edge.animated && isSolid ? 0.35 : 1}
-                  markerEnd={edge.arrowhead === 'none' || edge.arrowhead === 'start' ? undefined : `url(#relation-arrow-${edge.color || 'neutral'})`}
-                  markerStart={edge.arrowhead === 'both' || edge.arrowhead === 'start' ? `url(#relation-arrow-${edge.color || 'neutral'})` : undefined}
+                  markerEnd={edge.arrowhead === 'none' || edge.arrowhead === 'start' ? undefined : `url(#relation-arrow-${arrowKey})`}
+                  markerStart={edge.arrowhead === 'both' || edge.arrowhead === 'start' ? `url(#relation-arrow-${arrowKey})` : undefined}
                 />}
-
-                {/* Continuous animation pulse on solid lines: travels right on the line with exact zero offset */}
-                {edge.animated && isSolid && (
-                  <path
-                    className="relationship-stroke relationship-animated-continuous"
-                    d={path}
-                    stroke={strokeColor}
-                    strokeWidth="2"
-                    strokeDasharray="40 100"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    fill="none"
-                    pointerEvents="none"
-                  />
-                )}
 
               </g>
             );
@@ -1416,6 +1478,9 @@ export function GraphCanvas({
                 selected={selectedNodeIds.includes(group.id)}
                 isGrabbed={draggedNodeIds.includes(group.id)}
                 dragTilt={draggedNodeIds.includes(group.id) ? dragTilt : 0}
+                onEdit={onOpenEditor && selectedNodeIds.length === 1 && selectedNodeIds[0] === group.id ? () => onOpenEditor(group.id) : undefined}
+                width={bounds.width}
+                height={bounds.height}
                 onToggle={() => onToggleGroup(group.id)}
                 onOpen={() => onOpenGroup(group.id)}
                 onStartResize={(event, handle) => startGroupResize(event, group, handle)}
@@ -1434,6 +1499,10 @@ export function GraphCanvas({
             isEditing={editingNoteId === node.id}
             isDraft={draftIds?.has(node.id)}
             isDetaching={detachingIds?.includes(node.id)}
+            isKept={keptIds?.includes(node.id)}
+            isBlocked={blockedIds.includes(node.id)}
+            isPlacing={placingIds?.includes(node.id)}
+            onOpenEditor={onOpenEditor && selectedNodeIds.length === 1 && selectedNodeIds[0] === node.id && !draftIds?.has(node.id) && !placingIds?.includes(node.id) ? () => onOpenEditor(node.id) : undefined}
             allNodesById={graph.nodesById}
             onOpenEvidenceCitation={handleOpenEvidenceCitation}
             onToggleEdit={() => onEditNote(editingNoteId === node.id ? null : node.id)}
@@ -1458,29 +1527,19 @@ export function GraphCanvas({
           ))}
         </svg>
       </div>
-      {linkingFromId && <div className="canvas-instruction">Choose a node to create a relationship <button onClick={onCancelLinking}>Cancel</button></div>}
-      {activeTool === 'connect' && !linkingFromId && <div className="canvas-instruction">Select two nodes to describe their relationship</div>}
+      {sketch && onSketchChange && <SketchLayer tool={activeTool} viewport={viewport} strokes={sketch} style={sketchStyle || DEFAULT_SKETCH_STYLE} onChange={onSketchChange} />}
+      {linkingFromId && <div className="canvas-instruction" role="status"><span>Now click the idea to connect it to</span><button type="button" className="text-button" onClick={onCancelLinking}>Cancel</button></div>}
+      {activeTool === 'connect' && !linkingFromId && <div className="canvas-instruction" role="status"><span>Click one idea, then another, to connect them</span></div>}
 
       {/* Interactive Floating Garbage / Trash Drop Zone */}
       <div
         ref={trashRef}
         className={`canvas-trash-zone ${draggedNodeIds.length > 0 ? 'is-visible' : ''} ${isOverTrash ? 'is-active' : ''}`}
         role="region"
-        aria-label="Delete drop zone"
+        aria-label="Drop here to remove from the map"
       >
-        <div className="trash-icon-wrap">
-          <Trash2 size={isOverTrash ? 20 : 17} />
-        </div>
-        <div className="trash-label-wrap">
-          <span className="trash-primary-label">
-            {isOverTrash
-              ? `Release to delete ${draggedNodeIds.length > 1 ? `${draggedNodeIds.length} records` : 'record'}`
-              : `Drop here to delete ${draggedNodeIds.length > 1 ? `(${draggedNodeIds.length})` : ''}`}
-          </span>
-          <span className="trash-sub-label">
-            {isOverTrash ? 'Action can be undone with Ctrl+Z' : 'Drag onto trash to remove'}
-          </span>
-        </div>
+        <Trash2 size={18} strokeWidth={1.75} />
+        <span>{isOverTrash ? `Release to remove${draggedNodeIds.length > 1 ? ` ${draggedNodeIds.length} ideas` : ''} · Ctrl+Z undoes it` : 'Drop to remove'}</span>
       </div>
 
       {/* Interactive Bird's-Eye Minimap Navigation */}

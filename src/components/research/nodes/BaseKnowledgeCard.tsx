@@ -1,6 +1,6 @@
 import { Check, ExternalLink, FileText, Images, Maximize2, Pencil, BookOpen, CircleHelp, Layers2, Lightbulb, Link2, Quote, Sparkles } from 'lucide-react';
 import type { CanvasNode, SectionResizeHandle } from '@/types/canvas';
-import { formatFileSize, hexToRgba } from '@/types/canvas';
+import { formatFileSize } from '@/types/canvas';
 import type { CitationReference } from '@/utils/citation';
 import { extractPageNumber } from '@/utils/citation';
 import { MarkdownEditor } from '../MarkdownEditor';
@@ -8,7 +8,7 @@ import { MarkdownView } from '../MarkdownView';
 import { WebsiteLogo, WebsiteImage, getWebsiteDomain, getLinkThumbnail } from '../SourceMetadata';
 import { AttachedFileBadge, getFileCategory } from '../FileAndMediaModal';
 
-const nodeLabel: Record<string, string> = {
+export const nodeLabel: Record<string, string> = {
   note: 'Note', claim: 'Claim', source: 'Source', image: 'Image', group: 'Cluster',
   concept: 'Idea', hypothesis: 'Hypothesis', question: 'Question', link: 'Link', section: 'Cluster',
   research_result: 'Research', task: 'Task', ai_insight: 'Insight'
@@ -49,7 +49,7 @@ export function NodeGlyph({ type, fileName, fileType }: { type: string; fileName
 }
 
 export function BaseKnowledgeCard({
-  node, selected, isEditing, isGrabbed, dragTilt = 0, isDraft, isDetaching, onToggleEdit, onUpdateContent, onPointerDown, onClick, onOpenLightbox, onOpenFileModal,
+  node, selected, isEditing, isGrabbed, dragTilt = 0, isDraft, isDetaching, isKept, isBlocked, isPlacing, onOpenEditor, onToggleEdit, onUpdateContent, onPointerDown, onClick, onOpenLightbox, onOpenFileModal,
   allNodesById, onOpenEvidenceCitation, isResizeLocked, onStartResize
 }: {
   node: CanvasNode;
@@ -59,6 +59,10 @@ export function BaseKnowledgeCard({
   dragTilt?: number;
   isDraft?: boolean;
   isDetaching?: boolean;
+  isKept?: boolean;
+  isBlocked?: boolean;
+  isPlacing?: boolean;
+  onOpenEditor?: () => void;
   onToggleEdit: () => void;
   onUpdateContent: (content: string) => void;
   onPointerDown: (event: React.PointerEvent, node: CanvasNode) => void;
@@ -70,8 +74,8 @@ export function BaseKnowledgeCard({
   isResizeLocked?: boolean;
   onStartResize?: (event: React.PointerEvent, handle: SectionResizeHandle) => void;
 }) {
-  // Only user-picked hex colours tint a note; legacy accent names (neutral, cobalt…) keep the ink default.
-  const customColor = node.color?.startsWith('#') ? node.color : undefined;
+  // A hex node.color (chosen in the editor) tints the paper, top rule and pin; legacy names (neutral, terracotta…) don't.
+  const noteColor = node.color?.startsWith('#') ? node.color : undefined;
   const isSource = node.type === 'source' || node.type === 'link';
   const isImage = node.type === 'image';
   const hasFile = Boolean(node.fileData || node.fileName);
@@ -90,7 +94,7 @@ export function BaseKnowledgeCard({
   return (
     <article
       data-graph-node={node.id}
-      className={`knowledge-card type-${node.type} ${customColor ? 'has-custom-color' : ''} ${selected ? 'is-selected' : ''} ${isGrabbed ? 'is-grabbed' : ''} ${isDraft ? 'is-draft' : ''} ${isDetaching ? 'is-detaching' : ''}`}
+      className={`knowledge-card type-${node.type} ${selected ? 'is-selected' : ''} ${isGrabbed ? 'is-grabbed' : ''} ${isDraft ? 'is-draft' : ''} ${isDetaching ? 'is-detaching' : ''} ${isKept ? 'is-kept' : ''} ${noteColor ? 'has-color' : ''} ${isBlocked ? 'is-blocked' : ''} ${isPlacing ? 'is-placing' : ''}`}
       style={{
         transform: `translate3d(${node.x}px, ${node.y}px, 0) scale(${isGrabbed ? 1.035 : 1}) rotate(${isGrabbed ? dragTilt : hangTilt(node.id)}deg) translateY(${isGrabbed ? -4 : 0}px)`,
         width: node.width || (isImage ? 320 : 280),
@@ -100,21 +104,33 @@ export function BaseKnowledgeCard({
         display: 'flex',
         flexDirection: 'column',
         backgroundColor: '#ffffff',
-        ...(customColor ? {
-          ['--node-custom-color' as `--${string}`]: customColor,
-          ['--node-custom-ring' as `--${string}`]: hexToRgba(customColor, 0.28),
-          borderColor: customColor,
-          borderWidth: '1.5px',
-          borderStyle: 'solid'
-        } : {}),
+        ...(noteColor ? { ['--note-ink' as `--${string}`]: noteColor } : {}),
+        // Selecting a note unpins it: it lifts off the board (translate/rotate/shadow in typeset.css) and settles back when released.
         transition: isGrabbed
           ? 'box-shadow 0.15s ease, border-color 0.15s ease, transform 0.06s ease-out'
-          : 'border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s cubic-bezier(0.16, 1, 0.3, 1)'
+          : 'border-color 0.15s ease, box-shadow 320ms cubic-bezier(.16, 1, .3, 1), translate 320ms cubic-bezier(.16, 1, .3, 1), rotate 320ms cubic-bezier(.16, 1, .3, 1), transform 0.15s cubic-bezier(0.16, 1, 0.3, 1)'
       }}
       onPointerDown={event => onPointerDown(event, node)}
       onClick={event => onClick(event, node)}
     >
       <span className="note-pin" aria-hidden="true" />
+      {(isBlocked || isPlacing) && (
+        <span className={`note-status-tab ${isBlocked ? 'is-blocked' : ''}`} role="status">
+          {isBlocked ? 'No room here' : 'Drag me to an empty spot'}
+        </span>
+      )}
+      {onOpenEditor && !isBlocked && (
+        <button
+          type="button"
+          className="note-edit-button"
+          aria-label={`Edit ${node.title}`}
+          title="Edit (Enter)"
+          onPointerDown={event => event.stopPropagation()}
+          onClick={event => { event.stopPropagation(); onOpenEditor(); }}
+        >
+          <Pencil size={14} strokeWidth={1.75} /><span>Edit</span>
+        </button>
+      )}
       {node.type === 'note' && <div className="knowledge-card-topline">
         <button className={`note-mode-toggle ${isEditing ? 'is-editing' : ''}`} aria-label={isEditing ? 'Finish editing note' : 'Edit note'} title={isEditing ? 'Finish editing note' : 'Edit note'} onPointerDown={event => event.stopPropagation()} onClick={event => { event.stopPropagation(); onToggleEdit(); }}>{isEditing ? <Check size={13} /> : <Pencil size={12} />}<span>{isEditing ? 'Done' : 'Edit'}</span></button>
       </div>}
