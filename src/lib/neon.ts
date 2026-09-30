@@ -309,6 +309,38 @@ export async function neonMoveProjectToWorkspace(
   return rows.length > 0;
 }
 
+export async function neonRenameProject(id: string, title: string): Promise<boolean> {
+  await ensureNeonSchema();
+  const sql = getSql();
+  const rows = await sql`UPDATE projects SET title = ${title} WHERE id = ${id} RETURNING id`;
+  return rows.length > 0;
+}
+
+export async function neonDeleteProject(id: string, userId?: string | null, clerkId?: string | null): Promise<boolean> {
+  await ensureNeonSchema();
+  const sql = getSql();
+  if (!userId && !clerkId) return false;
+  const owned = await sql`
+    SELECT 1 FROM projects
+    WHERE id = ${id} AND (
+      (${userId || null}::varchar IS NOT NULL AND user_id = ${userId || null}) OR
+      (${clerkId || null}::varchar IS NOT NULL AND user_id = ${clerkId || null})
+    )
+    LIMIT 1
+  `;
+  if (owned.length === 0) return false;
+  // Tables created by auto-init have no foreign keys, so every project-scoped table is cleared explicitly.
+  await sql.transaction([
+    sql`DELETE FROM connections WHERE project_id = ${id}`,
+    sql`DELETE FROM nodes WHERE project_id = ${id}`,
+    sql`DELETE FROM research_sessions WHERE project_id = ${id}`,
+    sql`DELETE FROM graph_revisions WHERE project_id = ${id}`,
+    sql`DELETE FROM chat_messages WHERE project_id = ${id}`,
+    sql`DELETE FROM projects WHERE id = ${id}`
+  ]);
+  return true;
+}
+
 export async function neonProjectExists(id: string): Promise<boolean> {
   await ensureNeonSchema();
   const sql = getSql();
