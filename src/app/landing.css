@@ -431,6 +431,8 @@
 .lx-promises p { max-width: 34ch; margin: 10px 0 0; color: var(--muted); font-size: 16px; line-height: 1.55; }
 
 /* ---------- Details ---------- */
+/* the illustrations use spans for buttons; line them up like the real ones */
+.marketing-landing-page span.text-button { display: inline-flex; align-items: center; }
 .marketing-landing-page .landing-feature-copy h3 { font-size: 38px; font-weight: 700; letter-spacing: 0; }
 .marketing-landing-page .landing-crop { background: var(--paper); }
 .marketing-landing-page .crop-drafts { background-color: var(--canvas); background-image: linear-gradient(to right, var(--rule) 1px, transparent 1px), linear-gradient(to bottom, var(--rule) 1px, transparent 1px); background-size: 32px 32px; }
@@ -443,10 +445,49 @@
 .landing-share-list li:hover { padding-left: 6px; background: var(--canvas); }
 
 /* ---------- Pricing and FAQ ---------- */
-.marketing-landing-page .landing-plans { background: var(--paper); }
+/* Four equal pinned sheets instead of one ruled table */
+.marketing-landing-page .landing-plans.plan-columns.is-four {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 24px;
+  margin-top: 56px;
+  padding: 0;
+  border: 0;
+  background: none;
+}
+.marketing-landing-page .landing-plans .plan-column:nth-child(n) {
+  position: relative;
+  margin: 0;
+  padding: 28px 24px 24px;
+  border: 1px solid var(--line);
+  border-top: 2px solid var(--ink);
+  border-radius: 2px;
+  background: var(--paper);
+  box-shadow: 0 1px 0 rgba(17, 18, 20, .04), 0 16px 22px -18px rgba(17, 18, 20, .42);
+  transition: translate 300ms var(--ease-out), rotate 300ms var(--ease-out), box-shadow 300ms var(--ease-out);
+}
+.marketing-landing-page .landing-plans .plan-column:hover {
+  translate: 0 -8px;
+  rotate: -0.6deg;
+  box-shadow: 0 1px 0 rgba(17, 18, 20, .04), 0 36px 34px -24px rgba(17, 18, 20, .38);
+}
+.marketing-landing-page .landing-plans .plan-column.is-recommended { border: 2px solid var(--proof); border-top-width: 4px; }
 .marketing-landing-page .plan-column h3 { font-size: 30px; }
-.plan-column.is-recommended { position: relative; }
-.lx-plan-flag { position: absolute; top: -16px; right: 8px; color: var(--proof); font-family: var(--font-hand); font-size: 22px; font-weight: 700; rotate: -4deg; }
+.marketing-landing-page .landing-plans .plan-features li:first-child { border-top: 0; }
+.lx-plan-flag {
+  position: absolute;
+  top: -15px;
+  left: 50%;
+  padding: 4px 14px 3px;
+  translate: -50% 0;
+  rotate: -2deg;
+  background: var(--proof);
+  box-shadow: 0 6px 10px -6px rgba(31, 61, 255, .6);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: .02em;
+  white-space: nowrap;
+}
 .marketing-landing-page .landing-faq summary { font-size: 18px; }
 .marketing-landing-page .landing-faq details p { animation: pop-in 220ms var(--ease-out) both; }
 
@@ -503,6 +544,7 @@
   .story-chapters li, .story-chapters li:first-child { min-height: 52vh; }
   .lx-moments { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .lx-share-row { grid-template-columns: 1fr; }
+  .marketing-landing-page .landing-plans.plan-columns.is-four { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 36px; }
 }
 @media (max-width: 760px) {
   .lx-hero { padding: 48px 16px 40px; gap: 56px; }
@@ -516,10 +558,10 @@
   .story-chapters p:not(.story-kicker) { font-size: 16px; }
   .lx-moments { grid-template-columns: 1fr; gap: 24px; }
   .lx-promises { grid-template-columns: 1fr; margin-top: 48px; }
+  .marketing-landing-page .landing-plans.plan-columns.is-four { grid-template-columns: 1fr; }
   .typewriter { flex-direction: column; align-items: stretch; padding: 16px 16px 16px 56px; background-position: 0 0; }
   .typewriter-text { font-size: 22px; white-space: normal; line-height: 32px; min-height: 64px; }
   .typewriter .ink-button { justify-content: center; }
-  .lx-plan-flag { position: static; display: block; margin-bottom: 4px; rotate: -2deg; }
 }
 
 /* ---------- Reduced motion: everything in its final place ---------- */
@@ -528,6 +570,7 @@
   .lx-hero-copy > *, .lx-hero-demo, .lx-annotation { animation: none; }
   .lx-underline path, .lx-annotation path, .lx-circle path { animation: none !important; stroke-dashoffset: 0; }
   .lx-marquee-track { flex-wrap: wrap; width: auto; animation: none; }
+  .marketing-landing-page .landing-plans .plan-column { transition: none; }
   .lx-marquee-note[aria-hidden="true"] { display: none; }
   .lx-pains span::after { transform: scaleX(1); transition: none; }
   .scrap, .scrap-mess, .scrap-tidy, .chaos-lines path, .chaos-label, .story-card, .story-reading, .story-export, .story-verdict,

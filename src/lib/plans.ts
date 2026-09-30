@@ -31,7 +31,7 @@ export const SUBSCRIPTION_TIERS: Record<string, SubscriptionPlan> = {
     id: 'byok',
     name: 'BYOK / No-AI',
     priceMonthlyUsd: 3.00,
-    priceAnnualUsd: 2.40,
+    priceAnnualUsd: 2.70,
     creditsMonthly: 0,
     features: [
       'Bring your own OpenAI or Gemini API key',
@@ -44,7 +44,7 @@ export const SUBSCRIPTION_TIERS: Record<string, SubscriptionPlan> = {
     id: 'pro',
     name: 'Pro Studio',
     priceMonthlyUsd: 9.99,
-    priceAnnualUsd: 7.99,
+    priceAnnualUsd: 8.99,
     creditsMonthly: 1500,
     features: [
       '1,500 Context Credits / month',
@@ -58,7 +58,7 @@ export const SUBSCRIPTION_TIERS: Record<string, SubscriptionPlan> = {
     id: 'team',
     name: 'Team Plan',
     priceMonthlyUsd: 29.99,
-    priceAnnualUsd: 23.99,
+    priceAnnualUsd: 26.99,
     creditsMonthly: 5000,
     perSeat: true,
     features: [

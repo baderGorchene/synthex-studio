@@ -358,7 +358,7 @@ export default function MarketingLandingPage() {
                 const recommended = id === RECOMMENDED;
                 return (
                   <div key={id} className={`plan-column ${recommended ? 'is-recommended' : ''}`}>
-                    {recommended && <span className="lx-plan-flag">Most people pick this</span>}
+                    {recommended && <span className="lx-plan-flag">Most popular</span>}
                     <h3>{plan.name}</h3>
                     <p className="plan-price"><strong>{usd(price)}</strong> <span>{id === 'trial' ? 'for 3 days' : plan.perSeat ? 'per seat a month' : 'a month'}</span></p>
                     <p className="note-meta">{plan.creditsMonthly.toLocaleString()} credits a month</p>
