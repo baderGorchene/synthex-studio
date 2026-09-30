@@ -14,6 +14,7 @@ export const clerkAppearance = {
     fontFamily: 'var(--font-ui)'
   },
   elements: {
+    rootBox: { width: '100%' },
     cardBox: { boxShadow: 'none', border: '0', width: '100%' },
     card: { boxShadow: 'none', background: 'transparent' },
     headerTitle: { fontFamily: 'var(--font-hand)', fontSize: '34px', fontWeight: 700, lineHeight: 1 }

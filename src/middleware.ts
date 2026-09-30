@@ -19,6 +19,9 @@ const collabOrigin = (() => {
   }
 })();
 
+// Vercel's preview toolbar (comments, feedback) loads from vercel.live; allow it on preview deployments only.
+const vercelToolbar = process.env.VERCEL_ENV === 'preview';
+
 const clerkHandler = clerkMiddleware(async (auth, request) => {
   if (!isPublicRoute(request)) {
     await auth.protect();
@@ -30,11 +33,15 @@ const clerkHandler = clerkMiddleware(async (auth, request) => {
   contentSecurityPolicy: {
     directives: {
       'img-src': ['self', 'https:', 'data:', 'blob:'],  // brand art, OG images, favicons, pasted/inline uploads
-      ...(collabOrigin ? { 'connect-src': [collabOrigin] } : {}),
+      'connect-src': [
+        ...(collabOrigin ? [collabOrigin] : []),
+        ...(vercelToolbar ? ['https://vercel.live', 'wss://ws-us3.pusher.com'] : [])
+      ],
+      'script-src': vercelToolbar ? ['https://vercel.live'] : [],
       'media-src': ['self', 'https:', 'data:', 'blob:'],
-      'frame-src': ['data:', 'blob:', 'https://storage.googleapis.com'], // PDF preview
-      'style-src': ['https://fonts.googleapis.com'],
-      'font-src': ['self', 'https://fonts.gstatic.com', 'data:'],
+      'frame-src': ['data:', 'blob:', 'https://storage.googleapis.com', ...(vercelToolbar ? ['https://vercel.live'] : [])], // PDF preview
+      'style-src': ['https://fonts.googleapis.com', ...(vercelToolbar ? ['https://vercel.live'] : [])],
+      'font-src': ['self', 'https://fonts.gstatic.com', 'data:', ...(vercelToolbar ? ['https://vercel.live', 'https://assets.vercel.com'] : [])],
       'object-src': ['none'],
       'base-uri': ['self'],
       'frame-ancestors': ['self']

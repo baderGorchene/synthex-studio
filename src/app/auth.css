@@ -124,7 +124,6 @@
 }
 .auth-sheet::before { left: 18px; rotate: -6deg; }
 .auth-sheet::after { right: 18px; rotate: 5deg; }
-.auth-sheet .cl-rootBox, .auth-sheet .cl-cardBox { width: 100%; }
 .auth-scribble {
   margin: 0;
   color: var(--proof);
