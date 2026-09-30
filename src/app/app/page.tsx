@@ -1890,6 +1890,7 @@ export default function SynthexWorkspace() {
                       />
                     </div>
                   )}
+                  <div className="map-menu-scroll">
                   <section className="map-menu-section">
                     <p className="map-menu-heading">
                       <span>{workspaceKind === 'team' ? 'Team maps' : 'Your maps'}</span>
@@ -1965,6 +1966,7 @@ export default function SynthexWorkspace() {
                       </ul>
                     </section>
                   )}
+                  </div>
                   <form className="map-menu-new" onSubmit={createProject}>
                     <label className="map-menu-heading" htmlFor="project-name"><span>New map</span></label>
                     <div className="map-menu-new-row">
