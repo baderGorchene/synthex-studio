@@ -52,43 +52,18 @@ export async function getServerAuth(): Promise<AuthContext> {
     };
   }
 
+  // Only a Clerk failure means "signed out". Database errors below must propagate so routes
+  // answer 500 and log the cause, instead of turning a signed-in user's request into a 401.
+  let authState: { userId: string | null; orgId?: string | null; orgRole?: string | null };
   try {
     const { auth } = await import('@clerk/nextjs/server');
-    const authState = await auth();
-
-    if (!authState.userId) {
-      return {
-        userId: '',
-        clerkId: null,
-        orgId: null,
-        orgRole: null,
-        isLocal: false,
-        user: null
-      };
-    }
-
-    let userRecord = (await getUserByClerkId(authState.userId)) as UserRecord | null;
-    if (!userRecord) {
-      // First-time sign in: requires mandatory subscription plan selection
-      userRecord = (await upsertUser({
-        clerkId: authState.userId,
-        subscriptionTier: 'none',
-        subscriptionStatus: 'unselected',
-        contextCredits: 0,
-        trialEndsAt: null
-      })) as UserRecord;
-    }
-
-    return {
-      userId: userRecord.id,
-      clerkId: authState.userId,
-      orgId: authState.orgId || null,
-      orgRole: authState.orgRole || null,
-      isLocal: false,
-      user: userRecord
-    };
+    authState = await auth();
   } catch (error) {
     console.warn('Failed to resolve Clerk authentication context:', error);
+    authState = { userId: null };
+  }
+
+  if (!authState.userId) {
     return {
       userId: '',
       clerkId: null,
@@ -98,4 +73,25 @@ export async function getServerAuth(): Promise<AuthContext> {
       user: null
     };
   }
+
+  let userRecord = (await getUserByClerkId(authState.userId)) as UserRecord | null;
+  if (!userRecord) {
+    // First-time sign in: requires mandatory subscription plan selection
+    userRecord = (await upsertUser({
+      clerkId: authState.userId,
+      subscriptionTier: 'none',
+      subscriptionStatus: 'unselected',
+      contextCredits: 0,
+      trialEndsAt: null
+    })) as UserRecord;
+  }
+
+  return {
+    userId: userRecord.id,
+    clerkId: authState.userId,
+    orgId: authState.orgId || null,
+    orgRole: authState.orgRole || null,
+    isLocal: false,
+    user: userRecord
+  };
 }

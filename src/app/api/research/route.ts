@@ -29,9 +29,10 @@ function buildSessionFromResearchResult(
     provider: string;
     model: string;
     usedFallback: boolean;
+    groundingNote?: string;
   }
 ): ResearchSession {
-  const { result, sources, searchQueries, provider, model, usedFallback } = resultPayload;
+  const { result, sources, searchQueries, provider, model, usedFallback, groundingNote } = resultPayload;
   const existingSourceUrls = new Set(Object.values(graph.nodesById).map(node => node.url).filter(Boolean));
   const idByTempId = new Map<string, string>();
   const changes: ResearchChange[] = [];
@@ -117,6 +118,7 @@ function buildSessionFromResearchResult(
       `Research question: ${query}`,
       ...searchQueries.map(text => `Search: ${text.slice(0, 500)}`),
       `Grounded sources discovered: ${sources.length}`,
+      ...(groundingNote ? [groundingNote] : []),
       `Staged ${changes.filter(c => c.kind === 'node').length} nodes and ${changes.filter(c => c.kind === 'relationship').length} relationships for human review`,
       'Generated knowledge is unverified and remains pending until reviewed.'
     ],
@@ -193,28 +195,40 @@ export async function POST(request: Request) {
 
     if (wantsStream) {
       const encoder = new TextEncoder();
+      // The run is not aborted when the client disconnects: the finished session is saved
+      // to research history, so the user can still open what they paid for.
+      let open = true;
       const stream = new ReadableStream({
         async start(controller) {
+          const send = (event: string, data: unknown) => {
+            if (open) controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+          };
           try {
-            for await (const event of researchGraphStream(query, mode, graph, projectId)) {
+            for await (const event of researchGraphStream(query, mode, graph, { projectId })) {
               if (event.type === 'done') {
                 const session = buildSessionFromResearchResult(query, mode, graph, event.result);
                 await saveResearchSession(session, projectId);
-                controller.enqueue(encoder.encode(`event: done\ndata: ${JSON.stringify({ session, result: event.result, creditsRemaining })}\n\n`));
+                send('done', { session, result: event.result, creditsRemaining });
               } else {
-                controller.enqueue(encoder.encode(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`));
+                send(event.type, event);
               }
             }
-            controller.close();
           } catch (err) {
             console.error('Research stream failed:', err);
             await refund().catch(refundErr => console.error('Credit refund failed:', refundErr));
             const errorMsg = err instanceof Error && err.message === 'AI_NOT_CONFIGURED'
               ? 'AI is not configured on the server.'
               : 'Research run could not complete. Your credits were refunded.';
-            controller.enqueue(encoder.encode(`event: error\ndata: ${JSON.stringify({ error: errorMsg })}\n\n`));
-            controller.close();
+            send('error', { error: errorMsg });
+          } finally {
+            if (open) {
+              open = false;
+              controller.close();
+            }
           }
+        },
+        cancel() {
+          open = false;
         }
       });
 
@@ -229,7 +243,7 @@ export async function POST(request: Request) {
 
     let session: ResearchSession;
     try {
-      const resultPayload = await researchGraph(query, mode, graph, projectId);
+      const resultPayload = await researchGraph(query, mode, graph, { projectId });
       session = buildSessionFromResearchResult(query, mode, graph, resultPayload);
       await saveResearchSession(session, projectId);
     } catch (err) {

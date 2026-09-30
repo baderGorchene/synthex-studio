@@ -2,17 +2,14 @@
 /* eslint-disable @next/next/no-img-element */
 
 import { useCallback, useEffect, useState } from 'react';
-import { ArrowDownRight, ArrowUpRight, CircleHelp, Database, Download, ExternalLink, FileClock, FileText, History, Layers2, LoaderCircle, Plus, Quote, RotateCcw, Trash2 } from 'lucide-react';
+import { Download, LoaderCircle, Plus, Trash2 } from 'lucide-react';
 import type { CanvasNode, Connection, DatabaseSnapshotSummary, GraphRevisionSummary, ResearchSession } from '@/types/canvas';
 import type { WorkspaceSection } from './WorkspaceSidebar';
-import { WebsiteLogo, getLinkThumbnail } from './SourceMetadata';
+import { getLinkThumbnail } from './SourceMetadata';
+import { nodeLabel } from './nodes/BaseKnowledgeCard';
 import { FileViewerModal } from './FileAndMediaModal';
 import { extractPageNumber } from '@/utils/citation';
 
-const names: Record<string, string> = {
-  concept: 'Concept', claim: 'Claim', question: 'Question', hypothesis: 'Hypothesis', source: 'Source',
-  link: 'Link & Website', note: 'Note', group: 'Cluster', section: 'Cluster', ai_insight: 'AI insight', research_result: 'Research result'
-};
 
 function formatRelativeTime(timestamp: number): string {
   const diffSec = Math.floor((Date.now() - timestamp) / 1000);
@@ -77,72 +74,84 @@ export function KnowledgeViews({
     );
   }
 
-  if (section === 'history') return (
-    <div className="content-view">
-      <div className="view-heading"><div><span className="panel-overline">Activity</span><h2>Research history</h2><p>Each run keeps its question, search trail, and review decisions.</p></div><FileClock size={21} /></div>
-      {sessions.length === 0 ? <div className="empty-view"><FileClock size={22} /><strong>No research runs yet</strong><span>Use Research to add grounded proposals to this workspace.</span></div> :
-        <div className="history-list">{sessions.map(session => <button className="history-row" key={session.id} onClick={() => onOpenSession(session)}>
-          <span className="history-mode">{session.mode === 'deep' ? 'Deep research' : 'Quick research'}<i className={session.status === 'review' ? 'pending-dot' : 'done-dot'} /></span>
-          <strong>{session.query}</strong><span className="history-summary">{session.summary}</span>
-          <span className="history-meta">{new Date(session.createdAt).toLocaleString()} · {session.changes.filter(item => item.status === 'pending').length} awaiting review</span>
-        </button>)}</div>}
-    </div>
-  );
+  const count = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+  const sourceCount = nodes.filter(node => node.type === 'source' || node.type === 'link').length;
+
+  if (section === 'history') {
+    const waiting = sessions.filter(session => session.status === 'review').length;
+    return (
+      <div className="content-view">
+        <ViewHead title="Research history" meta={`${count(sessions.length, 'run')}${waiting ? ` · ${waiting} waiting for review` : ''}`} />
+        {sessions.length === 0 ? <EmptyView title="No research yet" body="Ask a question in the composer on the map. Each run shows up here with what you kept." /> :
+          <ol className="view-rows">{sessions.map(session => {
+            const kept = session.changes.filter(item => item.kind === 'node' && item.status === 'accepted').length;
+            const discarded = session.changes.filter(item => item.kind === 'node' && item.status === 'rejected').length;
+            const pending = session.status === 'review' || session.changes.some(item => item.status === 'pending');
+            return <li key={session.id}><button className="view-row" onClick={() => onOpenSession(session)}>
+              <span className="view-row-main">
+                <strong>{session.query}</strong>
+                {session.summary && <span className="view-row-body">{session.summary}</span>}
+                <span className="note-meta">{[session.mode === 'deep' ? 'Deep' : 'Quick', `${kept} ${kept === 1 ? 'idea' : 'ideas'} kept`, `${discarded} discarded`, shortDate(session.createdAt)].join(' · ')}</span>
+                {pending && <span className="view-row-draft">Drafts waiting on the map</span>}
+              </span>
+            </button></li>;
+          })}</ol>}
+      </div>
+    );
+  }
 
   if (section === 'evidence') {
     const claims = nodes.filter(node => node.type === 'claim');
+    const withSources = claims.filter(claim => claim.metadata?.evidence?.length).length;
     return <div className="content-view">
-      <div className="view-heading"><div><span className="panel-overline">Traceability</span><h2>Evidence paths</h2><p>Review how claims connect to source material.</p></div><ArrowDownRight size={21} /></div>
-      {claims.length === 0 ? <div className="empty-view"><Quote size={22} /><strong>No claims to trace</strong><span>Add a claim and connect it to supporting or contradicting sources.</span></div> :
-        <div className="evidence-list">{claims.map(claim => {
+      <ViewHead title="Evidence paths" meta={`${count(claims.length, 'claim')} · ${withSources} with sources`} />
+      {claims.length === 0 ? <EmptyView title="No claims to trace" body="Add a claim and connect it to the sources that support or challenge it." /> :
+        <div className="view-paper">{claims.map(claim => {
           const related = edges.filter(edge => edge.from === claim.id || edge.to === claim.id);
-          return <article className="evidence-row" key={claim.id}>
-            <button className="evidence-claim" onClick={() => onSelectNode(claim.id)}><span className={`status-dot status-${claim.metadata?.claimStatus || 'unverified'}`} />
-              <span><strong>{claim.title}</strong><small>{(claim.metadata?.claimStatus || 'unverified').replaceAll('_', ' ')}</small></span><ArrowUpRight size={15} />
+          return <article className="evidence-path" key={claim.id}>
+            <button className="evidence-path-claim" onClick={() => onSelectNode(claim.id)}>
+              <strong>{claim.title}</strong>
+              <ClaimStatus status={claim.metadata?.claimStatus} />
             </button>
             {claim.metadata?.evidence?.length ? (
-              <div className="card-evidence-list" style={{ margin: '6px 0 10px 0' }}>
+              <ol className="evidence-path-sources">
                 {claim.metadata.evidence.map((ev, idx) => {
                   const src = nodes.find(n => n.id === ev.sourceId);
                   const pageNum = ev.page || extractPageNumber(ev.location);
-                  const isContradiction = ev.relation === 'contradicts';
                   const hasPdf = Boolean(src?.fileData && (src.fileType?.includes('pdf') || src.fileName?.toLowerCase().endsWith('.pdf') || src.fileData.startsWith('data:application/pdf')));
-
                   return (
-                    <button
-                      key={idx}
-                      type="button"
-                      className={`card-evidence-pill ${isContradiction ? 'contradicts' : 'supports'} ${hasPdf ? 'has-pdf' : ''}`}
-                      title={ev.excerpt ? `“${ev.excerpt}” — Click to ${hasPdf ? 'open PDF citation' : 'view source'}` : `Source: ${src?.title || ev.sourceId}`}
-                      onClick={() => {
-                        if (hasPdf && src?.fileData) {
-                          setActivePdfPreview({
-                            fileData: src.fileData,
-                            fileName: src.fileName || src.title,
-                            fileSize: src.fileSize,
-                            fileType: src.fileType || 'application/pdf',
-                            initialPage: pageNum,
-                            highlightExcerpt: ev.excerpt
-                          });
-                        } else if (src) {
-                          onSelectNode(src.id);
-                        }
-                      }}
-                    >
-                      <span className="evidence-relation-dot" />
-                      <span className="evidence-source-title">{src?.title || ev.sourceId}</span>
-                      {pageNum && <span className="evidence-page-badge">p.{pageNum}</span>}
-                      {hasPdf && <FileText size={10} className="evidence-pdf-icon" />}
-                    </button>
+                    <li key={idx}>
+                      <button
+                        type="button"
+                        title={ev.excerpt ? `“${ev.excerpt}”` : undefined}
+                        onClick={() => {
+                          if (hasPdf && src?.fileData) {
+                            setActivePdfPreview({
+                              fileData: src.fileData,
+                              fileName: src.fileName || src.title,
+                              fileSize: src.fileSize,
+                              fileType: src.fileType || 'application/pdf',
+                              initialPage: pageNum,
+                              highlightExcerpt: ev.excerpt
+                            });
+                          } else if (src) {
+                            onSelectNode(src.id);
+                          }
+                        }}
+                      >
+                        {src?.title || ev.sourceId}
+                      </button>
+                      <span className="note-meta">{[ev.relation === 'contradicts' ? 'Challenges it' : 'Supports it', pageNum ? `p. ${pageNum}` : null, hasPdf ? 'PDF' : null].filter(Boolean).join(' · ')}</span>
+                    </li>
                   );
                 })}
-              </div>
+              </ol>
             ) : null}
-            {related.length ? <div className="evidence-links">{related.map(edge => {
+            {related.length ? <ul className="evidence-path-links">{related.map(edge => {
               const otherId = edge.from === claim.id ? edge.to : edge.from;
               const other = nodes.find(node => node.id === otherId);
-              return <button key={edge.id} onClick={() => onSelectNode(otherId)}><span>{edge.label || 'related to'}</span><b>{other?.title || 'Missing record'}</b><small>{names[other?.type || ''] || 'Knowledge'} · {edge.metadata?.evidence ? 'evidence noted' : 'no excerpt saved'}</small></button>;
-            })}</div> : <p className="no-path">No connected sources or related records yet.</p>}
+              return <li key={edge.id}><button onClick={() => onSelectNode(otherId)}><span className="evidence-path-label">{(edge.label || 'related to').replaceAll('_', ' ')}</span> {other?.title || 'Missing idea'}</button></li>;
+            })}</ul> : <p className="note-meta">Not connected to anything yet.</p>}
           </article>;
         })}</div>}
 
@@ -160,52 +169,93 @@ export function KnowledgeViews({
     </div>;
   }
 
+  if (section === 'table') {
+    const rows = nodes.filter(node => node.type === 'claim' || node.type === 'question').sort((a, b) => a.title.localeCompare(b.title));
+    const claimsCount = rows.filter(node => node.type === 'claim').length;
+    return <div className="content-view">
+      <ViewHead title="Claims and questions" meta={`${count(claimsCount, 'claim')} · ${count(rows.length - claimsCount, 'question')}`} />
+      {rows.length === 0 ? <EmptyView title="Nothing here yet" body="Claims and questions from your map show up here with their status." /> :
+        <div className="view-paper view-table-wrap">
+          <table className="view-table">
+            <thead><tr><th scope="col">Title</th><th scope="col">Type</th><th scope="col">Status</th><th scope="col" className="num">Sources</th><th scope="col" className="num">Relations</th></tr></thead>
+            <tbody>{rows.map(node => (
+              <tr key={node.id}>
+                <td><button type="button" onClick={() => onSelectNode(node.id)}>{node.title}</button></td>
+                <td>{nodeLabel[node.type] || 'Idea'}</td>
+                <td>{node.type === 'claim' ? <ClaimStatus status={node.metadata?.claimStatus} /> : <span className="claim-status muted">Open</span>}</td>
+                <td className="num">{node.metadata?.evidence?.length || 0}</td>
+                <td className="num">{edges.filter(edge => edge.from === node.id || edge.to === node.id).length}</td>
+              </tr>
+            ))}</tbody>
+          </table>
+        </div>}
+    </div>;
+  }
+
   let viewNodes = nodes;
   let title = 'Outline';
-  let eyebrow = 'Structure';
-  let description = 'A readable sequence of the ideas in this knowledge sheet.';
-  if (section === 'sources') { viewNodes = nodes.filter(node => node.type === 'source' || node.type === 'link'); title = 'Sources'; eyebrow = 'Library'; description = 'Reference material saved in this workspace.'; }
-  if (section === 'questions') { viewNodes = nodes.filter(node => node.type === 'question'); title = 'Open questions'; eyebrow = 'Next to explore'; description = 'Unresolved questions that can guide the next research run.'; }
-  if (section === 'table') { viewNodes = nodes.filter(node => node.type === 'claim' || node.type === 'question'); title = 'Claims & questions'; eyebrow = 'Knowledge ledger'; description = 'Claims carry an explicit evidence status; questions remain open until resolved.'; }
+  let meta = `${count(nodes.length, 'idea')} · ${count(edges.length, 'relation')} · ${count(sourceCount, 'source')}`;
+  let emptyBody = 'Add ideas on the map and they appear here in reading order.';
+  if (section === 'sources') { viewNodes = nodes.filter(node => node.type === 'source' || node.type === 'link'); title = 'Sources'; meta = count(viewNodes.length, 'source'); emptyBody = 'Sources you add or keep from research are listed here, numbered.'; }
+  if (section === 'questions') { viewNodes = nodes.filter(node => node.type === 'question'); title = 'Open questions'; meta = count(viewNodes.length, 'open question'); emptyBody = 'Questions on your map show up here so you know what to look into next.'; }
   if (section === 'outline') viewNodes = nodes.filter(node => !['source', 'link', 'image'].includes(node.type));
+  const Rows = section === 'sources' ? 'ol' : 'ul';
   return <div className="content-view">
-    <div className="view-heading"><div><span className="panel-overline">{eyebrow}</span><h2>{title}</h2><p>{description}</p></div>{section === 'questions' ? <CircleHelp size={21} /> : <Layers2 size={21} />}</div>
-    {viewNodes.length === 0 ? <div className="empty-view"><Layers2 size={22} /><strong>Nothing here yet</strong><span>Add a record from the graph or run research to build this view.</span></div> :
-      <div className="records-list">{viewNodes.sort((a, b) => a.y - b.y || a.title.localeCompare(b.title)).map(node => {
+    <ViewHead title={title} meta={meta} />
+    {viewNodes.length === 0 ? <EmptyView title="Nothing here yet" body={emptyBody} /> :
+      <Rows className={`view-rows ${section === 'sources' ? 'is-numbered' : ''}`}>{viewNodes.sort((a, b) => a.y - b.y || a.title.localeCompare(b.title)).map(node => {
         const connectedCount = edges.filter(edge => edge.from === node.id || edge.to === node.id).length;
         const linkThumb = (node.type === 'source' || node.type === 'link') ? getLinkThumbnail(node) : null;
         const previewImage = linkThumb?.thumbnailUrl;
-        return <button className="record-row" key={node.id} onClick={() => onSelectNode(node.id)}>
-          <span className={`record-icon type-${node.type}`}>
-            {(node.type === 'source' || node.type === 'link') ? (
-              <WebsiteLogo url={node.url} domain={node.domain} logo={node.metadata?.logo as string} size={16} />
-            ) : node.type === 'question' ? (
-              <CircleHelp size={16} />
-            ) : node.type === 'claim' ? (
-              <Quote size={16} />
-            ) : (
-              <Layers2 size={16} />
-            )}
+        const metaLine = [
+          nodeLabel[node.type] || 'Idea',
+          node.metadata?.origin === 'ai' ? 'From research' : null,
+          node.url ? sourceHost(node.url) : null,
+          connectedCount ? count(connectedCount, 'relation') : null
+        ].filter(Boolean).join(' · ');
+        return <li key={node.id}><button className="view-row" onClick={() => onSelectNode(node.id)}>
+          <span className="view-row-main">
+            <strong>{node.title}</strong>
+            {(node.content || node.description) && <span className="view-row-body">{node.content || node.description}</span>}
+            <span className="note-meta">{metaLine}{node.metadata?.claimStatus && <> · <ClaimStatus status={node.metadata.claimStatus} /></>}</span>
           </span>
-          <span className="record-main"><span className="record-type">{names[node.type] || 'Knowledge'}{node.metadata?.origin === 'ai' ? ' · AI proposal' : ''}</span><strong>{node.title}</strong><small>{node.content || node.description || (node.url ? sourceHost(node.url) : 'No notes added')}</small></span>
-          <span className="record-trailing">
-            {node.metadata?.claimStatus && <em className={`status-pill status-${node.metadata.claimStatus}`}>{node.metadata.claimStatus.replaceAll('_', ' ')}</em>}
-            {previewImage && (
-              <img
-                src={previewImage}
-                alt=""
-                className="source-thumb-mini"
-                loading="lazy"
-                referrerPolicy="no-referrer"
-                onError={(e) => { (e.currentTarget as HTMLElement).style.display = 'none'; }}
-              />
-            )}
-            {(node.type === 'source' || node.type === 'link') && node.url && <ExternalLink size={14} />}
-            {connectedCount > 0 && <small>{connectedCount} links</small>}
-          </span>
-        </button>;
-      })}</div>}
+          {previewImage && (
+            <img
+              src={previewImage}
+              alt=""
+              className="view-row-thumb"
+              loading="lazy"
+              referrerPolicy="no-referrer"
+              onError={(e) => { (e.currentTarget as HTMLElement).style.display = 'none'; }}
+            />
+          )}
+        </button></li>;
+      })}</Rows>}
   </div>;
+}
+
+function ViewHead({ title, meta }: { title: string; meta: string }) {
+  return <header className="view-head"><h1>{title}</h1><p className="view-meta">{meta}</p></header>;
+}
+
+function EmptyView({ title, body }: { title: string; body: string }) {
+  return <div className="view-empty"><strong>{title}</strong><p>{body}</p></div>;
+}
+
+const STATUS_GLYPH: Record<string, [string, string]> = {
+  supported: ['●', 'ink'], weakly_supported: ['◐', 'muted'], disputed: ['◐', 'muted'], contradicted: ['◐', 'muted'],
+  unverified: ['○', 'faint'], open_question: ['○', 'faint'], outdated: ['○', 'faint']
+};
+
+/** Claim status as text with a small leading glyph; the word is always shown. */
+function ClaimStatus({ status = 'unverified' }: { status?: string }) {
+  const [glyph, tone] = STATUS_GLYPH[status] || STATUS_GLYPH.unverified;
+  const word = status.replaceAll('_', ' ');
+  return <span className={`claim-status ${tone}`}><span aria-hidden="true">{glyph}</span> {word.charAt(0).toUpperCase() + word.slice(1)}</span>;
+}
+
+function shortDate(timestamp: number) {
+  return new Date(timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
 function RevisionsView({
@@ -315,7 +365,7 @@ function RevisionsView({
   };
 
   const handleRestore = async (id: string, title: string) => {
-    const confirmRestore = window.confirm(`Restore this revision "${title}"? Any unsaved edits will be preserved in a new restore checkpoint.`);
+    const confirmRestore = window.confirm(`Restore "${title}"? Your current map is saved as a version first, so you can come back to it.`);
     if (!confirmRestore) return;
 
     setRestoringId(id);
@@ -365,7 +415,7 @@ function RevisionsView({
         setShowSnapshotInput(false);
       }
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'Could not create database snapshot');
+      alert(err instanceof Error ? err.message : 'Could not make a backup');
     } finally {
       setCreatingSnapshot(false);
     }
@@ -392,17 +442,17 @@ function RevisionsView({
           window.location.reload();
         }
       } else {
-        alert(data.error || 'Could not restore snapshot');
+        alert(data.error || 'Could not restore the backup');
       }
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'Could not restore snapshot');
+      alert(err instanceof Error ? err.message : 'Could not restore the backup');
     } finally {
       setRestoringSnapshotFile(null);
     }
   };
 
   const handleDeleteSnapshot = async (fileName: string) => {
-    const confirmed = window.confirm(`Delete snapshot "${fileName}"? This cannot be undone.`);
+    const confirmed = window.confirm(`Delete the backup "${fileName}"? This cannot be undone.`);
     if (!confirmed) return;
 
     setDeletingSnapshotFile(fileName);
@@ -414,289 +464,147 @@ function RevisionsView({
       });
       setSnapshots(curr => curr.filter(s => s.fileName !== fileName));
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'Could not delete snapshot');
+      alert(err instanceof Error ? err.message : 'Could not delete the backup');
     } finally {
       setDeletingSnapshotFile(null);
     }
   };
 
+  const time = (ts: number) => new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
   return (
     <div className="content-view">
-      <div className="view-heading">
-        <div>
-          <span className="panel-overline">Version History & Recovery</span>
-          <h2>{activeTab === 'revisions' ? 'Persistent Revisions & Checkpoints' : 'Workspace Database Snapshots'}</h2>
-          <p>
-            {activeTab === 'revisions'
-              ? 'Time-travel to previous states in this workspace. All revisions are stored permanently in local SQLite.'
-              : 'Full offline SQLite snapshots of canvas.db. Backs up all projects, nodes, links, and history.'}
-          </p>
-        </div>
-        {activeTab === 'revisions' ? <History size={21} /> : <Database size={21} />}
-      </div>
+      <ViewHead
+        title="Revisions"
+        meta={activeTab === 'revisions'
+          ? `${revisions.length} saved ${revisions.length === 1 ? 'version' : 'versions'} · now ${currentNodesCount} ideas, ${currentEdgesCount} relations`
+          : `${snapshots.length} ${snapshots.length === 1 ? 'backup' : 'backups'} of every map on this computer`}
+      />
 
-      <div className="revisions-tabs">
-        <button
-          type="button"
-          className={`revisions-tab ${activeTab === 'revisions' ? 'active' : ''}`}
-          onClick={() => { setActiveTab('revisions'); fetchRevisions(); }}
-        >
-          <History size={14} />
-          <span>Project Checkpoints ({revisions.length})</span>
+      <div className="view-tabs" role="tablist">
+        <button type="button" role="tab" aria-selected={activeTab === 'revisions'} className={activeTab === 'revisions' ? 'active' : ''} onClick={() => { setActiveTab('revisions'); fetchRevisions(); }}>
+          This map ({revisions.length})
         </button>
-        <button
-          type="button"
-          className={`revisions-tab ${activeTab === 'snapshots' ? 'active' : ''}`}
-          onClick={() => { setActiveTab('snapshots'); fetchSnapshots(); }}
-        >
-          <Database size={14} />
-          <span>Database Snapshots ({snapshots.length})</span>
+        <button type="button" role="tab" aria-selected={activeTab === 'snapshots'} className={activeTab === 'snapshots' ? 'active' : ''} onClick={() => { setActiveTab('snapshots'); fetchSnapshots(); }}>
+          Backups ({snapshots.length})
         </button>
       </div>
 
       {activeTab === 'revisions' ? (
         <>
-          <div className="revisions-toolbar">
+          <div className="view-toolbar">
             {showCreateInput ? (
-              <form onSubmit={handleCreate} className="revisions-checkpoint-form">
+              <form onSubmit={handleCreate} className="view-toolbar-form">
                 <input
                   type="text"
-                  className="field-input revisions-checkpoint-input"
-                  placeholder="e.g. Before merging research notes..."
+                  className="field-input"
+                  aria-label="Version name"
+                  placeholder="e.g. Before merging my notes"
                   value={checkpointTitle}
                   autoFocus
                   onChange={e => setCheckpointTitle(e.target.value)}
                   disabled={creating}
                 />
-                <button type="submit" className="primary-button" disabled={creating}>
-                  {creating ? <LoaderCircle size={14} className="spin" /> : <Plus size={14} />}
-                  <span>{creating ? 'Saving…' : 'Save'}</span>
-                </button>
-                <button
-                  type="button"
-                  className="quiet-button"
-                  onClick={() => { setShowCreateInput(false); setCheckpointTitle(''); }}
-                  disabled={creating}
-                >
-                  Cancel
-                </button>
+                <button type="submit" className="ink-button" disabled={creating}>{creating ? 'Saving…' : 'Save'}</button>
+                <button type="button" className="text-button" onClick={() => { setShowCreateInput(false); setCheckpointTitle(''); }} disabled={creating}>Cancel</button>
               </form>
             ) : (
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
-                <span style={{ fontSize: '11px', color: '#1F3DFF' }}>
-                  Current sheet: <strong>{currentNodesCount}</strong> records, <strong>{currentEdgesCount}</strong> links
-                </span>
-                <button
-                  type="button"
-                  className="primary-button"
-                  onClick={() => setShowCreateInput(true)}
-                >
-                  <Plus size={14} />
-                  <span>Create checkpoint</span>
-                </button>
-              </div>
+              <button type="button" className="line-button" onClick={() => setShowCreateInput(true)}>
+                <Plus size={16} strokeWidth={1.75} /> Save a version
+              </button>
             )}
           </div>
 
           {loading ? (
-            <div className="empty-view">
-              <LoaderCircle size={22} className="spin" />
-              <strong>Loading revisions…</strong>
-            </div>
+            <div className="view-empty"><strong>Loading versions…</strong></div>
           ) : revisions.length === 0 ? (
-            <div className="empty-view">
-              <History size={22} />
-              <strong>No revisions recorded yet</strong>
-              <span>Create a checkpoint above or make changes to start recording point-in-time snapshots.</span>
-            </div>
+            <EmptyView title="No versions yet" body="Versions are saved as you work. You can also save one by hand before a big change." />
           ) : (
-            <div className="revisions-list">
+            <ol className="view-rows">
               {revisions.map(rev => {
                 const isRestoring = restoringId === rev.id;
                 const isDeleting = deletingId === rev.id;
-                const isRestored = rev.title.startsWith('Restored:');
-
                 return (
-                  <div className="revision-card" key={rev.id}>
-                    <div className="revision-card-left">
-                      <div className="revision-icon-wrap" style={isRestored ? { background: '#1F3DFF', color: '#fff' } : undefined}>
-                        <History size={16} />
-                      </div>
-                      <div className="revision-details">
-                        <div className="revision-title-row">
-                          <strong className="revision-title">{rev.title}</strong>
-                          {isRestored && <span className="revision-badge">Restoration</span>}
-                        </div>
-                        <div className="revision-meta-row">
-                          <span>{formatRelativeTime(rev.createdAt)}</span>
-                          <span>·</span>
-                          <span>{new Date(rev.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                          <span>·</span>
-                          <span className="revision-badge">{rev.nodeCount} records · {rev.edgeCount} relationships</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="revision-actions">
-                      <button
-                        type="button"
-                        className="restore-btn"
-                        disabled={isRestoring || isDeleting}
-                        onClick={() => handleRestore(rev.id, rev.title)}
-                        title="Restore graph to this state"
-                      >
-                        {isRestoring ? <LoaderCircle size={13} className="spin" /> : <RotateCcw size={13} />}
-                        <span>{isRestoring ? 'Restoring…' : 'Restore'}</span>
+                  <li className="view-row is-static" key={rev.id}>
+                    <span className="view-row-main">
+                      <strong>{rev.title}</strong>
+                      <span className="note-meta">{formatRelativeTime(rev.createdAt)} · {time(rev.createdAt)} · {rev.nodeCount} ideas · {rev.edgeCount} relations</span>
+                    </span>
+                    <span className="view-row-actions">
+                      <button type="button" className="line-button" disabled={isRestoring || isDeleting} onClick={() => handleRestore(rev.id, rev.title)}>
+                        {isRestoring ? 'Restoring…' : 'Restore'}
                       </button>
-                      <button
-                        type="button"
-                        className="delete-rev-btn"
-                        disabled={isRestoring || isDeleting}
-                        onClick={() => handleDelete(rev.id)}
-                        title="Delete this revision"
-                        aria-label="Delete revision"
-                      >
-                        {isDeleting ? <LoaderCircle size={13} className="spin" /> : <Trash2 size={13} />}
+                      <button type="button" className="icon-button" disabled={isRestoring || isDeleting} onClick={() => handleDelete(rev.id)} aria-label={`Delete version ${rev.title}`} title="Delete this version">
+                        {isDeleting ? <LoaderCircle size={16} strokeWidth={1.75} className="spin" /> : <Trash2 size={16} strokeWidth={1.75} />}
                       </button>
-                    </div>
-                  </div>
+                    </span>
+                  </li>
                 );
               })}
-            </div>
+            </ol>
           )}
         </>
       ) : (
         <>
-          <div className="revisions-toolbar">
+          <div className="view-toolbar">
             {showSnapshotInput ? (
-              <form onSubmit={handleCreateSnapshot} className="revisions-checkpoint-form">
+              <form onSubmit={handleCreateSnapshot} className="view-toolbar-form">
                 <input
                   type="text"
-                  className="field-input revisions-checkpoint-input"
-                  placeholder="e.g. Before importing large dataset..."
+                  className="field-input"
+                  aria-label="Backup name"
+                  placeholder="e.g. Before importing a big file"
                   value={snapshotLabel}
                   autoFocus
                   onChange={e => setSnapshotLabel(e.target.value)}
                   disabled={creatingSnapshot}
                 />
-                <button type="submit" className="primary-button" disabled={creatingSnapshot}>
-                  {creatingSnapshot ? <LoaderCircle size={14} className="spin" /> : <Plus size={14} />}
-                  <span>{creatingSnapshot ? 'Creating…' : 'Create Snapshot'}</span>
-                </button>
-                <button
-                  type="button"
-                  className="quiet-button"
-                  onClick={() => { setShowSnapshotInput(false); setSnapshotLabel(''); }}
-                  disabled={creatingSnapshot}
-                >
-                  Cancel
-                </button>
+                <button type="submit" className="ink-button" disabled={creatingSnapshot}>{creatingSnapshot ? 'Backing up…' : 'Back up'}</button>
+                <button type="button" className="text-button" onClick={() => { setShowSnapshotInput(false); setSnapshotLabel(''); }} disabled={creatingSnapshot}>Cancel</button>
               </form>
             ) : (
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
-                <span style={{ fontSize: '11px', color: '#1F3DFF' }}>
-                  Offline SQLite snapshots stored in <code>.backups/</code>
-                </span>
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  <a
-                    href="/api/backup?download=1"
-                    className="download-snap-btn"
-                    title="Download active canvas.db SQLite database"
-                  >
-                    <Download size={13} />
-                    <span>Download canvas.db</span>
-                  </a>
-                  <button
-                    type="button"
-                    className="primary-button"
-                    onClick={() => setShowSnapshotInput(true)}
-                  >
-                    <Plus size={14} />
-                    <span>Create DB Snapshot</span>
-                  </button>
-                </div>
-              </div>
+              <>
+                <button type="button" className="line-button" onClick={() => setShowSnapshotInput(true)}>
+                  <Plus size={16} strokeWidth={1.75} /> Make a backup
+                </button>
+                <a href="/api/backup?download=1" className="text-button view-link-button">
+                  <Download size={16} strokeWidth={1.75} /> Download the database
+                </a>
+              </>
             )}
           </div>
 
           {loadingSnapshots ? (
-            <div className="empty-view">
-              <LoaderCircle size={22} className="spin" />
-              <strong>Loading database snapshots…</strong>
-            </div>
+            <div className="view-empty"><strong>Loading backups…</strong></div>
           ) : snapshots.length === 0 ? (
-            <div className="empty-view">
-              <Database size={22} />
-              <strong>No database snapshots taken yet</strong>
-              <span>Create a snapshot above to backup the entire offline SQLite database.</span>
-            </div>
+            <EmptyView title="No backups yet" body="A backup copies every map on this computer into one file you can restore later." />
           ) : (
-            <div className="revisions-list">
+            <ol className="view-rows">
               {snapshots.map(snap => {
                 const isRestoring = restoringSnapshotFile === snap.fileName;
                 const isDeleting = deletingSnapshotFile === snap.fileName;
-
                 return (
-                  <div className="revision-card" key={snap.id}>
-                    <div className="revision-card-left">
-                      <div className="revision-icon-wrap" style={{ background: '#111214', color: '#fff' }}>
-                        <Database size={16} />
-                      </div>
-                      <div className="revision-details">
-                        <div className="revision-title-row">
-                          <strong className="revision-title">{snap.label}</strong>
-                          <span className="revision-badge">{snap.fileName}</span>
-                        </div>
-                        <div className="revision-meta-row">
-                          <span>{formatRelativeTime(snap.createdAt)}</span>
-                          <span>·</span>
-                          <span>{new Date(snap.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                          <span>·</span>
-                          <span>{formatBytes(snap.sizeBytes)}</span>
-                          <span>·</span>
-                          <span className="revision-badge">{snap.projectCount} projects · {snap.nodeCount} records · {snap.edgeCount} relationships</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="revision-actions">
-                      <a
-                        href={`/api/backup?download=1&fileName=${encodeURIComponent(snap.fileName)}`}
-                        className="download-snap-btn"
-                        title="Download this SQLite snapshot file"
-                      >
-                        <Download size={13} />
-                        <span>Download</span>
-                      </a>
-                      <button
-                        type="button"
-                        className="restore-btn"
-                        disabled={isRestoring || isDeleting}
-                        onClick={() => handleRestoreSnapshot(snap.fileName, snap.label)}
-                        title="Restore full database from this snapshot"
-                      >
-                        {isRestoring ? <LoaderCircle size={13} className="spin" /> : <RotateCcw size={13} />}
-                        <span>{isRestoring ? 'Restoring…' : 'Restore'}</span>
+                  <li className="view-row is-static" key={snap.id}>
+                    <span className="view-row-main">
+                      <strong>{snap.label}</strong>
+                      <span className="note-meta">{formatRelativeTime(snap.createdAt)} · {time(snap.createdAt)} · {formatBytes(snap.sizeBytes)} · {snap.projectCount} maps · {snap.nodeCount} ideas · {snap.fileName}</span>
+                    </span>
+                    <span className="view-row-actions">
+                      <a href={`/api/backup?download=1&fileName=${encodeURIComponent(snap.fileName)}`} className="text-button view-link-button" title="Download this backup">Download</a>
+                      <button type="button" className="line-button" disabled={isRestoring || isDeleting} onClick={() => handleRestoreSnapshot(snap.fileName, snap.label)}>
+                        {isRestoring ? 'Restoring…' : 'Restore'}
                       </button>
-                      <button
-                        type="button"
-                        className="delete-rev-btn"
-                        disabled={isRestoring || isDeleting}
-                        onClick={() => handleDeleteSnapshot(snap.fileName)}
-                        title="Delete this snapshot"
-                        aria-label="Delete snapshot"
-                      >
-                        {isDeleting ? <LoaderCircle size={13} className="spin" /> : <Trash2 size={13} />}
+                      <button type="button" className="icon-button" disabled={isRestoring || isDeleting} onClick={() => handleDeleteSnapshot(snap.fileName)} aria-label={`Delete backup ${snap.label}`} title="Delete this backup">
+                        {isDeleting ? <LoaderCircle size={16} strokeWidth={1.75} className="spin" /> : <Trash2 size={16} strokeWidth={1.75} />}
                       </button>
-                    </div>
-                  </div>
+                    </span>
+                  </li>
                 );
               })}
-            </div>
+            </ol>
           )}
         </>
       )}
     </div>
   );
 }
-

@@ -17,21 +17,7 @@ export type CanvasTool = 'select' | 'hand' | 'connect' | 'note' | 'task' | 'imag
 
 export type SectionResizeHandle = 'se' | 's' | 'e' | 'sw' | 'ne' | 'nw' | 'w' | 'n';
 
-export const ELEMENT_PALETTE = [
-  "#f94144",
-  "#f3722c",
-  "#f8961e",
-  "#f9844a",
-  "#f9c74f",
-  "#90be6d",
-  "#43aa8b",
-  "#4d908e",
-  "#577590",
-  "#277da1",
-] as const;
-
-export type ElementPaletteColor = typeof ELEMENT_PALETTE[number];
-export type AccentColor = 'neutral' | 'terracotta' | 'sage' | 'cobalt' | 'lavender' | 'rose' | ElementPaletteColor | string;
+export type AccentColor = 'neutral' | 'terracotta' | 'sage' | 'cobalt' | 'lavender' | 'rose' | string;
 
 export function hexToRgba(hex?: string, alpha: number = 1): string {
   if (!hex || !hex.startsWith('#')) return `rgba(60, 110, 113, ${alpha})`;
@@ -125,7 +111,7 @@ export const ONTOLOGY_PRESETS: OntologyPreset[] = [
     lineStyle: 'curved',
     arrowhead: 'end',
     description: 'Evidentiary backing or validation',
-    hex: '#10b981'
+    hex: '#6B6F76'
   },
   {
     id: 'contradicts',
@@ -136,7 +122,7 @@ export const ONTOLOGY_PRESETS: OntologyPreset[] = [
     lineStyle: 'curved',
     arrowhead: 'end',
     description: 'Conflicting assertion or counterargument',
-    hex: '#f43f5e'
+    hex: '#6B6F76'
   },
   {
     id: 'depends_on',
@@ -147,7 +133,7 @@ export const ONTOLOGY_PRESETS: OntologyPreset[] = [
     lineStyle: 'stepped',
     arrowhead: 'end',
     description: 'Prerequisite requirement or dependency',
-    hex: '#f59e0b'
+    hex: '#6B6F76'
   },
   {
     id: 'derived_from',
@@ -158,7 +144,7 @@ export const ONTOLOGY_PRESETS: OntologyPreset[] = [
     lineStyle: 'curved',
     arrowhead: 'end',
     description: 'Lineage, origin, or inference',
-    hex: '#6366f1'
+    hex: '#6B6F76'
   },
   {
     id: 'answers',
@@ -169,7 +155,7 @@ export const ONTOLOGY_PRESETS: OntologyPreset[] = [
     lineStyle: 'straight',
     arrowhead: 'end',
     description: 'Resolves question or research inquiry',
-    hex: '#0ea5e9'
+    hex: '#6B6F76'
   }
 ];
 

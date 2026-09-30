@@ -1,0 +1,344 @@
+/* Paper: the whole workspace shares the board's materials. Cream stock, blue notebook rules,
+   a red margin line, handwritten type. Loaded after typeset.css so it wins on equal specificity. */
+
+:root {
+  --canvas: #F7F3E8;          /* the board: cream sketchbook stock */
+  --wash: #F7F3E8;
+  --paper: #FFFDF7;           /* a loose sheet pinned on top of the board */
+  --sticky: #FFF4B8;          /* a sticky note */
+  --tape: rgba(232, 221, 178, .78);
+  --line: #E6DECC;
+  --line-strong: #D8CDB5;
+  --faint: #7A7466;           /* pencil */
+  --rule: rgba(84, 150, 212, .26);   /* same blue as the board grid */
+  --rule-strong: rgba(84, 150, 212, .38);
+  --margin-red: rgba(214, 86, 86, .5);
+  --rule-gap: 28px;
+}
+
+body { background: var(--canvas); }
+.workspace-shell, .workspace-stage.stage-view, .map-start, .auth-main { background: var(--canvas); }
+
+/* Headings are written, not typeset */
+h1, h2, h3 { font-family: var(--font-hand); font-weight: 700; letter-spacing: 0; }
+.map-start h1 { font-size: clamp(52px, 6.4vw, 78px); font-weight: 700; line-height: .95; letter-spacing: 0; }
+.map-start-lede { font-size: 18px; }
+
+/* ---------- Loose sheets: every floating surface is the same paper as the notes ---------- */
+.knowledge-card,
+.knowledge-card[class*="type-"] { background: var(--paper) !important; }
+.graph-group.is-folded,
+.canvas-tool-dock,
+.canvas-minimap-card { background: var(--paper) !important; }
+.canvas-main .workspace-topbar { background: rgba(255, 253, 247, .94); }
+.relation-legend { background: rgba(255, 253, 247, .94); }
+.relationship-pill { background: rgba(255, 253, 247, .96) !important; }
+.relationship-mark:hover .relationship-pill, .relationship-pill.options-open { background: var(--paper) !important; }
+.relationship-mark text { stroke: var(--canvas); }
+.layout-switch, .menu-popover, .work-modal, .search-modal, .view-empty, .view-paper, .view-rows, .view-table th,
+.file-viewer-container, .media-viewer-container, .file-viewer-header, .media-viewer-header, .media-viewer-caption-bar,
+.review-change.decision-accepted, .review-change.decision-rejected, .field-input, .composer select,
+.draft-bar, .draft-bar .line-button, .attached-file-badge { background: var(--paper); }
+.line-button { background: var(--paper); }
+
+/* Note titles in handwriting; Caveat runs narrow, so it gets more size than the grotesk had */
+.knowledge-card h2 { font-family: var(--font-hand); font-size: 25px; font-weight: 700; line-height: 1.05; letter-spacing: 0; }
+.knowledge-card.type-question h2 { font-size: 32px; font-weight: 700; letter-spacing: 0; line-height: 1; }
+.knowledge-card.type-source h2, .knowledge-card.type-link h2 { font-size: 22px; }
+.map-starter strong { font-family: var(--font-hand); font-size: 23px; line-height: 1.1; }
+
+/* ---------- Side drawer: a notebook page ---------- */
+.workspace-drawer { background: var(--paper); }
+.workspace-drawer .drawer-header,
+.workspace-drawer .drawer-body,
+.drawer-chat-pane { background: var(--paper); }
+.workspace-drawer .drawer-tab { font-family: var(--font-hand); font-size: 22px; font-weight: 700; }
+.drawer-state h3, .workspace-drawer .chat-welcome h3 { font-size: 26px; font-weight: 700; letter-spacing: 0; line-height: 1.1; }
+
+/* The transcript sits on the same squared paper as the board */
+.workspace-drawer .chat-transcript {
+  background-color: var(--canvas);
+  background-image:
+    linear-gradient(to right, var(--rule) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--rule) 1px, transparent 1px);
+  background-size: 24px 24px;
+  background-attachment: local;
+}
+.chat-scope { background: var(--paper); }
+
+/* Your questions: sticky notes taped into the notebook */
+.workspace-drawer p.chat-line.user {
+  position: relative;
+  align-self: flex-end;
+  max-width: 88%;
+  margin: 6px 4px 0 auto;
+  padding: 14px 16px 12px;
+  background: var(--sticky);
+  box-shadow: 0 1px 0 rgba(17, 18, 20, .05), 0 12px 16px -14px rgba(17, 18, 20, .45);
+  rotate: -0.6deg;
+  color: var(--ink);
+  font-family: var(--font-hand);
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1.15;
+}
+.workspace-drawer p.chat-line.user::before {
+  content: "";
+  position: absolute;
+  top: -8px;
+  left: 50%;
+  width: 64px;
+  height: 18px;
+  translate: -50% 0;
+  rotate: 3deg;
+  background: var(--tape);
+  box-shadow: 0 1px 2px rgba(17, 18, 20, .08);
+}
+/* The assistant answers on a loose sheet */
+.workspace-drawer .chat-line.assistant > div {
+  padding: 14px 16px 12px;
+  border: 1px solid var(--line);
+  border-top: 2px solid var(--ink);
+  background: var(--paper);
+  box-shadow: 0 1px 0 rgba(17, 18, 20, .04), 0 14px 18px -16px rgba(17, 18, 20, .4);
+}
+
+/* ---------- Writing pad: every AI input is a ruled line on paper, a margin, and a paperclip for tools ---------- */
+.composer.tool-composer,
+.composer.tool-composer:focus-within {
+  gap: 0;
+  padding: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 2px;
+  background: var(--paper);
+  box-shadow: 0 1px 0 rgba(17, 18, 20, .04), 0 16px 22px -18px rgba(17, 18, 20, .42);
+}
+.composer.tool-composer:focus-within { border-color: var(--faint); }
+.tool-composer:not(.dock-composer) { position: relative; }
+/* a strip of tape holds the pad down */
+.tool-composer::before {
+  content: "";
+  position: absolute;
+  z-index: 1;
+  top: -13px;
+  left: 50%;
+  width: 84px;
+  height: 18px;
+  translate: -50% 0;
+  rotate: -2deg;
+  background: var(--tape);
+  box-shadow: 0 1px 2px rgba(17, 18, 20, .08);
+  pointer-events: none;
+}
+.tool-composer-line {
+  --pad-top: 8px;
+  --margin-x: 40px;
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: var(--pad-top) 6px var(--pad-top) calc(var(--margin-x) + 12px);
+  background-image:
+    linear-gradient(to right, transparent calc(var(--margin-x) - 1px), var(--margin-red) calc(var(--margin-x) - 1px), var(--margin-red) var(--margin-x), transparent var(--margin-x)),
+    repeating-linear-gradient(to bottom, transparent 0, transparent calc(var(--rule-gap) - 1px), var(--rule-strong) calc(var(--rule-gap) - 1px), var(--rule-strong) var(--rule-gap));
+  background-position: 0 var(--pad-top);
+}
+.tool-composer.is-large .tool-composer-line { --pad-top: 18px; --margin-x: 44px; padding-right: 12px; padding-left: calc(var(--margin-x) + 16px); }
+
+.composer.tool-composer textarea {
+  flex: 1;
+  min-width: 0;
+  min-height: var(--rule-gap);
+  max-height: calc(var(--rule-gap) * 6);
+  margin: 0;
+  padding: 0 2px;
+  overflow-y: auto;
+  border: 0;
+  outline: 0;
+  resize: none;
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--font-hand);
+  font-size: 23px;
+  font-weight: 500;
+  line-height: var(--rule-gap);
+}
+.composer.tool-composer.is-large textarea { min-height: calc(var(--rule-gap) * 3); max-height: calc(var(--rule-gap) * 5); font-size: 26px; }
+.composer.tool-composer textarea::placeholder { color: var(--faint); opacity: .85; }
+.composer.tool-composer textarea:disabled { cursor: not-allowed; opacity: .6; }
+
+/* the paperclip sits in the margin, clipped to the sheet */
+.tool-clip {
+  position: absolute;
+  top: calc(var(--pad-top) - 6px);
+  left: 0;
+  display: grid;
+  place-items: center;
+  width: var(--margin-x);
+  height: 40px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--faint);
+  cursor: pointer;
+  rotate: -8deg;
+  transition: color 120ms cubic-bezier(.16, 1, .3, 1), rotate 200ms cubic-bezier(.16, 1, .3, 1);
+}
+.tool-clip:hover, .tool-clip.is-open { color: var(--ink); rotate: 4deg; }
+.tool-clip:disabled { opacity: .4; cursor: not-allowed; }
+.tool-composer .icon-send { flex: none; align-self: flex-end; width: 40px; min-width: 40px; min-height: 40px; margin: -6px 0; padding: 0; }
+
+/* the picked tool is a scrap of sticky note on the same line as the text */
+.tool-chip {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+  max-width: 50%;
+  height: 26px;
+  margin-top: 1px;
+  padding: 0 2px 0 8px;
+  overflow: hidden;
+  background: var(--sticky);
+  box-shadow: 0 1px 2px rgba(17, 18, 20, .12);
+  color: var(--ink);
+  font-family: var(--font-hand);
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+  rotate: -1.5deg;
+  animation: pop-in 160ms cubic-bezier(.16, 1, .3, 1) both;
+}
+.tool-composer.is-large .tool-chip { height: 30px; margin-top: -1px; font-size: 22px; }
+.tool-chip-slash { margin-right: 1px; color: var(--faint); }
+.tool-chip button {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  margin-left: 2px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--faint);
+  cursor: pointer;
+}
+.tool-chip button:hover { color: var(--ink); }
+
+.tool-menu {
+  position: absolute;
+  z-index: 40;
+  left: -1px;
+  right: -1px;
+  max-height: 340px;
+  margin: 0;
+  padding: 4px;
+  overflow-y: auto;
+  list-style: none;
+  border: 1px solid var(--line-strong);
+  border-radius: 2px;
+  background: var(--paper);
+  box-shadow: 0 1px 0 rgba(17, 18, 20, .04), 0 18px 30px -18px rgba(17, 18, 20, .42);
+  animation: pop-in 160ms cubic-bezier(.16, 1, .3, 1) both;
+}
+.tool-menu.is-above { bottom: calc(100% + 8px); }
+.tool-menu.is-below { top: calc(100% + 8px); }
+.tool-menu-item { display: flex; align-items: center; gap: 12px; min-height: 48px; padding: 4px 10px; border-radius: 2px; color: var(--ink); cursor: pointer; }
+.tool-menu-item + .tool-menu-item { border-top: 1px dashed var(--line); }
+.tool-menu-item.is-active { background: var(--canvas); }
+.tool-menu-item code { flex: none; width: 84px; color: var(--faint); font-family: var(--font-code); font-size: 12.5px; }
+.tool-menu-item.is-current code { color: var(--ink); font-weight: 700; }
+.tool-menu-text { display: flex; flex: 1; flex-direction: column; min-width: 0; }
+.tool-menu-text strong { font-family: var(--font-hand); font-size: 21px; font-weight: 700; line-height: 1.05; }
+.tool-menu-text small { overflow: hidden; color: var(--faint); font-size: 12.5px; white-space: nowrap; text-overflow: ellipsis; }
+.tool-menu-cost { flex: none; color: var(--faint); font-family: var(--font-hand); font-size: 18px; font-variant-numeric: tabular-nums; }
+.tool-menu-empty { padding: 12px 10px; color: var(--faint); font-size: 13px; }
+.workspace-drawer .tool-menu-item code { width: 64px; }
+
+.map-start .composer { position: relative; }
+
+/* ---------- The AI at work: a pencil scribbling, and a pencil-lead caret while an answer is written ---------- */
+.chat-thinking::before,
+.composer-status strong::before,
+.ai-steps li.running::after {
+  width: 34px;
+  height: 12px;
+  background: var(--ink);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 34 12'%3E%3Cpath d='M1.5 7.5c2.2-5 4.4-5.6 6 0s3.9 4.4 6-.5 4-5.4 6 0 4 5 6-.4 3.8-4.6 7-2.1' fill='none' stroke='%23000' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat center / 100% 100%;
+          mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 34 12'%3E%3Cpath d='M1.5 7.5c2.2-5 4.4-5.6 6 0s3.9 4.4 6-.5 4-5.4 6 0 4 5 6-.4 3.8-4.6 7-2.1' fill='none' stroke='%23000' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat center / 100% 100%;
+  animation: pencil-scribble 1.6s cubic-bezier(.45, 0, .55, 1) infinite;
+}
+.ai-steps li.running::after { vertical-align: -1px; }
+.streaming-cursor {
+  width: 2px;
+  height: 1.1em;
+  margin-left: 3px;
+  border-radius: 1px;
+  background: var(--ink);
+  vertical-align: -0.18em;
+  rotate: 8deg;
+  animation: caret-blink 1s steps(1, end) infinite;
+}
+@keyframes pencil-scribble {
+  0% { clip-path: inset(0 100% 0 0); opacity: 1; }
+  65% { clip-path: inset(0 0 0 0); opacity: 1; }
+  85%, 100% { clip-path: inset(0 0 0 0); opacity: 0; }
+}
+@keyframes caret-blink { 50% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .chat-thinking::before, .composer-status strong::before, .ai-steps li.running::after, .streaming-cursor, .tool-chip, .tool-menu { animation: none !important; }
+}
+
+/* ---------- Clusters as drop zones while a note is carried ---------- */
+.graph-group.is-drop-available .group-pen-stroke { stroke-dasharray: 7 6; }
+.graph-group.is-drop-target .group-pen-stroke,
+.graph-group.is-drop-target.has-color .group-pen-stroke { stroke: var(--proof); stroke-width: 2.4px; stroke-dasharray: none; }
+.graph-group.is-drop-target { background: rgba(31, 61, 255, .04); }
+.graph-group.is-folded.is-drop-target { outline: 2px solid var(--proof); outline-offset: 4px; }
+.group-drop-hint {
+  position: absolute;
+  z-index: 4;
+  left: 50%;
+  top: 50%;
+  max-width: calc(100% - 48px);
+  margin: 0;
+  padding: 10px 16px 8px;
+  translate: -50% -50%;
+  rotate: -1.5deg;
+  background: var(--sticky);
+  box-shadow: 0 12px 16px -12px rgba(17, 18, 20, .45);
+  color: var(--ink);
+  font-family: var(--font-hand);
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1.1;
+  text-align: center;
+  pointer-events: none;
+  animation: drop-hint-in 220ms cubic-bezier(.16, 1, .3, 1) both;
+}
+.graph-group.is-folded .group-drop-hint { top: auto; bottom: 8px; translate: -50% 0; font-size: 18px; }
+/* over the cluster the carried card hides its middle, so the confirmation sits just below the loop */
+.is-drop-target .group-drop-hint,
+.graph-group.is-folded.is-drop-target .group-drop-hint { top: calc(100% + 12px); bottom: auto; translate: -50% 0; max-width: none; white-space: nowrap; background: var(--proof); color: #fff; rotate: 0deg; }
+@keyframes drop-hint-in { from { opacity: 0; scale: .9; } to { opacity: 1; scale: 1; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .workspace-drawer p.chat-line.user { rotate: none; }
+  .group-drop-hint { animation: none; }
+}
+
+/* ---------- Map menu: team vs personal maps ---------- */
+.topbar-project-menu > .map-menu-title { padding: 10px 10px 4px; font-family: var(--font-hand); font-size: 22px; font-weight: 700; }
+.map-menu-row { display: flex; align-items: center; gap: 4px; }
+.map-menu-row > button[role="menuitemradio"] { flex: 1; min-width: 0; }
+.map-menu-list .map-menu-row .map-menu-move { flex: none; min-height: 32px; padding: 0 8px !important; color: var(--faint); font-size: 12.5px; white-space: nowrap; }
+.map-menu-list .map-menu-row .map-menu-move:hover { color: var(--ink); background: transparent !important; }
+.map-menu-personal { margin-top: 6px; padding: 12px 10px 4px; border-top: 1px dashed var(--line-strong); }
+.map-menu-personal .map-menu-title { font-family: var(--font-hand); font-size: 20px; font-weight: 700; }
+.map-menu-personal .note-meta { margin: 2px 0 8px; }
+.map-menu-personal ul { display: flex; flex-direction: column; gap: 6px; max-height: 180px; margin: 0; padding: 0; overflow-y: auto; list-style: none; }
+.map-menu-personal li { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.map-menu-personal li span { overflow: hidden; font-size: 14px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.map-menu-personal .line-button { flex: none; min-height: 32px; font-size: 12.5px; }

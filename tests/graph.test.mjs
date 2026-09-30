@@ -1175,3 +1175,407 @@ test('document: questions open sections, linked ideas follow in reading order, s
   assert.deepEqual(sections[1].blocks.map(b => b.node.id), ['loose']);
   assert.deepEqual(sources.map(s => s.id), ['src']);
 });
+
+/* ---------------------------------------------------------------------------
+   AI pipeline: search index, provider fallback, tool calls, grounded sources
+--------------------------------------------------------------------------- */
+const AI_ENV_KEYS = ['OPENAI_API_KEY', 'GEMINI_API_KEY', 'GOOGLE_API_KEY', 'DATABASE_URL', 'POSTGRES_URL', 'STORAGE_URL'];
+
+async function withMockedAI(env, handler, run) {
+  const savedEnv = Object.fromEntries(AI_ENV_KEYS.map(key => [key, process.env[key]]));
+  const savedFetch = globalThis.fetch;
+  for (const key of AI_ENV_KEYS) delete process.env[key];
+  Object.assign(process.env, env);
+  const calls = [];
+  const mock = async (url, init = {}) => {
+    const body = init.body ? JSON.parse(init.body) : undefined;
+    calls.push({ url: String(url), body });
+    return mock.handler(String(url), body);
+  };
+  mock.handler = handler;
+  globalThis.fetch = mock;
+  try {
+    return await run(calls, mock);
+  } finally {
+    globalThis.fetch = savedFetch;
+    for (const key of AI_ENV_KEYS) {
+      if (savedEnv[key] === undefined) delete process.env[key];
+      else process.env[key] = savedEnv[key];
+    }
+  }
+}
+
+const jsonResponse = (data, status = 200) => new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } });
+const unitVector = (index, dims = 1536) => Array.from({ length: dims }, (_, i) => (i === index ? 1 : 0));
+
+test('search index: keyword search works with no AI keys and follows edits and deletions', async () => {
+  const { syncGraphVectors, hybridSearch } = await import('../src/lib/rag/vector-store.ts');
+  const projectId = `test-kw-${Date.now()}`;
+  await withMockedAI({}, () => { throw new Error('no network expected'); }, async calls => {
+    const nodes = [concept('n1', 'Photosynthesis efficiency'), concept('n2', 'Mitochondrial respiration')];
+    const first = await syncGraphVectors(projectId, nodes);
+    assert.equal(first.indexedCount, 2);
+    assert.equal(first.embeddedCount, 0);
+    assert.deepEqual((await hybridSearch(projectId, 'photosynthesis', 5)).map(r => r.nodeId), ['n1']);
+
+    const second = await syncGraphVectors(projectId, nodes);
+    assert.equal(second.indexedCount, 0, 'unchanged nodes are not re-indexed');
+
+    await syncGraphVectors(projectId, [concept('n2', 'Chloroplast photosynthesis')]);
+    assert.deepEqual((await hybridSearch(projectId, 'photosynthesis', 5)).map(r => r.nodeId), ['n2'], 'deleted node leaves the index');
+    assert.equal(calls.length, 0);
+  });
+});
+
+test('search index: vectors are only compared with vectors from the same embedding provider', async () => {
+  const { syncGraphVectors, hybridSearch } = await import('../src/lib/rag/vector-store.ts');
+  const projectId = `test-vec-${Date.now()}`;
+  const handler = (url, body) => {
+    if (url.includes('api.openai.com/v1/embeddings')) return jsonResponse({ error: 'down' }, 500);
+    if (url.includes(':batchEmbedContents')) {
+      return jsonResponse({ embeddings: body.requests.map(r => ({ values: unitVector(r.content.parts[0].text.includes('Zebra') ? 7 : 3).map(v => v * 2) })) });
+    }
+    throw new Error(`unexpected fetch ${url}`);
+  };
+  await withMockedAI({ OPENAI_API_KEY: 'sk-test', GEMINI_API_KEY: 'g-test' }, handler, async calls => {
+    const result = await syncGraphVectors(projectId, [concept('a', 'Zebra stripes'), concept('b', 'Leopard spots')]);
+    assert.equal(result.embeddedCount, 2, 'Gemini embeds the batch after OpenAI fails');
+    const gemReq = calls.find(c => c.url.includes(':batchEmbedContents')).body.requests[0];
+    assert.equal(gemReq.outputDimensionality, 1536);
+    assert.equal(gemReq.taskType, 'RETRIEVAL_DOCUMENT');
+
+    calls.length = 0;
+    const hits = await hybridSearch(projectId, 'Zebra', 5);
+    assert.ok(!calls.some(c => c.url.includes('openai')), 'no OpenAI query embedding when only Gemini vectors exist');
+    assert.equal(calls.find(c => c.url.includes(':batchEmbedContents')).body.requests[0].taskType, 'RETRIEVAL_QUERY');
+    assert.equal(hits[0].nodeId, 'a');
+    assert.equal(hits[0].denseRank, 1);
+  });
+});
+
+const openAiResponse = output => jsonResponse({
+  id: 'resp_1', created_at: 1, model: 'gpt-6-luna',
+  output: [{ type: 'message', role: 'assistant', id: 'msg_1', content: [{ type: 'output_text', text: JSON.stringify(output), annotations: [] }] }],
+  usage: { input_tokens: 120, output_tokens: 30 }
+});
+const geminiResponse = output => jsonResponse({
+  candidates: [{ content: { role: 'model', parts: [{ text: JSON.stringify(output) }] }, finishReason: 'STOP' }],
+  usageMetadata: { promptTokenCount: 100, candidatesTokenCount: 20, totalTokenCount: 120 }
+});
+const noTool = { query: null, mode: null, focusArea: null, strategy: null, nodes: null, relationships: null };
+
+test('chat: tool calls are validated, and a failed OpenAI call falls back to Gemini with a cooldown', async () => {
+  const { askGraph, getAIStatus } = await import('../src/lib/ai-service.ts');
+  const graph = normalizeGraph([concept('c1', 'Existing idea')], []);
+  let openAiUp = false;
+  let geminiUp = true;
+  const handler = (url, body) => {
+    if (url.includes('/v1/embeddings') || url.includes(':batchEmbedContents')) return jsonResponse({}, 500);
+    if (url.includes('api.openai.com/v1/responses')) {
+      if (!openAiUp) return jsonResponse({ error: { message: 'overloaded', type: 'server_error', code: 'server_error' } }, 500);
+      assert.equal(body.reasoning.effort, 'medium');
+      assert.equal(body.store, false, 'responses are not stored at OpenAI');
+      assert.equal(body.text.format.type, 'json_schema');
+      assert.equal(body.text.format.strict, true);
+      return openAiResponse({
+        answer: 'Tidy it.', referencedNodeIds: ['c1', 'ghost'], toolCall: { tool: 'organize_layout', parameters: { ...noTool, strategy: 'hierarchical' } }
+      });
+    }
+    if (url.includes(':generateContent')) {
+      if (!geminiUp) return jsonResponse({ error: { code: 500, message: 'down', status: 'INTERNAL' } }, 500);
+      assert.ok(JSON.stringify(body.generationConfig).includes('fromTitle'), 'Gemini schema can express propose_nodes');
+      return geminiResponse({
+        answer: 'Adding it.', referencedNodeIds: ['c1'],
+        toolCall: { tool: 'propose_nodes', parameters: {
+          ...noTool,
+          nodes: [{ title: 'New claim', type: 'claim', content: 'x', rationale: '' }, { title: '  ', type: 'note', content: '', rationale: '' }],
+          relationships: [{ fromTitle: 'New claim', toTitle: 'Existing idea', label: 'supports', evidence: '' }]
+        } }
+      });
+    }
+    throw new Error(`unexpected fetch ${url}`);
+  };
+  await withMockedAI({ OPENAI_API_KEY: 'sk-test', GEMINI_API_KEY: 'g-test' }, handler, async calls => {
+    const fallback = await askGraph('Add a claim', graph, { projectId: `test-chat-${Date.now()}` });
+    assert.equal(fallback.provider, 'Gemini');
+    assert.equal(fallback.usedFallback, true);
+    assert.equal(fallback.toolCall.tool, 'propose_nodes');
+    assert.deepEqual(fallback.toolCall.parameters.nodes.map(n => n.title), ['New claim'], 'blank nodes are dropped');
+    assert.equal(fallback.toolCall.parameters.relationships.length, 1);
+    assert.deepEqual(fallback.usage, { inputTokens: 100, outputTokens: 20 });
+    assert.equal(getAIStatus().usingFallback, true);
+
+    calls.length = 0;
+    await askGraph('Again', graph, { projectId: 'test-chat-2' });
+    assert.ok(!calls.some(c => c.url.includes('api.openai.com/v1/responses')), 'OpenAI is skipped during the cooldown');
+
+    // A Gemini failure during the cooldown goes back to OpenAI, which clears the cooldown.
+    openAiUp = true;
+    geminiUp = false;
+    const recovered = await askGraph('Tidy up', graph, { projectId: 'test-chat-3' });
+    assert.equal(recovered.provider, 'OpenAI');
+    assert.equal(recovered.usedFallback, false);
+    assert.deepEqual(recovered.referencedNodeIds, ['c1'], 'unknown node ids are dropped');
+    assert.deepEqual(recovered.toolCall, { tool: 'organize_layout', parameters: { strategy: 'hierarchical' } });
+    assert.equal(getAIStatus().usingFallback, false);
+  });
+});
+
+test('chat: sanitizeToolCall rejects or repairs malformed tool calls', async () => {
+  const { sanitizeToolCall } = await import('../src/lib/ai-service.ts');
+  const graph = normalizeGraph([concept('c1', 'Existing idea')], []);
+  assert.equal(sanitizeToolCall(null, graph), null);
+  assert.equal(sanitizeToolCall({ tool: 'delete_everything', parameters: {} }, graph), null);
+  assert.equal(sanitizeToolCall({ tool: 'research', parameters: { query: '   ' } }, graph), null);
+  assert.deepEqual(sanitizeToolCall({ tool: 'research', parameters: { query: 'x', mode: 'extreme' } }, graph), { tool: 'research', parameters: { query: 'x', mode: 'quick' } });
+  assert.deepEqual(sanitizeToolCall({ tool: 'organize_layout', parameters: { strategy: 'spiral' } }, graph), { tool: 'organize_layout', parameters: { strategy: 'cluster_by_type' } });
+  assert.equal(sanitizeToolCall({ tool: 'propose_nodes', parameters: { nodes: [{ title: 'x', type: 'section' }], relationships: null } }, graph), null);
+  assert.ok(sanitizeToolCall({ tool: 'recommend_improvements', parameters: { focusArea: null } }, graph).analysis, 'audit is attached server-side');
+});
+
+test('chat: Gemini retries once on its backup model when the main model is rate limited', async () => {
+  const { askGraph } = await import('../src/lib/ai-service.ts');
+  const graph = normalizeGraph([concept('c1', 'Existing idea')], []);
+  const handler = url => {
+    if (url.includes(':batchEmbedContents')) return jsonResponse({}, 500);
+    if (url.includes('gemini-3.8-flash:generateContent')) return jsonResponse({ error: { code: 429, message: 'quota', status: 'RESOURCE_EXHAUSTED' } }, 429);
+    if (url.includes('gemini-3.5-flash:generateContent')) return geminiResponse({ answer: 'Backup answer.', referencedNodeIds: [], toolCall: null });
+    throw new Error(`unexpected fetch ${url}`);
+  };
+  await withMockedAI({ GEMINI_API_KEY: 'g-test' }, handler, async () => {
+    const answer = await askGraph('hi', graph, { projectId: `test-backup-${Date.now()}` });
+    assert.equal(answer.model, 'gemini-3.5-flash');
+    assert.equal(answer.answer, 'Backup answer.');
+    assert.equal(answer.toolCall, null);
+  });
+});
+
+test('chat: an aborted request stops without falling back', async () => {
+  const { askGraph } = await import('../src/lib/ai-service.ts');
+  const graph = normalizeGraph([concept('c1', 'Existing idea')], []);
+  const abort = new AbortController();
+  const handler = url => {
+    if (url.includes('/v1/embeddings') || url.includes(':batchEmbedContents')) return jsonResponse({}, 500);
+    if (url.includes('api.openai.com/v1/responses')) {
+      abort.abort();
+      throw Object.assign(new Error('The operation was aborted.'), { name: 'AbortError' });
+    }
+    throw new Error(`fallback should not run: ${url}`);
+  };
+  await withMockedAI({ OPENAI_API_KEY: 'sk-test', GEMINI_API_KEY: 'g-test' }, handler, async calls => {
+    await assert.rejects(askGraph('hi', graph, { projectId: `test-abort-${Date.now()}`, signal: abort.signal }));
+    assert.ok(!calls.some(c => c.url.includes('generativelanguage')), 'no Gemini call after abort');
+  });
+});
+
+test('chat stream: Gemini answers are streamed incrementally', async () => {
+  const { askGraphStream } = await import('../src/lib/ai-service.ts');
+  const graph = normalizeGraph([concept('c1', 'Existing idea')], []);
+  const payload = JSON.stringify({ answer: 'Hello streamed world', referencedNodeIds: ['c1'], toolCall: null });
+  const chunks = [payload.slice(0, 20), payload.slice(20, 30), payload.slice(30)];
+  const handler = url => {
+    if (url.includes(':batchEmbedContents')) return jsonResponse({}, 500);
+    if (url.includes(':streamGenerateContent')) {
+      const sse = chunks.map((text, i) => `data: ${JSON.stringify({
+        candidates: [{ content: { role: 'model', parts: [{ text }] }, ...(i === chunks.length - 1 ? { finishReason: 'STOP' } : {}) }],
+        ...(i === chunks.length - 1 ? { usageMetadata: { promptTokenCount: 50, candidatesTokenCount: 10, totalTokenCount: 60 } } : {})
+      })}\n\n`).join('');
+      return new Response(sse, { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+    }
+    throw new Error(`unexpected fetch ${url}`);
+  };
+  await withMockedAI({ GEMINI_API_KEY: 'g-test' }, handler, async () => {
+    const events = [];
+    for await (const event of askGraphStream('hi', graph, { projectId: `test-stream-${Date.now()}` })) events.push(event);
+    const deltas = events.filter(e => e.type === 'delta');
+    assert.ok(deltas.length > 1, 'more than one delta event');
+    assert.equal(deltas.map(e => e.text).join(''), 'Hello streamed world');
+    const done = events.at(-1);
+    assert.equal(done.type, 'done');
+    assert.equal(done.usedFallback, false, 'Gemini as the only provider is not a fallback');
+    assert.deepEqual(done.referencedNodeIds, ['c1']);
+    assert.deepEqual(done.usage, { inputTokens: 50, outputTokens: 10 });
+  });
+});
+
+const researchOutput = (overrides = {}) => ({
+  summary: 'Reefs.', subquestions: [], sources: [],
+  nodes: [{ tempId: 't1', type: 'claim', title: 'Bleaching rises', content: '', rationale: '' }],
+  relationships: [],
+  ...overrides
+});
+
+test('research: OpenAI sources must come from web search results; progress streams as work happens', async () => {
+  const { researchGraphStream } = await import('../src/lib/ai-service.ts');
+  const graph = normalizeGraph([], []);
+  const handler = (url, body) => {
+    if (url.includes('api.openai.com/v1/responses')) {
+      assert.ok(body.tools.some(t => t.type === 'web_search'), 'web search tool is enabled');
+      assert.ok(body.include.includes('web_search_call.action.sources'), 'search sources are requested');
+      assert.equal(body.text.format.type, 'json_schema');
+      return jsonResponse({
+        id: 'resp_1', created_at: 1, model: 'gpt-6-luna',
+        output: [
+          { type: 'web_search_call', id: 'ws_1', status: 'completed', action: { type: 'search', query: 'coral bleaching 2026', sources: [{ type: 'url', url: 'https://www.example.org/reef/' }] } },
+          { type: 'message', role: 'assistant', id: 'msg_1', content: [{ type: 'output_text', annotations: [], text: JSON.stringify(researchOutput({
+            sources: [
+              { title: 'Reef study', url: 'https://example.org/reef?utm_source=openai' },
+              { title: 'Invented paper', url: 'https://made-up.example.com/paper' }
+            ]
+          })) }] }
+        ],
+        usage: { input_tokens: 500, output_tokens: 200 }
+      });
+    }
+    throw new Error(`unexpected fetch ${url}`);
+  };
+  await withMockedAI({ OPENAI_API_KEY: 'sk-test' }, handler, async () => {
+    const events = [];
+    for await (const event of researchGraphStream('coral bleaching', 'quick', graph, { projectId: `test-research-${Date.now()}` })) events.push(event);
+    const types = events.map(e => e.type);
+    assert.deepEqual(types.slice(0, 2), ['step', 'step']);
+    assert.deepEqual(events.filter(e => e.type === 'query').map(e => e.query), ['coral bleaching 2026']);
+    assert.ok(types.indexOf('query') > 1, 'queries are reported after the search ran');
+    const done = events.at(-1);
+    assert.equal(done.type, 'done');
+    assert.deepEqual(done.result.sources, [{ title: 'Reef study', url: 'https://www.example.org/reef/' }], 'unverified model citation is dropped');
+    assert.deepEqual(done.result.searchQueries, ['coral bleaching 2026']);
+    assert.deepEqual(done.result.usage, { inputTokens: 500, outputTokens: 200 });
+    assert.equal(done.result.groundingNote, undefined);
+  });
+});
+
+test('research: if OpenAI rejects web search, the run continues without sources and says so', async () => {
+  const { researchGraph } = await import('../src/lib/ai-service.ts');
+  const handler = (url, body) => {
+    if (!url.includes('api.openai.com/v1/responses')) throw new Error(`unexpected fetch ${url}`);
+    if (body.tools) return jsonResponse({ error: { message: 'web_search not supported', type: 'invalid_request_error', code: 'unsupported' } }, 400);
+    return jsonResponse({
+      id: 'resp_2', created_at: 1, model: 'gpt-6-luna',
+      output: [{ type: 'message', role: 'assistant', id: 'msg_2', content: [{ type: 'output_text', annotations: [], text: JSON.stringify(researchOutput({
+        sources: [{ title: 'From memory', url: 'https://example.org/remembered' }]
+      })) }] }],
+      usage: { input_tokens: 10, output_tokens: 10 }
+    });
+  };
+  await withMockedAI({ OPENAI_API_KEY: 'sk-test' }, handler, async () => {
+    const result = await researchGraph('coral bleaching', 'quick', normalizeGraph([], []), { projectId: `test-nosearch-${Date.now()}` });
+    assert.deepEqual(result.sources, []);
+    assert.match(result.groundingNote, /no sources/);
+  });
+});
+
+test('research: Gemini deep research plans, runs two grounded hops, and links hop 2 cards to hop 1', async () => {
+  const { researchGraphStream } = await import('../src/lib/ai-service.ts');
+  const graph = normalizeGraph([], []);
+  const grounded = (output, uri, query) => jsonResponse({
+    candidates: [{
+      content: { role: 'model', parts: [{ text: JSON.stringify(output) }] },
+      finishReason: 'STOP',
+      groundingMetadata: { webSearchQueries: [query], groundingChunks: [{ web: { uri, title: hostnameOf(uri) } }] }
+    }],
+    usageMetadata: { promptTokenCount: 100, candidatesTokenCount: 50, totalTokenCount: 150 }
+  });
+  const hostnameOf = uri => new URL(uri).hostname;
+  const handler = (url, body) => {
+    if (!url.includes(':generateContent')) throw new Error(`unexpected fetch ${url}`);
+    const prompt = body.contents[0].parts[0].text;
+    if (!body.tools) {
+      return geminiResponse({ axes: [
+        { name: 'Foundations', searchQuery: 'reef symbiosis mechanism', focus: '' },
+        { name: 'Empirical', searchQuery: 'bleaching events 2026 data', focus: '' },
+        { name: 'Counter', searchQuery: 'reef recovery evidence', focus: '' }
+      ], preliminaryHypotheses: ['Heat drives bleaching'] });
+    }
+    assert.ok(body.tools.some(t => 'googleSearch' in t || 'google_search' in t), 'Google Search grounding is enabled');
+    if (prompt.includes('hop 1 of 2')) {
+      assert.ok(prompt.includes('reef symbiosis mechanism'), 'hop 1 searches the planned axes');
+      return grounded(researchOutput({
+        subquestions: ['Can reefs adapt?'],
+        nodes: [{ tempId: 'a', type: 'concept', title: 'Symbiosis', content: '', rationale: '' }]
+      }), 'https://one.example.org/a', 'reef symbiosis');
+    }
+    assert.ok(prompt.includes('Can reefs adapt?'), 'hop 2 follows hop 1 subquestions');
+    assert.ok(prompt.includes('a: [concept] Symbiosis'), 'hop 2 sees hop 1 cards');
+    return grounded(researchOutput({
+      nodes: [
+        { tempId: 'a', type: 'claim', title: 'Heat tolerance evolves', content: '', rationale: '' },
+        { tempId: 'dup', type: 'concept', title: ' symbiosis ', content: '', rationale: '' }
+      ],
+      relationships: [
+        { fromTempId: 'a', toTempId: 'dup', label: 'depends_on', evidence: '', confidence: 0.7 }
+      ]
+    }), 'https://two.example.org/b', 'coral adaptation');
+  };
+  await withMockedAI({ GEMINI_API_KEY: 'g-test' }, handler, async () => {
+    const events = [];
+    for await (const event of researchGraphStream('coral bleaching', 'deep', graph, { projectId: `test-deep-${Date.now()}` })) events.push(event);
+    const stepIds = events.filter(e => e.type === 'step' && e.stepId).map(e => e.stepId);
+    assert.deepEqual(stepIds, ['axes', 'axes', 'queries', 'synthesis']);
+    assert.deepEqual(events.filter(e => e.type === 'hop').map(e => e.hop), [1, 2]);
+    const { result } = events.at(-1);
+    assert.deepEqual(result.result.nodes.map(n => n.tempId), ['a', 'hop2-a'], 'hop 2 ids are namespaced and duplicates merged');
+    assert.deepEqual(result.result.relationships.map(r => [r.fromTempId, r.toTempId]), [['hop2-a', 'a']], 'hop 2 links back to the hop 1 card');
+    assert.deepEqual(result.sources.map(s => s.url), ['https://one.example.org/a', 'https://two.example.org/b']);
+    assert.deepEqual(result.searchQueries, ['reef symbiosis', 'coral adaptation']);
+    assert.equal(result.provider, 'Gemini');
+    assert.deepEqual(result.usage, { inputTokens: 300, outputTokens: 120 });
+  });
+});
+
+test('chat memory: messages round-trip per thread and stay private to their user', async () => {
+  const { saveChatMessages, getChatMessages, getLatestChatThreadId } = await import('../src/lib/db.ts');
+  const projectId = `test-memory-${Date.now()}`;
+  const base = { projectId, userKey: 'alice', referencedNodeIds: [], toolCall: null };
+  await saveChatMessages([
+    { ...base, id: `${projectId}-1`, threadId: 't1', role: 'user', content: 'First question', createdAt: 1000 },
+    { ...base, id: `${projectId}-2`, threadId: 't1', role: 'assistant', content: 'First answer', referencedNodeIds: ['n1'], toolCall: { tool: 'organize_layout', parameters: { strategy: 'compact' } }, provider: 'OpenAI', model: 'gpt-6-luna', createdAt: 1001 },
+    { ...base, id: `${projectId}-3`, threadId: 't2', role: 'user', content: 'Newer thread', createdAt: 2000 }
+  ]);
+  const thread = await getChatMessages(projectId, 'alice', 't1');
+  assert.deepEqual(thread.map(m => m.content), ['First question', 'First answer']);
+  assert.deepEqual(thread[1].referencedNodeIds, ['n1']);
+  assert.deepEqual(thread[1].toolCall, { tool: 'organize_layout', parameters: { strategy: 'compact' } });
+  assert.equal(await getLatestChatThreadId(projectId, 'alice'), 't2');
+  assert.deepEqual((await getChatMessages(projectId, 'alice', 't1', 1)).map(m => m.content), ['First answer'], 'limit keeps the newest');
+  assert.deepEqual(await getChatMessages(projectId, 'bob', 't1'), [], 'another user cannot read the thread');
+  assert.equal(await getLatestChatThreadId(projectId, 'bob'), null);
+});
+
+test('chat memory: earlier turns reach the model and follow-ups retrieve the previously cited cards', async () => {
+  const { askGraph } = await import('../src/lib/ai-service.ts');
+  const graph = normalizeGraph(
+    [concept('a', 'Alpha hub'), concept('b', 'Beta hub'), concept('c', 'Gamma hub'), concept('z', 'Zebra stripes camouflage')],
+    [relation('e1', 'a', 'b'), relation('e2', 'b', 'c'), relation('e3', 'a', 'c')]
+  );
+  let requestBody;
+  const handler = (url, body) => {
+    if (url.includes('/v1/embeddings')) return jsonResponse({}, 500);
+    if (url.includes('api.openai.com/v1/responses')) {
+      requestBody = body;
+      return openAiResponse({ answer: 'Predation pressure.', referencedNodeIds: ['z'], toolCall: null });
+    }
+    throw new Error(`unexpected fetch ${url}`);
+  };
+  await withMockedAI({ OPENAI_API_KEY: 'sk-test' }, handler, async () => {
+    const history = [
+      { role: 'assistant', content: 'Orphan greeting that must be dropped' },
+      { role: 'user', content: 'Why do zebras have stripes?' },
+      { role: 'assistant', content: 'Stripes may deter biting flies.', referencedNodeIds: ['z'] }
+    ];
+    const answer = await askGraph('What contradicts that?', graph, { projectId: `test-followup-${Date.now()}`, history });
+    assert.deepEqual(answer.referencedNodeIds, ['z']);
+
+    const input = JSON.stringify(requestBody.input);
+    assert.ok(input.includes('Why do zebras have stripes?'), 'previous question is sent');
+    assert.ok(input.includes('Stripes may deter biting flies.'), 'previous answer is sent');
+    assert.ok(!input.includes('Orphan greeting'), 'history starts with a user turn');
+    const lastMessage = JSON.stringify(requestBody.input.at(-1));
+    assert.ok(lastMessage.includes('What contradicts that?'));
+    assert.ok(lastMessage.includes('Zebra stripes camouflage'), 'the card cited earlier is in the retrieved context');
+
+    // Without history, the same vague question retrieves the best-connected cards instead.
+    await askGraph('What contradicts that?', graph, { projectId: `test-followup-none-${Date.now()}` });
+    assert.ok(!JSON.stringify(requestBody.input.at(-1)).includes('Zebra stripes camouflage'));
+  });
+});

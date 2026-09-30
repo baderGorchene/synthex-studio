@@ -1,0 +1,16 @@
+{
+  "name": "synthex-collab-server",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Real-time sync for Synthex maps (Hocuspocus/Yjs). Authorises clients with tokens signed by the Next.js app.",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "dependencies": {
+    "@hocuspocus/server": "^4.7.0",
+    "y-protocols": "^1.0.6",
+    "yjs": "^13.6.33"
+  }
+}

@@ -139,6 +139,25 @@ CREATE TABLE IF NOT EXISTS research_sessions (
 CREATE INDEX IF NOT EXISTS idx_research_sessions_project ON research_sessions(project_id, created_at DESC);
 
 -- ----------------------------------------------------------------------------
+-- 6b. Graph Chat Memory (per user, per project, per thread)
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS chat_messages (
+    id VARCHAR(64) PRIMARY KEY,
+    project_id VARCHAR(128) NOT NULL,
+    thread_id VARCHAR(64) NOT NULL,
+    user_key VARCHAR(128) NOT NULL,
+    role VARCHAR(16) NOT NULL,
+    content TEXT NOT NULL,
+    referenced_node_ids TEXT NOT NULL DEFAULT '[]',
+    tool_call TEXT,
+    provider VARCHAR(32),
+    model VARCHAR(64),
+    created_at BIGINT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_chat_messages_thread ON chat_messages(project_id, user_key, thread_id, created_at DESC);
+
+-- ----------------------------------------------------------------------------
 -- 7. Graph Revisions (Undo/Redo & Point-in-Time Checkpoints)
 -- ----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS graph_revisions (
@@ -152,3 +171,31 @@ CREATE TABLE IF NOT EXISTS graph_revisions (
 );
 
 CREATE INDEX IF NOT EXISTS idx_graph_revisions_project ON graph_revisions(project_id, created_at DESC);
+
+-- ----------------------------------------------------------------------------
+-- 8. Graph RAG Search Index (keyword + vector; derived data, rebuilt on autosave)
+--    Auto-created by src/lib/rag/search-index-neon.ts. Vectors are compared only
+--    against vectors from the same embedding provider.
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS node_search_index (
+    project_id VARCHAR(128) NOT NULL,
+    node_id VARCHAR(128) NOT NULL,
+    text_hash CHAR(64) NOT NULL,
+    embedding_hash CHAR(64),
+    provider VARCHAR(16),
+    title TEXT NOT NULL,
+    body TEXT NOT NULL DEFAULT '',
+    node_type VARCHAR(32) NOT NULL,
+    search TSVECTOR GENERATED ALWAYS AS (
+        setweight(to_tsvector('simple', coalesce(title, '')), 'A') ||
+        setweight(to_tsvector('simple', coalesce(body, '')), 'B')
+    ) STORED,
+    updated_at BIGINT NOT NULL,
+    PRIMARY KEY (project_id, node_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_node_search_index_fts ON node_search_index USING GIN (search);
+
+-- Optional: dense vector search (skipped at runtime when pgvector is unavailable)
+CREATE EXTENSION IF NOT EXISTS vector;
+ALTER TABLE node_search_index ADD COLUMN IF NOT EXISTS embedding vector(1536);

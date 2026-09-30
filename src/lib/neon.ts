@@ -21,7 +21,7 @@ import type {
 } from '../types/canvas';
 import { SEED_CONNECTIONS, SEED_NODES } from '../constants/seedData.ts';
 import { addNode, addRelationship, normalizeGraph } from './graph.ts';
-import type { CreditTransaction, ResearchProject, UserRecord } from './db.ts';
+import type { ChatMessageRecord, CreditTransaction, ResearchProject, UserRecord } from './db.ts';
 
 export function isNeonConfigured(): boolean {
   return Boolean(process.env.DATABASE_URL || process.env.POSTGRES_URL || process.env.STORAGE_URL);
@@ -175,6 +175,24 @@ export async function ensureNeonSchema(): Promise<void> {
       await sql`CREATE INDEX IF NOT EXISTS idx_research_sessions_project ON research_sessions(project_id, created_at DESC)`;
 
       await sql`
+        CREATE TABLE IF NOT EXISTS chat_messages (
+          id VARCHAR(64) PRIMARY KEY,
+          project_id VARCHAR(128) NOT NULL,
+          thread_id VARCHAR(64) NOT NULL,
+          user_key VARCHAR(128) NOT NULL,
+          role VARCHAR(16) NOT NULL,
+          content TEXT NOT NULL,
+          referenced_node_ids TEXT NOT NULL DEFAULT '[]',
+          tool_call TEXT,
+          provider VARCHAR(32),
+          model VARCHAR(64),
+          created_at BIGINT NOT NULL
+        )
+      `;
+
+      await sql`CREATE INDEX IF NOT EXISTS idx_chat_messages_thread ON chat_messages(project_id, user_key, thread_id, created_at DESC)`;
+
+      await sql`
         CREATE TABLE IF NOT EXISTS graph_revisions (
           id VARCHAR(128) PRIMARY KEY,
           project_id VARCHAR(128) NOT NULL,
@@ -248,24 +266,55 @@ export async function neonGetProjects(
 ): Promise<ResearchProject[]> {
   await ensureNeonSchema();
   const sql = getSql();
-  if (userId || orgId || clerkId) {
-    const rows = await sql`
+  // Team active: the team's maps. Otherwise: the user's personal maps (not the ones they made inside a team).
+  let rows;
+  if (orgId) {
+    rows = await sql`
       SELECT id, title, user_id, organization_id, created_at
       FROM projects
-      WHERE (${userId || null}::varchar IS NOT NULL AND user_id = ${userId || null})
-         OR (${clerkId || null}::varchar IS NOT NULL AND user_id = ${clerkId || null})
-         OR (${orgId || null}::varchar IS NOT NULL AND organization_id = ${orgId || null})
+      WHERE organization_id = ${orgId}
       ORDER BY created_at ASC
     `;
-    return rows.map(r => ({
-      id: String(r.id),
-      title: String(r.title),
-      userId: r.user_id ? String(r.user_id) : null,
-      organizationId: r.organization_id ? String(r.organization_id) : null,
-      createdAt: Number(r.created_at)
-    }));
+  } else if (userId || clerkId) {
+    rows = await sql`
+      SELECT id, title, user_id, organization_id, created_at
+      FROM projects
+      WHERE organization_id IS NULL AND (
+        (${userId || null}::varchar IS NOT NULL AND user_id = ${userId || null}) OR
+        (${clerkId || null}::varchar IS NOT NULL AND user_id = ${clerkId || null})
+      )
+      ORDER BY created_at ASC
+    `;
+  } else {
+    return [];
   }
-  return [];
+  return rows.map(r => ({
+    id: String(r.id),
+    title: String(r.title),
+    userId: r.user_id ? String(r.user_id) : null,
+    organizationId: r.organization_id ? String(r.organization_id) : null,
+    createdAt: Number(r.created_at)
+  }));
+}
+
+export async function neonMoveProjectToWorkspace(
+  id: string,
+  orgId: string | null,
+  userId?: string | null,
+  clerkId?: string | null
+): Promise<boolean> {
+  await ensureNeonSchema();
+  const sql = getSql();
+  if (!userId && !clerkId) return false;
+  const rows = await sql`
+    UPDATE projects SET organization_id = ${orgId}
+    WHERE id = ${id} AND (
+      (${userId || null}::varchar IS NOT NULL AND user_id = ${userId || null}) OR
+      (${clerkId || null}::varchar IS NOT NULL AND user_id = ${clerkId || null})
+    )
+    RETURNING id
+  `;
+  return rows.length > 0;
 }
 
 export async function neonProjectExists(id: string): Promise<boolean> {
@@ -1087,4 +1136,59 @@ export async function neonGetCreditTransactions(userId: string, limit = 50): Pro
     metadata: r.metadata ? String(r.metadata) : null,
     createdAt: Number(r.createdAt)
   }));
+}
+
+function parseNeonJson<T>(raw: unknown, fallback: T): T {
+  if (typeof raw !== 'string' || !raw) return fallback;
+  try { return JSON.parse(raw) as T; } catch { return fallback; }
+}
+
+export async function neonGetChatMessages(projectId: string, userKey: string, threadId: string, limit = 50): Promise<ChatMessageRecord[]> {
+  await ensureNeonSchema();
+  const sql = getSql();
+  const rows = await sql`
+    SELECT * FROM chat_messages
+    WHERE project_id = ${projectId} AND user_key = ${userKey} AND thread_id = ${threadId}
+    ORDER BY created_at DESC, id DESC
+    LIMIT ${limit}
+  `;
+  return rows.reverse().map(r => ({
+    id: String(r.id),
+    projectId: String(r.project_id),
+    threadId: String(r.thread_id),
+    userKey: String(r.user_key),
+    role: r.role === 'assistant' ? 'assistant' : 'user',
+    content: String(r.content),
+    referencedNodeIds: parseNeonJson<string[]>(r.referenced_node_ids, []),
+    toolCall: parseNeonJson<unknown>(r.tool_call, null),
+    provider: r.provider ? String(r.provider) : null,
+    model: r.model ? String(r.model) : null,
+    createdAt: Number(r.created_at)
+  }));
+}
+
+export async function neonGetLatestChatThreadId(projectId: string, userKey: string): Promise<string | null> {
+  await ensureNeonSchema();
+  const sql = getSql();
+  const rows = await sql`
+    SELECT thread_id FROM chat_messages
+    WHERE project_id = ${projectId} AND user_key = ${userKey}
+    ORDER BY created_at DESC
+    LIMIT 1
+  `;
+  return rows.length > 0 ? String(rows[0].thread_id) : null;
+}
+
+export async function neonSaveChatMessages(messages: ChatMessageRecord[]): Promise<void> {
+  if (messages.length === 0) return;
+  await ensureNeonSchema();
+  const sql = getSql();
+  await sql.transaction(messages.map(m => sql`
+    INSERT INTO chat_messages (id, project_id, thread_id, user_key, role, content, referenced_node_ids, tool_call, provider, model, created_at)
+    VALUES (
+      ${m.id}, ${m.projectId}, ${m.threadId}, ${m.userKey}, ${m.role}, ${m.content},
+      ${JSON.stringify(m.referencedNodeIds)}, ${m.toolCall == null ? null : JSON.stringify(m.toolCall)},
+      ${m.provider ?? null}, ${m.model ?? null}, ${m.createdAt}
+    )
+  `));
 }

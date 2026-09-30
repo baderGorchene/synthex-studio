@@ -8,12 +8,17 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "node --experimental-strip-types --test tests/graph.test.mjs"
+    "test": "node --experimental-strip-types --test tests/graph.test.mjs",
+    "collab": "npm --prefix collab-server install --no-audit --no-fund && npm --prefix collab-server start"
   },
   "dependencies": {
+    "@ai-sdk/google": "^4.0.86",
+    "@ai-sdk/openai": "^4.0.82",
     "@clerk/nextjs": "^7.9.7",
     "@google-cloud/storage": "^8.2.0",
+    "@hocuspocus/provider": "^4.7.0",
     "@neondatabase/serverless": "^1.1.0",
+    "ai": "^7.0.123",
     "better-sqlite3": "^13.0.3",
     "lucide-react": "^1.48.0",
     "marked": "^18.0.14",
@@ -21,7 +26,10 @@
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "sqlite-vec": "^0.1.9",
-    "stripe": "^22.6.2"
+    "stripe": "^22.6.2",
+    "y-protocols": "^1.0.7",
+    "yjs": "^13.6.33",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

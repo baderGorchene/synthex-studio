@@ -6,27 +6,9 @@
 import { deductUserCredits, topUpUserCredits } from './db.ts';
 import { isNeonConfigured } from './neon.ts';
 
-export type CreditAction =
-  | 'chat'
-  | 'quick_research'
-  | 'deep_research'
-  | 'pdf_extract'
-  | 'refill'
-  | 'bonus';
+export { CREDIT_RATES, TIER_CREDIT_QUOTAS, type CreditAction } from './plans.ts';
+import { CREDIT_RATES, type CreditAction } from './plans.ts';
 
-export const CREDIT_RATES: Record<Extract<CreditAction, 'chat' | 'quick_research' | 'deep_research' | 'pdf_extract'>, number> = {
-  chat: 1,                 // 1 credit per Graph Chat question
-  quick_research: 5,       // 5 credits per Quick Web-Grounded Research session
-  deep_research: 20,       // 20 credits per Recursive Multi-Hop Deep Research run
-  pdf_extract: 2           // 2 credits per page for Document AI / layout extraction
-};
-
-export const TIER_CREDIT_QUOTAS = {
-  trial: 100,
-  byok: 0,
-  pro: 1500,
-  team: 5000
-};
 
 /**
  * Calculates required context credits for an action and optional units (e.g. pages)

@@ -1,19 +1,34 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { Check, Settings2, Trash2, X, Zap } from 'lucide-react';
+import { Settings2, Trash2, X } from 'lucide-react';
 import type { Connection } from '@/types/canvas';
 import { ONTOLOGY_PRESETS } from '@/types/canvas';
+import { strokeForLabel } from '@/lib/graph';
 
-const colors = [
-  ['neutral', '#64748b'],
-  ['indigo', '#6366f1'],
-  ['emerald', '#10b981'],
-  ['rose', '#f43f5e'],
-  ['amber', '#f59e0b'],
-  ['sky', '#0ea5e9'],
-  ['purple', '#a855f7']
-] as const;
+type Option<T extends string> = readonly [T, string];
+
+const LINE_STYLES: Option<NonNullable<Connection['lineStyle']>>[] = [['curved', 'Curved'], ['straight', 'Straight'], ['stepped', 'Stepped']];
+const PATTERNS: Option<NonNullable<Connection['strokePattern']>>[] = [['solid', 'Solid'], ['dashed', 'Dashed'], ['dotted', 'Dotted']];
+const ARROWS: Option<NonNullable<Connection['arrowhead']>>[] = [['end', 'Forward'], ['both', 'Both ways'], ['none', 'None']];
+
+function Segmented<T extends string>({ label, options, value, onPick }: {
+  label: string;
+  options: Option<T>[];
+  value: T;
+  onPick: (value: T) => void;
+}) {
+  return (
+    <div className="relation-option-group">
+      <span>{label}</span>
+      <div className="layout-switch" role="group" aria-label={label}>
+        {options.map(([id, name]) => (
+          <button key={id} type="button" aria-pressed={value === id} onClick={() => onPick(id)}>{name}</button>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 export function RelationshipControls({ connection, x, y, onUpdate, onDelete }: {
   connection: Connection;
@@ -41,9 +56,11 @@ export function RelationshipControls({ connection, x, y, onUpdate, onDelete }: {
   const activeLine = connection.lineStyle || 'curved';
   const activeArrow = connection.arrowhead || 'end';
   const activePattern = connection.strokePattern || 'solid';
+  // A pattern that differs from what the current label implies was picked by hand; presets leave it alone.
+  const patternPickedByHand = activePattern !== strokeForLabel(connection.label);
 
   return (
-    <foreignObject x={x - 130} y={y - 18} width="260" height={optionsOpen ? 480 : 38} className="relationship-controls-foreign">
+    <foreignObject x={x - 150} y={y - 18} width="300" height={optionsOpen ? 520 : 38} className="relationship-controls-foreign">
       <div
         ref={root}
         className={`relationship-controls ${optionsOpen ? 'options-open' : ''} ${editing ? 'is-editing' : ''}`}
@@ -54,17 +71,18 @@ export function RelationshipControls({ connection, x, y, onUpdate, onDelete }: {
         <div className={`relationship-pill ${optionsOpen ? 'options-open' : ''} ${editing ? 'is-editing' : ''}`}>
           <button
             className="relationship-control-icon relationship-settings"
-            aria-label="Relationship settings"
-            title="Style relationship"
+            aria-label="Relation options"
+            aria-expanded={optionsOpen}
+            title="Relation options"
             onClick={() => setOptionsOpen(value => !value)}
           >
-            <Settings2 size={13} />
+            <Settings2 size={14} strokeWidth={1.75} />
           </button>
           <span className="relationship-control-divider" />
           {editing ? (
             <input
               ref={input}
-              aria-label="Relationship label"
+              aria-label="Relation label"
               value={label}
               maxLength={100}
               placeholder="Add a label"
@@ -80,243 +98,60 @@ export function RelationshipControls({ connection, x, y, onUpdate, onDelete }: {
             <button
               className="relationship-label"
               onClick={() => { setLabel(connection.label || ''); setEditing(true); }}
-              title="Click to edit relationship label"
+              title="Click to rename this relation"
             >
-              <i style={{ background: colors.find(([id]) => id === (connection.color || 'neutral'))?.[1] }} />
               {connection.label?.replaceAll('_', ' ') || 'Add label'}
             </button>
           )}
           <span className="relationship-control-divider" />
           <button
             className="relationship-control-icon relationship-delete"
-            aria-label="Delete relationship"
-            title="Delete relationship"
+            aria-label="Remove relation"
+            title="Remove relation"
             onClick={onDelete}
           >
-            <Trash2 size={13} />
+            <Trash2 size={14} strokeWidth={1.75} />
           </button>
         </div>
 
         {optionsOpen && (
-          <div className="relationship-options">
-            <div className="relationship-options-head">
-              <span>Connector Style</span>
-              <button aria-label="Close relationship settings" onClick={() => setOptionsOpen(false)}>
-                <X size={12} />
+          <div className="relationship-options relation-menu">
+            <div className="relation-menu-head">
+              <strong>Relation</strong>
+              <button type="button" className="icon-button" aria-label="Close relation options" onClick={() => setOptionsOpen(false)}>
+                <X size={16} strokeWidth={1.75} />
               </button>
             </div>
 
-            {/* Semantic Relationship Ontology Presets */}
-            <div className="style-section">
-              <span className="style-section-title">Ontology Presets</span>
-              <div className="ontology-presets-grid" role="group" aria-label="Ontology presets">
-                {ONTOLOGY_PRESETS.map(preset => {
-                  const isSelected = (connection.label === preset.label || connection.label === preset.id) && (connection.color === preset.color);
-                  return (
-                    <button
-                      key={preset.id}
-                      type="button"
-                      className={`ontology-preset-chip ${isSelected ? 'active' : ''}`}
-                      title={`${preset.displayName}: ${preset.description}`}
-                      onClick={() => {
-                        onUpdate({
-                          label: preset.label,
-                          color: preset.color,
-                          strokePattern: preset.strokePattern,
-                          lineStyle: preset.lineStyle,
-                          arrowhead: preset.arrowhead
-                        });
-                        setLabel(preset.label);
-                      }}
-                    >
-                      <span className="ontology-preset-indicator" style={{ backgroundColor: preset.hex }} />
-                      <span className="ontology-preset-label">{preset.displayName}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Line Geometry with Visual Illustrations */}
-            <div className="style-section">
-              <span className="style-section-title">Line Geometry</span>
-              <div className="style-segmented-row" role="radiogroup" aria-label="Line style">
-                <button
-                  type="button"
-                  className={`style-option-btn ${activeLine === 'curved' ? 'active' : ''}`}
-                  onClick={() => onUpdate({ lineStyle: 'curved' })}
-                  title="Curved Bezier Line"
-                >
-                  <svg width="22" height="12" viewBox="0 0 22 12" fill="none">
-                    <path d="M2 10 C 7 10, 15 2, 20 2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                  </svg>
-                  <span className="style-option-caption">Curved</span>
-                </button>
-                <button
-                  type="button"
-                  className={`style-option-btn ${activeLine === 'straight' ? 'active' : ''}`}
-                  onClick={() => onUpdate({ lineStyle: 'straight' })}
-                  title="Direct Straight Line"
-                >
-                  <svg width="22" height="12" viewBox="0 0 22 12" fill="none">
-                    <path d="M2 10 L20 2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                  </svg>
-                  <span className="style-option-caption">Straight</span>
-                </button>
-                <button
-                  type="button"
-                  className={`style-option-btn ${activeLine === 'stepped' ? 'active' : ''}`}
-                  onClick={() => onUpdate({ lineStyle: 'stepped' })}
-                  title="Orthogonal Elbow Step"
-                >
-                  <svg width="22" height="12" viewBox="0 0 22 12" fill="none">
-                    <path d="M2 10 H11 V2 H20" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
-                  <span className="style-option-caption">Stepped</span>
-                </button>
-              </div>
-            </div>
-
-            {/* Arrow Direction with Visual Illustrations */}
-            <div className="style-section">
-              <span className="style-section-title">Arrow Direction</span>
-              <div className="style-segmented-row" role="radiogroup" aria-label="Arrow direction">
-                <button
-                  type="button"
-                  className={`style-option-btn ${activeArrow === 'end' ? 'active' : ''}`}
-                  onClick={() => onUpdate({ arrowhead: 'end' })}
-                  title="Directed Forward (→)"
-                >
-                  <svg width="20" height="12" viewBox="0 0 20 12" fill="none">
-                    <path d="M3 6 H16 M12 2 L16.5 6 L12 10" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
-                  <span className="style-option-caption">Forward</span>
-                </button>
-                <button
-                  type="button"
-                  className={`style-option-btn ${activeArrow === 'both' ? 'active' : ''}`}
-                  onClick={() => onUpdate({ arrowhead: 'both' })}
-                  title="Bi-directional (↔)"
-                >
-                  <svg width="20" height="12" viewBox="0 0 20 12" fill="none">
-                    <path d="M6 2 L2 6 L6 10 M3 6 H17 M14 2 L18 6 L14 10" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
-                  <span className="style-option-caption">Both</span>
-                </button>
-                <button
-                  type="button"
-                  className={`style-option-btn ${activeArrow === 'start' ? 'active' : ''}`}
-                  onClick={() => onUpdate({ arrowhead: 'start' })}
-                  title="Reverse (←)"
-                >
-                  <svg width="20" height="12" viewBox="0 0 20 12" fill="none">
-                    <path d="M17 6 H4 M8 2 L3.5 6 L8 10" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
-                  <span className="style-option-caption">Reverse</span>
-                </button>
-                <button
-                  type="button"
-                  className={`style-option-btn ${activeArrow === 'none' ? 'active' : ''}`}
-                  onClick={() => onUpdate({ arrowhead: 'none' })}
-                  title="Plain Line (—)"
-                >
-                  <svg width="20" height="12" viewBox="0 0 20 12" fill="none">
-                    <path d="M3 6 H17" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-                  </svg>
-                  <span className="style-option-caption">None</span>
-                </button>
-              </div>
-            </div>
-
-            {/* Pattern with Visual Illustrations */}
-            <div className="style-section">
-              <span className="style-section-title">Line Pattern</span>
-              <div className="style-segmented-row" role="radiogroup" aria-label="Line pattern">
-                <button
-                  type="button"
-                  className={`style-option-btn ${activePattern === 'solid' ? 'active' : ''}`}
-                  onClick={() => onUpdate({ strokePattern: 'solid' })}
-                  title="Continuous / Solid Line"
-                >
-                  <svg width="24" height="10" viewBox="0 0 24 10" fill="none">
-                    <line x1="2" y1="5" x2="22" y2="5" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
-                  </svg>
-                  <span className="style-option-caption">Continuous</span>
-                </button>
-                <button
-                  type="button"
-                  className={`style-option-btn ${activePattern === 'dashed' ? 'active' : ''}`}
-                  onClick={() => onUpdate({ strokePattern: 'dashed' })}
-                  title="Dashed Line"
-                >
-                  <svg width="24" height="10" viewBox="0 0 24 10" fill="none">
-                    <line x1="2" y1="5" x2="22" y2="5" stroke="currentColor" strokeWidth="2.2" strokeDasharray="5 3" strokeLinecap="round" />
-                  </svg>
-                  <span className="style-option-caption">Dashed</span>
-                </button>
-                <button
-                  type="button"
-                  className={`style-option-btn ${activePattern === 'dotted' ? 'active' : ''}`}
-                  onClick={() => onUpdate({ strokePattern: 'dotted' })}
-                  title="Dotted Line"
-                >
-                  <svg width="24" height="10" viewBox="0 0 24 10" fill="none">
-                    <line x1="3" y1="5" x2="21" y2="5" stroke="currentColor" strokeWidth="2.4" strokeDasharray="0 6" strokeLinecap="round" />
-                  </svg>
-                  <span className="style-option-caption">Dotted</span>
-                </button>
-              </div>
-            </div>
-
-            {/* Color Swatches */}
-            <div className="style-section">
-              <span className="style-section-title">Color Palette</span>
-              <div className="relationship-color-row" aria-label="Relationship color">
-                {colors.map(([id, color]) => (
+            <div className="relation-presets" role="group" aria-label="Relation type">
+              {ONTOLOGY_PRESETS.map(preset => {
+                const isSelected = connection.label === preset.label || connection.label === preset.id;
+                return (
                   <button
-                    key={id}
-                    aria-label={`${id} relationship color`}
-                    aria-pressed={(connection.color || 'neutral') === id}
-                    style={{ backgroundColor: color }}
-                    onClick={() => onUpdate({ color: id })}
+                    key={preset.id}
+                    type="button"
+                    aria-pressed={isSelected}
+                    className={isSelected ? 'is-active' : ''}
+                    onClick={() => {
+                      onUpdate({
+                        label: preset.label,
+                        strokePattern: patternPickedByHand ? activePattern : strokeForLabel(preset.label),
+                        lineStyle: preset.lineStyle,
+                        arrowhead: preset.arrowhead
+                      });
+                      setLabel(preset.label);
+                    }}
                   >
-                    {connection.color === id && <Check size={11} />}
+                    <strong>{preset.displayName}</strong>
+                    <small>{preset.description}</small>
                   </button>
-                ))}
-              </div>
+                );
+              })}
             </div>
 
-            {/* Animation Toggle with Live Preview Illustration */}
-            <label className="relationship-animation">
-              <input
-                type="checkbox"
-                checked={Boolean(connection.animated)}
-                onChange={event => onUpdate({ animated: event.target.checked })}
-              />
-              <Zap size={12} className={connection.animated ? "text-[#1F3DFF]" : "text-[#111214] opacity-60"} />
-              <span>Flow animation</span>
-              <svg width="34" height="10" viewBox="0 0 34 10" fill="none" className="ml-auto opacity-75">
-                <line
-                  x1="2"
-                  y1="5"
-                  x2="32"
-                  y2="5"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeDasharray={
-                    activePattern === 'dotted'
-                      ? '0 6'
-                      : activePattern === 'dashed'
-                      ? '5 3'
-                      : connection.animated
-                      ? '16 18'
-                      : undefined
-                  }
-                  strokeLinecap="round"
-                  className={connection.animated ? (activePattern === 'solid' ? 'relationship-animated-continuous' : activePattern === 'dotted' ? 'relationship-animated-dotted' : 'relationship-animated-dashed') : ''}
-                />
-              </svg>
-            </label>
+            <Segmented label="Line" options={LINE_STYLES} value={activeLine} onPick={lineStyle => onUpdate({ lineStyle })} />
+            <Segmented label="Pattern" options={PATTERNS} value={activePattern} onPick={strokePattern => onUpdate({ strokePattern })} />
+            <Segmented label="Arrow" options={ARROWS} value={activeArrow} onPick={arrowhead => onUpdate({ arrowhead })} />
           </div>
         )}
       </div>

@@ -33,7 +33,7 @@ export interface FileMetaInfo {
   label: string;
   badgeBg: string;
   badgeColor: string;
-  icon: React.ComponentType<{ size?: number; className?: string; style?: React.CSSProperties }>;
+  icon: React.ComponentType<{ size?: number; strokeWidth?: number; className?: string; style?: React.CSSProperties }>;
 }
 
 export function getFileCategory(fileName?: string, fileType?: string): FileMetaInfo {
@@ -44,8 +44,8 @@ export function getFileCategory(fileName?: string, fileType?: string): FileMetaI
     return {
       category: 'pdf',
       label: 'PDF',
-      badgeBg: 'rgba(239, 68, 68, 0.12)',
-      badgeColor: '#dc2626',
+      badgeBg: 'transparent',
+      badgeColor: 'var(--muted)',
       icon: FileText
     };
   }
@@ -53,8 +53,8 @@ export function getFileCategory(fileName?: string, fileType?: string): FileMetaI
     return {
       category: 'json',
       label: 'JSON',
-      badgeBg: 'rgba(245, 158, 11, 0.12)',
-      badgeColor: '#d97706',
+      badgeBg: 'transparent',
+      badgeColor: 'var(--muted)',
       icon: FileJson
     };
   }
@@ -62,8 +62,8 @@ export function getFileCategory(fileName?: string, fileType?: string): FileMetaI
     return {
       category: 'csv',
       label: 'CSV / Data',
-      badgeBg: 'rgba(16, 185, 129, 0.12)',
-      badgeColor: '#059669',
+      badgeBg: 'transparent',
+      badgeColor: 'var(--muted)',
       icon: FileSpreadsheet
     };
   }
@@ -71,8 +71,8 @@ export function getFileCategory(fileName?: string, fileType?: string): FileMetaI
     return {
       category: 'md',
       label: 'Markdown',
-      badgeBg: 'rgba(139, 92, 246, 0.12)',
-      badgeColor: '#7c3aed',
+      badgeBg: 'transparent',
+      badgeColor: 'var(--muted)',
       icon: FileCode
     };
   }
@@ -80,8 +80,8 @@ export function getFileCategory(fileName?: string, fileType?: string): FileMetaI
     return {
       category: 'txt',
       label: 'Text',
-      badgeBg: 'rgba(59, 130, 246, 0.12)',
-      badgeColor: '#2563eb',
+      badgeBg: 'transparent',
+      badgeColor: 'var(--muted)',
       icon: FileText
     };
   }
@@ -89,8 +89,8 @@ export function getFileCategory(fileName?: string, fileType?: string): FileMetaI
     return {
       category: 'code',
       label: 'Code',
-      badgeBg: 'rgba(99, 102, 241, 0.12)',
-      badgeColor: '#4f46e5',
+      badgeBg: 'transparent',
+      badgeColor: 'var(--muted)',
       icon: FileCode
     };
   }
@@ -99,15 +99,15 @@ export function getFileCategory(fileName?: string, fileType?: string): FileMetaI
       category: 'image',
       label: 'Image',
       badgeBg: 'transparent',
-      badgeColor: '#111214',
+      badgeColor: 'var(--muted)',
       icon: Images
     };
   }
   return {
     category: 'file',
     label: 'File',
-    badgeBg: 'rgba(107, 114, 128, 0.12)',
-    badgeColor: '#4b5563',
+    badgeBg: 'transparent',
+    badgeColor: 'var(--muted)',
     icon: File
   };
 }
@@ -187,7 +187,7 @@ export function ImageViewerModal({
         <div className="media-viewer-header">
           <div className="media-viewer-title-group">
             <span className="media-viewer-badge">
-              <Images size={14} />
+              <Images size={16} strokeWidth={1.75} />
               <span>Media & Figure</span>
             </span>
             <strong className="media-viewer-filename">{safeTitle || safeCaption || 'Figure Preview'}</strong>
@@ -201,11 +201,11 @@ export function ImageViewerModal({
                 onClick={handleZoomOut}
                 title="Zoom Out (-)"
               >
-                <ZoomOut size={15} />
+                <ZoomOut size={16} strokeWidth={1.75} />
               </button>
               <button
                 type="button"
-                className="media-viewer-btn text-xs font-mono"
+                className="media-viewer-btn media-viewer-zoom"
                 onClick={handleResetZoom}
                 title="Reset zoom"
               >
@@ -217,7 +217,7 @@ export function ImageViewerModal({
                 onClick={handleZoomIn}
                 title="Zoom In (+)"
               >
-                <ZoomIn size={15} />
+                <ZoomIn size={16} strokeWidth={1.75} />
               </button>
             </div>
 
@@ -227,7 +227,7 @@ export function ImageViewerModal({
               onClick={handleRotate}
               title="Rotate 90 degrees"
             >
-              <RotateCw size={15} />
+              <RotateCw size={16} strokeWidth={1.75} />
             </button>
 
             <button
@@ -236,7 +236,7 @@ export function ImageViewerModal({
               onClick={handleCopy}
               title="Copy image link / data"
             >
-              {copied ? <Check size={15} className="text-emerald-400" /> : <Copy size={15} />}
+              {copied ? <Check size={16} strokeWidth={1.75} /> : <Copy size={16} strokeWidth={1.75} />}
             </button>
 
             <a
@@ -245,7 +245,7 @@ export function ImageViewerModal({
               className="media-viewer-btn"
               title="Download image"
             >
-              <Download size={15} />
+              <Download size={16} strokeWidth={1.75} />
             </a>
 
             <button
@@ -254,7 +254,7 @@ export function ImageViewerModal({
               onClick={onClose}
               title="Close viewer (Esc)"
             >
-              <X size={17} />
+              <X size={17} strokeWidth={1.75} />
             </button>
           </div>
         </div>
@@ -420,7 +420,7 @@ export function FileViewerModal({
               className="file-type-pill"
               style={{ backgroundColor: meta.badgeBg, color: meta.badgeColor }}
             >
-              <IconComponent size={14} />
+              <IconComponent size={16} strokeWidth={1.75} />
               <span>{meta.label}</span>
             </span>
             <strong className="file-viewer-title" title={fileName}>{fileName || 'Attached Document'}</strong>
@@ -440,7 +440,7 @@ export function FileViewerModal({
                   onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
                   title="Previous page"
                 >
-                  <ChevronLeft size={14} />
+                  <ChevronLeft size={16} strokeWidth={1.75} />
                 </button>
                 <div className="file-page-input-wrapper">
                   <span className="file-page-label">p.</span>
@@ -462,7 +462,7 @@ export function FileViewerModal({
                   onClick={() => setCurrentPage(p => p + 1)}
                   title="Next page"
                 >
-                  <ChevronRight size={14} />
+                  <ChevronRight size={16} strokeWidth={1.75} />
                 </button>
                 {initialPage && (
                   <button
@@ -471,7 +471,7 @@ export function FileViewerModal({
                     onClick={() => setCurrentPage(initialPage)}
                     title={`Jump to cited evidence on page ${initialPage}`}
                   >
-                    <Bookmark size={11} />
+                    <Bookmark size={14} strokeWidth={1.75} />
                     <span>Cited p. {initialPage}</span>
                   </button>
                 )}
@@ -480,7 +480,7 @@ export function FileViewerModal({
 
             {isTextual && (
               <div className="file-search-box">
-                <Search size={13} />
+                <Search size={16} strokeWidth={1.75} />
                 <input
                   type="text"
                   placeholder="Find in file..."
@@ -490,7 +490,7 @@ export function FileViewerModal({
                 />
                 {searchTerm && (
                   <button type="button" onClick={() => setSearchTerm('')} className="file-search-clear">
-                    <X size={12} />
+                    <X size={16} strokeWidth={1.75} />
                   </button>
                 )}
               </div>
@@ -503,7 +503,7 @@ export function FileViewerModal({
                 onClick={handleCopy}
                 title="Copy contents"
               >
-                {copied ? <Check size={14} className="text-emerald-500" /> : <Copy size={14} />}
+                {copied ? <Check size={16} strokeWidth={1.75} /> : <Copy size={16} strokeWidth={1.75} />}
                 <span>{copied ? 'Copied' : 'Copy'}</span>
               </button>
             )}
@@ -515,7 +515,7 @@ export function FileViewerModal({
                 className="file-action-btn primary"
                 title="Download file"
               >
-                <Download size={14} />
+                <Download size={16} strokeWidth={1.75} />
                 <span>Download</span>
               </a>
             )}
@@ -528,7 +528,7 @@ export function FileViewerModal({
                 className="file-action-btn"
                 title="Open in new browser tab"
               >
-                <ExternalLink size={14} />
+                <ExternalLink size={16} strokeWidth={1.75} />
                 <span>Open in Tab</span>
               </a>
             )}
@@ -539,7 +539,7 @@ export function FileViewerModal({
               onClick={onClose}
               title="Close (Esc)"
             >
-              <X size={16} />
+              <X size={16} strokeWidth={1.75} />
             </button>
           </div>
         </div>
@@ -551,8 +551,8 @@ export function FileViewerModal({
               {highlightExcerpt && (
                 <div className="pdf-citation-callout">
                   <div className="pdf-citation-header">
-                    <Quote size={13} className="text-amber-500" />
-                    <span className="pdf-citation-badge">Linked Evidence</span>
+                    <Quote size={16} strokeWidth={1.75} />
+                    <span className="pdf-citation-badge">Quoted in your map</span>
                     {initialPage && (
                       <span className="pdf-citation-loc">Page {initialPage}</span>
                     )}
@@ -569,7 +569,7 @@ export function FileViewerModal({
                 />
               ) : (
                 <div className="file-empty-state">
-                  <FileText size={36} className="text-slate-400" />
+                  <FileText size={36} strokeWidth={1.75} />
                   <p>PDF data not available for inline viewing</p>
                 </div>
               )}
@@ -589,16 +589,16 @@ export function FileViewerModal({
             </div>
           ) : (
             <div className="file-fallback-viewer">
-              <IconComponent size={44} style={{ color: meta.badgeColor }} />
+              <IconComponent size={44} strokeWidth={1.75} style={{ color: meta.badgeColor }} />
               <h3>{fileName || 'Attached File'}</h3>
-              <p>Binary or unsupported file format for inline rendering.</p>
+              <p>This file type can’t be shown here. Download it to open it.</p>
               {fileData && (
                 <a
                   href={fileData}
                   download={fileName || 'attachment'}
                   className="file-action-btn primary"
                 >
-                  <Download size={14} />
+                  <Download size={16} strokeWidth={1.75} />
                   <span>Download file ({formatFileSize(fileSize)})</span>
                 </a>
               )}
@@ -651,7 +651,7 @@ export function AttachedFileBadge({
           className="attached-file-tag"
           style={{ backgroundColor: meta.badgeBg, color: meta.badgeColor }}
         >
-          <IconComp size={13} />
+          <IconComp size={16} strokeWidth={1.75} />
           <span>{meta.label}</span>
         </span>
         <div className="attached-file-info">
@@ -670,7 +670,7 @@ export function AttachedFileBadge({
         title="Expand and view file"
         aria-label="Expand and view file"
       >
-        <Maximize2 size={13} />
+        <Maximize2 size={16} strokeWidth={1.75} />
       </button>
     </div>
   );

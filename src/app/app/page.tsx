@@ -1,38 +1,43 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type FormEvent } from 'react';
 import {
-  ArrowRight, BookOpenText, Check, ChevronDown, CircleHelp, Clock3,
-  Compass, FileClock, FileJson2, Files, FileText, FolderArchive, FolderKanban, GitBranch,
-  History, Image as ImageIcon, Layers2, LoaderCircle, MessageCircle, Plus, Redo2,
-  Search, Send, Shapes, Share, Square, SlidersHorizontal, Sparkles, Trash2, Undo2, Upload, Wrench, X, Zap
+  BookOpenText, Check, ChevronDown,
+  FileJson2, FileText, FolderArchive, GitBranch,
+  Image as ImageIcon, LoaderCircle, MoreHorizontal, Plus, Redo2,
+  Search, Shapes, Share, Square, Undo2, Upload, X
 } from 'lucide-react';
-import { GraphCanvas, membersOf } from '@/components/research/GraphCanvas';
+import { GraphCanvas, adoptLegacyClusterMembers, membersOf } from '@/components/research/GraphCanvas';
+import { useCollaboration, type PresencePeer, type RemoteChange } from '@/components/collab/useCollaboration';
+import { PresenceBar } from '@/components/collab/PresenceBar';
 import { KnowledgeViews } from '@/components/research/KnowledgeViews';
-import { NodeInspector } from '@/components/research/NodeInspector';
-import { CustomSelect } from '@/components/research/CustomSelect';
+import { NoteEditor } from '@/components/research/NoteEditor';
 import { CanvasToolDock, type ResearchProject, type WorkspaceSection } from '@/components/research/WorkspaceSidebar';
 import { extractYouTubeVideoId } from '@/components/research/SourceMetadata';
 import { addNode, addRelationship, exportContextMarkdown, exportGraphJson, exportMermaid, normalizeGraph, removeNode, strokeForLabel, updateNode, updateRelationship, type KnowledgeGraph } from '@/lib/graph';
 import { parseBibTeX, bibEntriesToCanvasNodes } from '@/lib/bibtex';
 import { generateStandaloneSvg, exportGraphToPng } from '@/lib/canvas-export';
 import type { CanvasNode, CanvasNodeType, Connection, Coordinates, GraphRevisionSummary, ResearchChange, ResearchSession } from '@/types/canvas';
-import { ELEMENT_PALETTE } from '@/types/canvas';
 import type { AIStatus } from '@/lib/ai-service';
 import { ChatToolCard } from '@/components/research/ChatToolCard';
+import { ToolComposer, type ComposerTool } from '@/components/research/ToolComposer';
 import { MarkdownView } from '@/components/research/MarkdownView';
 import { DocumentPane } from '@/components/research/DocumentPane';
 import { LiveResearchCard, type ResearchLiveProgress } from '@/components/research/LiveResearchCard';
 import type { ChatToolCall } from '@/types/chat-tools';
 import { computeOrganizedLayout } from '@/lib/graph-organizer';
+import { CREDIT_RATES } from '@/lib/plans';
 import { auditGraphTopology } from '@/lib/graph-analyst';
 import { UserNav } from '@/components/auth/UserNav';
 import { CreditsModal } from '@/components/auth/CreditsModal';
 import { SubscriptionOnboardingModal } from '@/components/auth/SubscriptionOnboardingModal';
 import { SynthexLogo } from '@/components/brand/SynthexLogo';
+import { nodeLabel } from '@/components/research/nodes/BaseKnowledgeCard';
+import type { SketchStroke } from '@/components/research/SketchLayer';
+import { parseSketchStyle, type SketchStyle } from '@/components/research/inkPalette';
 
 type Viewport = { zoom: number; pan: Coordinates };
-type Tool = 'select' | 'connect' | 'hand';
+type Tool = 'select' | 'connect' | 'hand' | 'pen' | 'marker' | 'eraser';
 type ChatLine = {
   role: 'user' | 'assistant';
   text: string;
@@ -43,6 +48,14 @@ type ChatLine = {
   toolCall?: ChatToolCall | null;
   isStreaming?: boolean;
   researchProgress?: ResearchLiveProgress;
+  savedToMap?: boolean;
+};
+type StoredChatMessage = {
+  role: 'user' | 'assistant';
+  content: string;
+  referencedNodeIds: string[];
+  provider?: 'OpenAI' | 'Gemini' | null;
+  model?: string | null;
 };
 type Modal = 'chat' | 'project' | 'search' | 'credits' | null;
 
@@ -54,6 +67,34 @@ async function readJson<T>(response: Response): Promise<T> {
   const body = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(errorText(body, 'The request could not be completed.'));
   return body as T;
+}
+
+// Per-viewer preferences (layout, note-size lock). /app is prerendered with the defaults, so they are read
+// through useSyncExternalStore: hydration uses the server snapshot, then React re-renders with the saved value.
+// The in-memory copy keeps the controls working when localStorage is blocked (private windows).
+const PREFS_EVENT = 'synthex-prefs';
+const prefsMemory = new Map<string, string>();
+function readPref(key: string): string | null {
+  if (prefsMemory.has(key)) return prefsMemory.get(key)!;
+  try { return localStorage.getItem(key); } catch { return null; }
+}
+function writePref(key: string, value: string) {
+  prefsMemory.set(key, value);
+  try { localStorage.setItem(key, value); } catch { /* per-viewer convenience only */ }
+  window.dispatchEvent(new Event(PREFS_EVENT));
+}
+function subscribePrefs(onChange: () => void) {
+  // Another tab changed storage: drop the in-memory copy so the new value is read.
+  const onStorage = () => { prefsMemory.clear(); onChange(); };
+  window.addEventListener('storage', onStorage);
+  window.addEventListener(PREFS_EVENT, onChange);
+  return () => { window.removeEventListener('storage', onStorage); window.removeEventListener(PREFS_EVENT, onChange); };
+}
+function parseSketch(raw: string | null): SketchStroke[] {
+  try { const parsed = JSON.parse(raw || '[]'); return Array.isArray(parsed) ? parsed : []; } catch { return []; }
+}
+function useStoredPref(key: string) {
+  return useSyncExternalStore(subscribePrefs, () => readPref(key), () => null);
 }
 
 function downloadText(filename: string, content: string, type = 'text/plain;charset=utf-8') {
@@ -96,6 +137,9 @@ const STARTERS = [
 
 export default function SynthexWorkspace() {
   const [projects, setProjects] = useState<ResearchProject[]>([]);
+  // The active workspace (personal or a team) decides which maps are listed; personal maps can be brought into a team.
+  const [workspaceKind, setWorkspaceKind] = useState<'personal' | 'team'>('personal');
+  const [personalProjects, setPersonalProjects] = useState<ResearchProject[]>([]);
   const [projectId, setProjectId] = useState<string>(() => {
     if (typeof window !== 'undefined') {
       return localStorage.getItem('synthex_active_project_id') || '';
@@ -105,14 +149,9 @@ export default function SynthexWorkspace() {
   const [graph, setGraph] = useState<KnowledgeGraph>(blankGraph);
   const [sessions, setSessions] = useState<ResearchSession[]>([]);
   const [section, setSection] = useState<WorkspaceSection>('canvas');
-  const [layout, setLayout] = useState<Layout>(() => {
-    if (typeof window === 'undefined') return 'map';
-    try { const saved = localStorage.getItem('synthex_layout'); return saved === 'split' || saved === 'doc' ? saved : 'map'; } catch { return 'map'; }
-  });
-  const chooseLayout = useCallback((value: Layout) => {
-    setLayout(value);
-    try { localStorage.setItem('synthex_layout', value); } catch { /* per-viewer convenience only */ }
-  }, []);
+  const savedLayout = useStoredPref('synthex_layout');
+  const layout: Layout = savedLayout === 'split' || savedLayout === 'doc' ? savedLayout : 'map';
+  const chooseLayout = useCallback((value: Layout) => writePref('synthex_layout', value), []);
   const [loading, setLoading] = useState(true);
   const [loadedProject, setLoadedProject] = useState('');
   const [spacePressed, setSpacePressed] = useState(false);
@@ -126,6 +165,11 @@ export default function SynthexWorkspace() {
   const aiConfigured = Boolean(aiStatus?.configured);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [viewport, setViewport] = useState<Viewport>({ zoom: 0.82, pan: { x: 76, y: 52 } });
+  const viewportRef = useRef(viewport);
+  useEffect(() => { viewportRef.current = viewport; }, [viewport]);
+  // New items that are not pinned yet (see GraphCanvas): they pin once they sit on free board.
+  const [placingIds, setPlacingIds] = useState<string[]>([]);
+  const markPlaced = useCallback((id: string) => setPlacingIds(current => current.filter(value => value !== id)), []);
   const [canvasFitKey, setCanvasFitKey] = useState(0);
   const [tool, setTool] = useState<Tool>('select');
   const [linkingFromId, setLinkingFromId] = useState<string | null>(null);
@@ -134,18 +178,17 @@ export default function SynthexWorkspace() {
   const [groupViewport, setGroupViewport] = useState<Viewport>({ zoom: 0.72, pan: { x: 60, y: 54 } });
   const [modal, setModal] = useState<Modal>(null);
   const [rightDrawerOpen, setRightDrawerOpen] = useState(false);
-  const [drawerTab, setDrawerTab] = useState<'inspector' | 'chat'>('inspector');
   const [exportMenu, setExportMenu] = useState(false);
   const [navMenuOpen, setNavMenuOpen] = useState(false);
+  const [overflowMenuOpen, setOverflowMenuOpen] = useState(false);
+  const overflowMenuRef = useRef<HTMLDivElement>(null);
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const [addRecordMenuOpen, setAddRecordMenuOpen] = useState(false);
   const navMenuRef = useRef<HTMLDivElement>(null);
   const projectMenuRef = useRef<HTMLDivElement>(null);
   const exportMenuRef = useRef<HTMLDivElement>(null);
   const addRecordMenuRef = useRef<HTMLDivElement>(null);
-  const [showToolsMenu, setShowToolsMenu] = useState(false);
   const [thinkingStep, setThinkingStep] = useState<string | null>(null);
-  const toolsMenuRef = useRef<HTMLDivElement>(null);
   const [notice, setNotice] = useState('');
 
   const navigateTo = useCallback((targetSection: WorkspaceSection) => {
@@ -157,7 +200,7 @@ export default function SynthexWorkspace() {
   }, []);
 
   useEffect(() => {
-    if (!navMenuOpen && !projectMenuOpen && !exportMenu && !addRecordMenuOpen && !showToolsMenu) return;
+    if (!navMenuOpen && !projectMenuOpen && !exportMenu && !addRecordMenuOpen && !overflowMenuOpen) return;
     const handlePointerDown = (event: PointerEvent) => {
       const target = event.target as Node;
       if (navMenuOpen && navMenuRef.current && !navMenuRef.current.contains(target)) {
@@ -172,24 +215,29 @@ export default function SynthexWorkspace() {
       if (addRecordMenuOpen && addRecordMenuRef.current && !addRecordMenuRef.current.contains(target)) {
         setAddRecordMenuOpen(false);
       }
-      if (showToolsMenu && toolsMenuRef.current && !toolsMenuRef.current.contains(target)) {
-        setShowToolsMenu(false);
+      if (overflowMenuOpen && overflowMenuRef.current && !overflowMenuRef.current.contains(target)) {
+        setOverflowMenuOpen(false);
       }
     };
     window.addEventListener('pointerdown', handlePointerDown, true);
     return () => window.removeEventListener('pointerdown', handlePointerDown, true);
-  }, [navMenuOpen, projectMenuOpen, exportMenu, addRecordMenuOpen, showToolsMenu]);
+  }, [navMenuOpen, projectMenuOpen, exportMenu, addRecordMenuOpen, overflowMenuOpen]);
   const [composerText, setComposerText] = useState('');
-  const [composerMode, setComposerMode] = useState<'quick' | 'deep'>('quick');
-  const composerRef = useRef<HTMLTextAreaElement | HTMLInputElement | null>(null);
+  const [composerTool, setComposerTool] = useState<string | null>(null);
+  // An empty board has nothing to ask about yet, so its composer starts on a quick map.
+  const [startTool, setStartTool] = useState<string | null>('quick');
+  const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const researchAbort = useRef<AbortController | null>(null);
   const [detachingIds, setDetachingIds] = useState<string[]>([]);
+  // The note or cluster open in the full-screen editor (opened from its Edit button or Enter).
+  const [editorId, setEditorId] = useState<string | null>(null);
+  const [keptIds, setKeptIds] = useState<string[]>([]);
   const [researching, setResearching] = useState(false);
-  const [chatInput, setChatInput] = useState('');
   const [chatBusy, setChatBusy] = useState(false);
   const [chatLines, setChatLines] = useState<ChatLine[]>([]);
-  const [activeResearchIntent, setActiveResearchIntent] = useState<{ mode: 'quick' | 'deep' } | null>(null);
-  const chatInputRef = useRef<HTMLInputElement>(null);
+  // Conversation memory lives on the server; the thread id ties this transcript to it.
+  const [chatThreadId, setChatThreadId] = useState<string | null>(null);
+  const [chatProjectId, setChatProjectId] = useState<string | null>(null);
   const [activeSession, setActiveSession] = useState<ResearchSession | null>(null);
   const [reviewDecisions, setReviewDecisions] = useState<Record<string, 'accepted' | 'rejected'>>({});
   const [projectTitleDraft, setProjectTitleDraft] = useState('');
@@ -213,23 +261,26 @@ export default function SynthexWorkspace() {
     noticeTimer.current = setTimeout(() => setNotice(''), 3600);
   }, []);
 
-  const [isResizeLocked, setIsResizeLocked] = useState<boolean>(() => {
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem('synthex_resize_locked') === 'true';
-    }
-    return false;
-  });
+  const isResizeLocked = useStoredPref('synthex_resize_locked') === 'true';
+
+  // Pen and marker drawings: saved per map in this browser only. They never touch the graph, the document or AI context.
+  const sketchKey = `synthex_sketch_${projectId || 'default'}`;
+  const sketchRaw = useStoredPref(sketchKey);
+  const sketch = useMemo(() => parseSketch(sketchRaw), [sketchRaw]);
+  const sketchStyleRaw = useStoredPref('synthex_sketch_style');
+  const sketchStyle = useMemo(() => parseSketchStyle(sketchStyleRaw), [sketchStyleRaw]);
+  const saveSketchStyle = useCallback((tool: 'pen' | 'marker', patch: Partial<SketchStyle['pen']>) => {
+    const saved = parseSketchStyle(readPref('synthex_sketch_style')); // merge against the saved value so quick changes never undo each other
+    writePref('synthex_sketch_style', JSON.stringify({ ...saved, [tool]: { ...saved[tool], ...patch } }));
+  }, []);
+  // Updates read the saved strokes at write time, so strokes finished in quick succession never overwrite each other.
+  const saveSketch = useCallback((update: (strokes: SketchStroke[]) => SketchStroke[]) => writePref(sketchKey, JSON.stringify(update(parseSketch(readPref(sketchKey))))), [sketchKey]);
 
   const toggleResizeLock = useCallback(() => {
-    setIsResizeLocked(prev => {
-      const next = !prev;
-      if (typeof window !== 'undefined') {
-        localStorage.setItem('synthex_resize_locked', String(next));
-      }
-      announce(next ? 'Component resizing locked for all components.' : 'Component resizing unlocked: Drag corner handles to resize cards.');
-      return next;
-    });
-  }, [announce]);
+    const next = !isResizeLocked;
+    writePref('synthex_resize_locked', String(next));
+    announce(next ? 'Note sizes locked.' : 'Note sizes unlocked. Drag a corner to resize.');
+  }, [announce, isResizeLocked]);
 
   const updateGraph = useCallback((change: (current: KnowledgeGraph) => KnowledgeGraph, recordUndo = true) => {
     let didRecord = false;
@@ -272,6 +323,25 @@ export default function SynthexWorkspace() {
 
   const lastRevisionTime = useRef(Date.now());
 
+  // ---- Live collaboration -------------------------------------------------------------------------------------
+  // A graph that arrived from teammates. Our undo history is rebased onto it, so Ctrl+Z only ever takes back our own
+  // edits and never a teammate's.
+  const remoteGraphRef = useRef<KnowledgeGraph | null>(null);
+  const applyRemoteGraph = useCallback((next: KnowledgeGraph, changed: RemoteChange) => {
+    const rebase = (snapshot: KnowledgeGraph): KnowledgeGraph => {
+      const nodesById = { ...snapshot.nodesById };
+      const edgesById = { ...snapshot.edgesById };
+      for (const id of changed.nodes) { if (next.nodesById[id]) nodesById[id] = next.nodesById[id]; else delete nodesById[id]; }
+      for (const id of changed.edges) { if (next.edgesById[id]) edgesById[id] = next.edgesById[id]; else delete edgesById[id]; }
+      for (const [id, edge] of Object.entries(edgesById)) if (!nodesById[edge.from] || !nodesById[edge.to]) delete edgesById[id];
+      return { ...snapshot, nodesById, edgesById };
+    };
+    undoStack.current = undoStack.current.map(rebase);
+    redoStack.current = redoStack.current.map(rebase);
+    remoteGraphRef.current = next;
+    setGraph(next);
+  }, []);
+
   const restoreRevision = useCallback(async (revisionId: string) => {
     try {
       const res = await fetch('/api/revisions', {
@@ -281,7 +351,7 @@ export default function SynthexWorkspace() {
       });
       const data = await readJson<{ success: boolean; nodes: CanvasNode[]; relationships: Connection[]; revision: GraphRevisionSummary }>(res);
       if (data.nodes) {
-        updateGraph(() => normalizeGraph(data.nodes, data.relationships || []));
+        updateGraph(() => normalizeGraph(adoptLegacyClusterMembers(data.nodes), data.relationships || []));
         setCanvasFitKey(v => v + 1);
         setSelectedIds([]);
         announce(`Restored snapshot: ${data.revision.title}`);
@@ -333,7 +403,7 @@ export default function SynthexWorkspace() {
         readJson<{ sessions: ResearchSession[] }>(historyResponse)
       ]);
       if (requestId !== loadRequest.current) return;
-      setGraph(normalizeGraph(graphBody.nodes, graphBody.relationships));
+      setGraph(normalizeGraph(adoptLegacyClusterMembers(graphBody.nodes), graphBody.relationships));
       setCanvasFitKey(value => value + 1);
       setSessions(historyBody.sessions);
       setLoadedProject(id);
@@ -347,24 +417,46 @@ export default function SynthexWorkspace() {
     }
   }, [announce]);
 
+  const loadProjects = useCallback(async () => {
+    try {
+      const data = await readJson<{ projects: ResearchProject[]; personalProjects?: ResearchProject[]; workspace?: { kind: 'personal' | 'team' } }>(
+        await fetch('/api/projects', { cache: 'no-store' })
+      );
+      setProjects(data.projects);
+      setPersonalProjects(data.personalProjects || []);
+      setWorkspaceKind(data.workspace?.kind === 'team' ? 'team' : 'personal');
+      if (data.projects.length > 0) {
+        // Keep the open map if it belongs to this workspace, otherwise open the workspace's first map.
+        const stored = typeof window !== 'undefined' ? localStorage.getItem('synthex_active_project_id') : null;
+        const matching = data.projects.find(p => p.id === stored);
+        const nextId = matching ? matching.id : data.projects[0].id;
+        setProjectId(nextId);
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('synthex_active_project_id', nextId);
+        }
+      }
+    } catch (error) {
+      announce(error instanceof Error ? error.message : 'Could not load projects.');
+    }
+  }, [announce]);
+
+  const moveProject = useCallback(async (id: string, workspace: 'team' | 'personal') => {
+    try {
+      await readJson(await fetch('/api/projects', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId: id, workspace })
+      }));
+      if (workspace === 'team' && typeof window !== 'undefined') localStorage.setItem('synthex_active_project_id', id);
+      await loadProjects();
+      announce(workspace === 'team' ? 'Map moved into the team. Everyone in the team can open it now.' : 'Map moved back to your personal workspace.');
+    } catch (error) {
+      announce(error instanceof Error ? error.message : 'Could not move that map.');
+    }
+  }, [announce, loadProjects]);
+
   useEffect(() => {
     let cancelled = false;
-    fetch('/api/projects', { cache: 'no-store' })
-      .then(response => readJson<{ projects: ResearchProject[] }>(response))
-      .then(data => {
-        if (cancelled) return;
-        setProjects(data.projects);
-        if (data.projects.length > 0) {
-          const stored = typeof window !== 'undefined' ? localStorage.getItem('synthex_active_project_id') : null;
-          const matching = data.projects.find(p => p.id === stored);
-          const nextId = matching ? matching.id : data.projects[0].id;
-          setProjectId(nextId);
-          if (typeof window !== 'undefined') {
-            localStorage.setItem('synthex_active_project_id', nextId);
-          }
-        }
-      })
-      .catch(error => announce(error instanceof Error ? error.message : 'Could not load projects.'));
+    void loadProjects();
     fetch('/api/ai/status', { cache: 'no-store' })
       .then(response => response.json())
       .then((data: AIStatus) => {
@@ -386,14 +478,77 @@ export default function SynthexWorkspace() {
       })
       .catch(() => { });
     return () => { cancelled = true; };
-  }, [announce]);
+  }, [announce, loadProjects]);
 
   useEffect(() => {
     if (projectId && projects.length) void loadProject(projectId);
   }, [projectId, projects.length, loadProject]);
 
+  // Each map has its own chat thread: clear the transcript when the map changes, then restore the latest thread.
+  if (chatProjectId !== projectId) {
+    setChatProjectId(projectId);
+    setChatLines([]);
+    setChatThreadId(null);
+  }
+
+  useEffect(() => {
+    if (!projectId) return;
+    let cancelled = false;
+    fetch(`/api/ai/chat?projectId=${encodeURIComponent(projectId)}`, { cache: 'no-store' })
+      .then(response => (response.ok ? response.json() : null))
+      .then((data: { threadId: string | null; messages: StoredChatMessage[] } | null) => {
+        if (cancelled || !data?.threadId) return;
+        const restored: ChatLine[] = data.messages.map(message => ({
+          role: message.role,
+          text: message.content,
+          referencedNodeIds: message.referencedNodeIds,
+          provider: message.provider ?? undefined,
+          model: message.model ?? undefined
+        }));
+        // Never overwrite a conversation the user already started while this was loading.
+        setChatThreadId(current => current ?? data.threadId);
+        setChatLines(current => (current.length ? current : restored));
+      })
+      .catch(() => { });
+    return () => { cancelled = true; };
+  }, [projectId]);
+
+  const startNewChat = useCallback(() => {
+    setChatThreadId(newId());
+    setChatLines([]);
+  }, []);
+
+  const collab = useCollaboration({
+    projectId,
+    ready: Boolean(loadedProject) && loadedProject === projectId && !loading,
+    graph,
+    onRemoteGraph: applyRemoteGraph,
+    onPeerJoined: user => announce(`${user.name} joined this map.`),
+    onPeerLeft: user => announce(`${user.name} left this map.`)
+  });
+  const { setSelection: shareSelection, setEditing: shareEditing } = collab;
+  useEffect(() => { shareSelection(selectedIds); }, [selectedIds, shareSelection]);
+  useEffect(() => { shareEditing(editingNoteId || editorId); }, [editingNoteId, editorId, shareEditing]);
+
+  const jumpToPeer = useCallback((peer: PresencePeer) => {
+    const target = peer.cursor
+      || (() => {
+        const node = graphRef.current.nodesById[peer.editing || peer.selection[0] || ''];
+        return node ? { x: node.x + (node.width || 280) / 2, y: node.y + 80 } : null;
+      })();
+    if (!target) return;
+    const stage = document.querySelector('.graph-canvas')?.getBoundingClientRect();
+    const width = stage?.width || window.innerWidth;
+    const height = stage?.height || window.innerHeight;
+    setViewport(current => ({ zoom: current.zoom, pan: { x: width / 2 - target.x * current.zoom, y: height / 2 - target.y * current.zoom } }));
+    announce(`Jumped to ${peer.user.name}.`);
+  }, [announce]);
+
   useEffect(() => {
     if (!loadedProject || loadedProject !== projectId || loading) return;
+    // Everyone on a live map saves the merged map; teammates' edits wait a little longer so the person who made
+    // them usually saves first, and only our own edits make history snapshots.
+    const fromTeammate = graph === remoteGraphRef.current;
     setSaveState('saving');
     const timer = setTimeout(async () => {
       try {
@@ -403,7 +558,7 @@ export default function SynthexWorkspace() {
         }));
         setSaveState('saved');
         const now = Date.now();
-        if (now - lastRevisionTime.current > 120_000) {
+        if (!fromTeammate && now - lastRevisionTime.current > 120_000) {
           lastRevisionTime.current = now;
           fetch('/api/revisions', {
             method: 'POST',
@@ -421,7 +576,7 @@ export default function SynthexWorkspace() {
         setSaveState('error');
         announce(error instanceof Error ? error.message : 'Changes could not be saved.');
       }
-    }, 450);
+    }, fromTeammate ? 1500 + Math.round(Math.random() * 1000) : 450);
     return () => clearTimeout(timer);
   }, [graph, projectId, loadedProject, loading, announce]);
 
@@ -459,10 +614,6 @@ export default function SynthexWorkspace() {
       }
       return ids;
     });
-    if (ids.length > 0) {
-      setDrawerTab('inspector');
-      setRightDrawerOpen(true);
-    }
   }, []);
 
   useEffect(() => {
@@ -521,13 +672,20 @@ export default function SynthexWorkspace() {
   const addRecord = useCallback((type: CanvasNodeType, initialData?: Partial<CanvasNode>) => {
     const now = Date.now();
     const index = Object.keys(graphRef.current.nodesById).length;
+    const width = initialData?.width ?? (type === 'group' ? 560 : type === 'image' ? 320 : type === 'question' ? 300 : 280);
+    // Without a given position, a new item appears in the middle of what you're looking at.
+    const board = document.querySelector('.graph-canvas')?.getBoundingClientRect();
+    const view = viewportRef.current;
+    const centred = initialData?.x === undefined && board
+      ? { x: Math.round((board.width / 2 - view.pan.x) / view.zoom - width / 2), y: Math.round((board.height / 2 - view.pan.y) / view.zoom - (type === 'group' ? 180 : 70)) }
+      : null;
     const labels: Record<string, string> = { concept: 'New concept', claim: 'New claim', question: 'New question', hypothesis: 'New hypothesis', source: 'New source', note: 'New note', group: 'New knowledge cluster', ai_insight: 'New insight', image: 'Media & figure' };
     const node: CanvasNode = {
       id: newId(),
       type,
-      x: initialData?.x ?? (260 + (index % 3) * 340),
-      y: initialData?.y ?? (170 + Math.floor(index / 3) * 230),
-      width: initialData?.width ?? (type === 'group' ? 560 : type === 'image' ? 320 : type === 'question' ? 300 : 280),
+      x: initialData?.x ?? centred?.x ?? (260 + (index % 3) * 340),
+      y: initialData?.y ?? centred?.y ?? (170 + Math.floor(index / 3) * 230),
+      width,
       height: type === 'group' ? 360 : undefined,
       title: initialData?.title || labels[type] || 'New knowledge',
       color: initialData?.color || (type === 'question' ? 'terracotta' : 'neutral'),
@@ -537,11 +695,10 @@ export default function SynthexWorkspace() {
     };
     try {
       updateGraph(current => addNode(current, node));
+      if (centred && type !== 'group') setPlacingIds(current => [...current, node.id]);
       setSelectedIds([node.id]);
       if (type === 'note') setEditingNoteId(node.id);
       setSection('canvas');
-      setDrawerTab('inspector');
-      setRightDrawerOpen(true);
     } catch (error) {
       announce(error instanceof Error ? error.message : 'Could not add that record.');
     }
@@ -565,11 +722,16 @@ export default function SynthexWorkspace() {
       if (!typing && (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'a') {
         event.preventDefault();
         setSelectedIds(Object.keys(graphRef.current.nodesById));
-        setDrawerTab('inspector');
-        setRightDrawerOpen(true);
         return;
       }
-      if (event.key === 'Escape') { setModal(null); setActiveSession(null); setLinkingFromId(null); setEditingNoteId(null); setGroupCanvasId(null); setTool('select'); setRightDrawerOpen(false); }
+      // While the full-screen editor is open it owns the keyboard: only Esc (close) reaches the board.
+      if (editorId) { if (event.key === 'Escape') setEditorId(null); return; }
+      if (!typing && event.key === 'Enter' && !target?.closest('button, a, [role="button"]') && selectedIds.length === 1 && !draftIds?.has(selectedIds[0])) {
+        event.preventDefault();
+        setEditorId(selectedIds[0]);
+        return;
+      }
+      if (event.key === 'Escape') { setOverflowMenuOpen(false); setModal(null); setActiveSession(null); setLinkingFromId(null); setEditingNoteId(null); setGroupCanvasId(null); setTool('select'); setRightDrawerOpen(false); }
       if (!typing && !target?.closest('button, a, [role="button"]')) {
         const key = event.key.toLowerCase();
         if (event.key === 'Delete' || event.key === 'Backspace') {
@@ -586,6 +748,11 @@ export default function SynthexWorkspace() {
         } else if (key === 'c' && !event.shiftKey) {
           event.preventDefault();
           setTool(value => value === 'connect' ? 'select' : 'connect');
+          setLinkingFromId(null);
+        } else if (key === 'p' || key === 'b' || key === 'e') {
+          event.preventDefault();
+          const drawTool: Tool = key === 'p' ? 'pen' : key === 'b' ? 'marker' : 'eraser';
+          setTool(value => value === drawTool ? 'select' : drawTool);
           setLinkingFromId(null);
         } else if (key === 'f') {
           event.preventDefault();
@@ -610,7 +777,6 @@ export default function SynthexWorkspace() {
           composerRef.current?.focus();
         } else if (event.key === '?' || (event.shiftKey && key === 'a')) {
           event.preventDefault();
-          setDrawerTab('chat');
           setRightDrawerOpen(true);
         }
       }
@@ -652,56 +818,34 @@ export default function SynthexWorkspace() {
       window.removeEventListener('blur', onBlur);
       window.removeEventListener('paste', onPaste);
     };
-  }, [undo, redo, selectedIds, deleteSelected, addRecord, announce]);
+  }, [undo, redo, selectedIds, deleteSelected, addRecord, announce, editorId, draftIds]);
 
+  // Moving only moves. Cluster membership changes when the user drops a note in or out (assignCluster).
   const moveNodes = useCallback((positions: Record<string, Coordinates>) => {
     updateGraph(current => {
       let next = current;
-      const allGroups = Object.values(next.nodesById).filter(n => n.type === 'group' || n.type === 'section');
-
       for (const [id, point] of Object.entries(positions)) {
-        const node = next.nodesById[id];
-        if (!node) continue;
-
-        const updates: Partial<CanvasNode> = { ...point };
-
-        // If not a cluster itself, check if dragged inside or outside any cluster
-        if (node.type !== 'group' && node.type !== 'section') {
-          const nodeWidth = node.width || 280;
-          const nodeHeight = node.height || 150;
-          const centerX = point.x + nodeWidth / 2;
-          const centerY = point.y + nodeHeight / 2;
-
-          let targetGroupId: string | undefined = undefined;
-          for (const g of allGroups) {
-            const gw = Math.max(340, g.width || 560);
-            const gh = Math.max(240, g.height || 360);
-            if (centerX >= g.x && centerX <= g.x + gw && centerY >= g.y && centerY <= g.y + gh) {
-              targetGroupId = g.id;
-              break;
-            }
-          }
-
-          if (targetGroupId && node.sectionId !== targetGroupId) {
-            updates.sectionId = targetGroupId;
-          } else if (!targetGroupId && node.sectionId) {
-            const currentGroup = next.nodesById[node.sectionId];
-            if (currentGroup) {
-              const gw = Math.max(340, currentGroup.width || 560);
-              const gh = Math.max(240, currentGroup.height || 360);
-              if (centerX < currentGroup.x - 70 || centerX > currentGroup.x + gw + 70 ||
-                centerY < currentGroup.y - 70 || centerY > currentGroup.y + gh + 70) {
-                updates.sectionId = undefined;
-              }
-            }
-          }
-        }
-
-        next = updateNode(next, id, updates);
+        if (next.nodesById[id]) next = updateNode(next, id, point);
       }
       return next;
     }, false);
   }, [updateGraph]);
+
+  const assignCluster = useCallback((ids: string[], clusterId: string | null) => {
+    const current = graphRef.current;
+    const cluster = clusterId ? current.nodesById[clusterId] : undefined;
+    const leftFrom = !clusterId && ids.length ? current.nodesById[ids[0]]?.sectionId : undefined;
+    updateGraph(graph => {
+      let next = graph;
+      for (const id of ids) {
+        if (next.nodesById[id]) next = updateNode(next, id, { sectionId: clusterId ?? undefined });
+      }
+      return next;
+    }, false);
+    const what = ids.length === 1 ? `“${current.nodesById[ids[0]]?.title || 'Note'}”` : plural(ids.length, 'note');
+    if (cluster) announce(`Added ${what} to “${cluster.title}”.`);
+    else if (leftFrom) announce(`Took ${what} out of its cluster.`);
+  }, [updateGraph, announce]);
 
   const resizeGroup = useCallback((id: string, fields: Partial<CanvasNode>) => {
     updateGraph(current => updateNode(current, id, fields), false);
@@ -779,14 +923,9 @@ export default function SynthexWorkspace() {
     return nextGraph;
   }, false);
 
-  const updateSelectedNode = (fields: Partial<CanvasNode>) => {
-    if (!selectedNode) return;
-    updateGraph(current => updateNode(current, selectedNode.id, withAutoTitle(current.nodesById[selectedNode.id], fields)), false);
-  };
-
   const reloadGraph = useCallback(async () => {
     const data = await readJson<{ nodes: CanvasNode[]; relationships: Connection[] }>(await fetch(`/api/graph?projectId=${encodeURIComponent(projectId)}`, { cache: 'no-store' }));
-    setGraph(normalizeGraph(data.nodes, data.relationships));
+    setGraph(normalizeGraph(adoptLegacyClusterMembers(data.nodes), data.relationships));
     setCanvasFitKey(value => value + 1);
   }, [projectId]);
 
@@ -805,12 +944,12 @@ export default function SynthexWorkspace() {
         body: JSON.stringify({ title: projectTitleDraft, template: projectTemplate })
       }));
       setProjects(current => [...current, data.project]);
-      setProjectTitleDraft(''); setModal(null); setProjectId(data.project.id);
+      setProjectTitleDraft(''); setProjectMenuOpen(false); setProjectId(data.project.id);
       if (typeof window !== 'undefined') {
         localStorage.setItem('synthex_active_project_id', data.project.id);
       }
-      announce('Workspace created.');
-    } catch (error) { announce(error instanceof Error ? error.message : 'Could not create workspace.'); }
+      announce('Map created.');
+    } catch (error) { announce(error instanceof Error ? error.message : 'Could not create the map.'); }
     finally { setCreatingProject(false); }
   }
 
@@ -872,12 +1011,12 @@ export default function SynthexWorkspace() {
             const updated = [...current];
             updated[lastIdx] = {
               role: 'assistant',
-              text: `⚠️ **Insufficient Context Credits**\n\n${errBody.message || 'You need additional Context Credits for this research run.'}`,
+              text: `**Not enough credits**\n\n${errBody.message || 'This research run needs more credits.'}`,
               isStreaming: false
             };
             return updated;
           });
-          announce('Insufficient Context Credits. Please top up your balance.');
+          announce('Not enough credits. Top up to keep going.');
           setModal('credits');
           return;
         }
@@ -920,10 +1059,12 @@ export default function SynthexWorkspace() {
                     if (!last.researchProgress) return current;
                     const updated = [...current];
                     const steps = [...last.researchProgress.steps];
-                    const runningIdx = steps.findIndex(s => s.status === 'running');
-                    if (runningIdx !== -1 && runningIdx < steps.length - 1) {
-                      steps[runningIdx] = { ...steps[runningIdx], status: 'done' };
-                      steps[runningIdx + 1] = { ...steps[runningIdx + 1], status: 'running' };
+                    // Steps carrying a stepId move the checklist; other steps only update the status line.
+                    const targetIdx = steps.findIndex(s => s.id === eventData.stepId);
+                    if (targetIdx === -1) return current;
+                    for (let k = 0; k < steps.length; k++) {
+                      if (k < targetIdx) steps[k] = { ...steps[k], status: 'done' };
+                      else if (k === targetIdx) steps[k] = { ...steps[k], status: 'running' };
                     }
                     updated[lastIdx] = {
                       ...last,
@@ -1060,21 +1201,13 @@ export default function SynthexWorkspace() {
     }
   }, [projectId, aiStatus, reloadHistory, announce]);
 
-  async function sendQuestion(event: FormEvent) {
-    event.preventDefault();
-    const question = chatInput.trim();
+  async function sendQuestion(text: string) {
+    const question = text.trim();
     if (!question || chatBusy) return;
+    if (!aiConfigured) { announce('AI is not set up on this server yet. Add OPENAI_API_KEY or GEMINI_API_KEY to ask about your map.'); return; }
 
-    if (activeResearchIntent) {
-      const mode = activeResearchIntent.mode;
-      setActiveResearchIntent(null);
-      setChatInput('');
-      setChatLines(current => [...current, { role: 'user', text: question }]);
-      await executeStreamingResearch(question, mode);
-      return;
-    }
-
-    setChatInput('');
+    setRightDrawerOpen(true);
+    setComposerText('');
     setChatLines(current => [...current, { role: 'user', text: question }]);
     setChatBusy(true);
     setThinkingStep('Retrieving knowledge graph context & semantic paths...');
@@ -1097,7 +1230,7 @@ export default function SynthexWorkspace() {
           'Content-Type': 'application/json',
           'Accept': 'text/event-stream'
         },
-        body: JSON.stringify({ projectId, question, selectedNodeId: selectedNode?.id, stream: true })
+        body: JSON.stringify({ projectId, question, selectedNodeId: selectedNode?.id, threadId: chatThreadId, stream: true })
       });
 
       if (!response.ok) {
@@ -1110,7 +1243,7 @@ export default function SynthexWorkspace() {
             const updated = [...current];
             updated[lastIdx] = {
               role: 'assistant',
-              text: `⚠️ **Insufficient Context Credits**\n\n${errorData.message || 'You need at least 1 Context Credit to ask the assistant.'}`,
+              text: `**Not enough credits**\n\n${errorData.message || 'Asking a question takes 1 credit.'}`,
               isStreaming: false
             };
             return updated;
@@ -1168,7 +1301,9 @@ export default function SynthexWorkspace() {
               i++;
               try {
                 const eventData = JSON.parse(nextLine.slice(5).trim());
-                if (eventType === 'thinking' || eventType === 'status') {
+                if (eventType === 'thread' && typeof eventData.threadId === 'string') {
+                  setChatThreadId(eventData.threadId);
+                } else if (eventType === 'thinking' || eventType === 'status') {
                   setThinkingStep(eventData.step || eventData.status || null);
                 } else if (eventType === 'delta' && eventData.text) {
                   setThinkingStep(null);
@@ -1259,14 +1394,15 @@ export default function SynthexWorkspace() {
     await executeStreamingResearch(query, mode);
   }, [executeStreamingResearch]);
 
-  const buildMap = useCallback((query: string) => {
+  const buildMap = useCallback((query: string, mode: 'quick' | 'deep' = 'quick') => {
     const trimmed = query.trim().slice(0, 500);
     if (!trimmed || researching) return;
     if (!aiConfigured) { announce('AI is not set up on this server yet. Add OPENAI_API_KEY or GEMINI_API_KEY to build maps.'); return; }
     setComposerText('');
+    setComposerTool(null);
     setSection('canvas');
-    void handleExecuteResearch(trimmed, composerMode);
-  }, [researching, aiConfigured, announce, handleExecuteResearch, composerMode]);
+    void handleExecuteResearch(trimmed, mode);
+  }, [researching, aiConfigured, announce, handleExecuteResearch]);
 
   const handleApplyLayout = useCallback((positions: Array<{ id: string; x: number; y: number }>) => {
     updateGraph(current => {
@@ -1337,15 +1473,57 @@ export default function SynthexWorkspace() {
     announce(`Added ${proposedNodes.length} cards and ${proposedEdges.length} connections to graph.`);
   }, [updateGraph, announce]);
 
+  /** Turns an assistant answer into a note linked to the ideas it cites. The user's click is the review. */
+  const saveAnswerToMap = useCallback((index: number) => {
+    const line = chatLines[index];
+    if (!line || line.role !== 'assistant' || line.savedToMap || !line.text.trim()) return;
+    const question = chatLines[index - 1]?.role === 'user' ? chatLines[index - 1].text : '';
+    const title = (question || line.text.split('\n').find(row => row.trim()) || 'AI answer').replace(/^#+\s*/, '').trim().slice(0, 120);
+    const noteId = `node-${newId()}`;
+    updateGraph(current => {
+      const cited = (line.referencedNodeIds ?? []).filter(id => current.nodesById[id]);
+      const anchor = cited.length ? current.nodesById[cited[0]] : null;
+      const maxX = Math.max(100, ...Object.values(current.nodesById).map(n => n.x + (n.width || 280)));
+      const minY = Math.min(120, ...Object.values(current.nodesById).map(n => n.y));
+      let next = addNode(current, {
+        id: noteId,
+        type: 'note',
+        title,
+        content: line.text,
+        x: anchor ? anchor.x + (anchor.width || 280) + 80 : maxX + 100,
+        y: anchor ? anchor.y : minY,
+        width: 320,
+        createdAt: Date.now(),
+        metadata: { origin: 'ai', rationale: 'Saved from Ask AI' }
+      });
+      for (const citedId of cited) {
+        next = addRelationship(next, {
+          id: `edge-${newId()}`,
+          from: noteId,
+          to: citedId,
+          label: 'references',
+          lineStyle: 'curved',
+          arrowhead: 'end',
+          strokePattern: strokeForLabel('references'),
+          color: 'neutral',
+          animated: false
+        });
+      }
+      return next;
+    });
+    setChatLines(current => current.map((item, i) => (i === index ? { ...item, savedToMap: true } : item)));
+    announce(line.referencedNodeIds?.length
+      ? `Saved the answer as a note linked to ${plural(line.referencedNodeIds.length, 'idea')}.`
+      : 'Saved the answer as a note.');
+  }, [chatLines, updateGraph, announce]);
+
   const handleConnectSuggestedNodes = useCallback((fromId: string, toId: string, label?: string) => {
     connectNodes(fromId, toId, label);
   }, [connectNodes]);
 
   const executeToolDirectly = useCallback(async (toolType: 'deep_research' | 'quick_research' | 'recommend_improvements') => {
-    setShowToolsMenu(false);
-
     if (toolType === 'recommend_improvements') {
-      setThinkingStep('Auditing graph topology and epistemic links...');
+      setThinkingStep('Checking your map…');
       setChatBusy(true);
 
       setTimeout(() => {
@@ -1356,12 +1534,12 @@ export default function SynthexWorkspace() {
         const totalNodes = Object.keys(graphRef.current.nodesById).length;
         const totalEdges = Object.keys(graphRef.current.edgesById).length;
 
-        const text = `### Knowledge Graph Topology & Epistemic Audit\n` +
-          `Audited **${totalNodes}** records and **${totalEdges}** relationships across this workspace.\n\n` +
-          `- **${audit.unverifiedClaims.length}** unverified assertions requiring source citation.\n` +
-          `- **${audit.isolatedNodes.length}** detached records without relational links.\n` +
-          `- **${audit.openQuestions.length}** open research questions.\n` +
-          `- **${audit.suggestedConnections.length}** thematic candidate links detected.`;
+        const text = `### Map check\n` +
+          `Looked at **${totalNodes}** ideas and **${totalEdges}** relations on this map.\n\n` +
+          `- **${audit.unverifiedClaims.length}** claims without a source yet.\n` +
+          `- **${audit.isolatedNodes.length}** ideas not linked to anything.\n` +
+          `- **${audit.openQuestions.length}** open questions.\n` +
+          `- **${audit.suggestedConnections.length}** possible links worth a look.`;
 
         setChatLines(current => [
           ...current,
@@ -1376,16 +1554,16 @@ export default function SynthexWorkspace() {
             }
           }
         ]);
-        announce('Graph audit complete. Review recommendations below.');
+        announce('Map check done. Suggestions are in Ask AI.');
       }, 350);
       return;
     }
 
     if (toolType === 'deep_research' || toolType === 'quick_research') {
       const mode = toolType === 'deep_research' ? 'deep' : 'quick';
-      setActiveResearchIntent({ mode });
+      setComposerTool(mode);
       setTimeout(() => {
-        chatInputRef.current?.focus();
+        composerRef.current?.focus();
       }, 50);
       announce(`Entered ${mode === 'deep' ? 'Deep' : 'Quick'} Research mode. Type your question in the chat input to begin.`);
       return;
@@ -1400,7 +1578,12 @@ export default function SynthexWorkspace() {
       }));
       // Only refresh the review dialog if it is open; "Keep all" from the draft bar must not pop it open.
       setActiveSession(current => current ? data.session : null); setReviewDecisions({});
+      // Kept drafts turn ink with a 1px press (.is-kept in typeset.css); the class lives 400ms past the reload.
+      const acceptedIds = new Set(decisions.filter(decision => decision.status === 'accepted').map(decision => decision.changeId));
+      const keptNodeIds = session.changes.filter(change => change.kind === 'node' && acceptedIds.has(change.id)).map(change => (change.payload as CanvasNode).id);
+      setKeptIds(keptNodeIds);
       await Promise.all([reloadHistory(), reloadGraph()]);
+      if (keptNodeIds.length) setTimeout(() => setKeptIds([]), 400);
       fetch('/api/revisions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1427,7 +1610,7 @@ export default function SynthexWorkspace() {
     reader.onload = () => {
       try {
         const parsed = JSON.parse(String(reader.result));
-        const imported = normalizeGraph(parsed.nodes, parsed.relationships || parsed.connections || []);
+        const imported = normalizeGraph(adoptLegacyClusterMembers(parsed.nodes), parsed.relationships || parsed.connections || []);
         fetch('/api/backup', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -1565,12 +1748,57 @@ export default function SynthexWorkspace() {
   function openSession(session: ResearchSession) { setActiveSession(session); setReviewDecisions({}); }
   function closeSession() { setActiveSession(null); setReviewDecisions({}); }
 
+  const hasMapNodes = Object.keys(displayGraph.nodesById).length > 0;
+  const selectedTitle = selectedNode?.title;
+  const hasChat = chatLines.length > 0;
+  const credits = (amount: number) => plural(amount, 'credit');
+
+  // Tools behind the paperclip (or `/`). A plain message asks about the map; research only runs when picked.
+  const composerTools = useMemo<ComposerTool[]>(() => [
+    { id: 'quick', command: 'quick', label: 'Quick research', hint: 'Search the web and draft cards to review', cost: credits(CREDIT_RATES.quick_research), sticky: true },
+    { id: 'deep', command: 'deep', label: 'Deep research', hint: 'Several rounds of search, more sources', cost: credits(CREDIT_RATES.deep_research), sticky: true },
+    ...(selectedTitle ? [
+      { id: 'expand', command: 'expand', label: 'Expand this idea', hint: 'Sub-ideas, mechanisms and examples', cost: credits(CREDIT_RATES.quick_research) },
+      { id: 'sources', command: 'sources', label: 'Find sources', hint: 'Sources that support or dispute it', cost: credits(CREDIT_RATES.quick_research) },
+      { id: 'challenge', command: 'challenge', label: 'Challenge it', hint: 'Evidence and arguments against it', cost: credits(CREDIT_RATES.quick_research) }
+    ] : []),
+    { id: 'note', command: 'note', label: 'Write a note', hint: 'Pin what you typed as a note, no AI', cost: 'Free' },
+    ...(hasMapNodes ? [
+      { id: 'audit', command: 'audit', label: 'Audit my map', hint: 'Gaps, loose ideas and unverified claims', cost: 'Free' },
+      { id: 'tidy', command: 'tidy', label: 'Tidy the layout', hint: 'Group cards by type. Undo with Ctrl+Z', cost: 'Free' }
+    ] : []),
+    ...(hasChat ? [
+      { id: 'chat', command: 'chat', label: 'Show the chat', hint: 'Open the conversation so far', cost: 'Free' },
+      { id: 'new', command: 'new', label: 'New chat', hint: 'Start over with an empty conversation', cost: 'Free' }
+    ] : [])
+  ], [selectedTitle, hasMapNodes, hasChat]);
+
+  function submitComposer(text: string, toolId: string | null) {
+    if (toolId === 'quick' || toolId === 'deep') {
+      buildMap(selectedTitle ? `${text} (about "${selectedTitle}")` : text, toolId);
+      return;
+    }
+    void sendQuestion(text);
+  }
+
+  function runComposerTool(toolId: string, text: string) {
+    const focus = text ? ` Focus on: ${text}` : '';
+    if (toolId === 'expand' && selectedTitle) buildMap(`Expand on "${selectedTitle}": the key sub-ideas, mechanisms and examples.${focus}`);
+    else if (toolId === 'sources' && selectedTitle) buildMap(`Find authoritative sources that support or dispute: "${selectedTitle}".${focus}`);
+    else if (toolId === 'challenge' && selectedTitle) buildMap(`What evidence or arguments challenge "${selectedTitle}"?${focus}`);
+    else if (toolId === 'note') { setComposerText(''); addRecord('note', text ? { content: text } : undefined); }
+    else if (toolId === 'audit') { setRightDrawerOpen(true); void executeToolDirectly('recommend_improvements'); }
+    else if (toolId === 'tidy') handleApplyLayout(computeOrganizedLayout(graphRef.current, 'cluster_by_type'));
+    else if (toolId === 'chat') setRightDrawerOpen(true);
+    else if (toolId === 'new') { startNewChat(); setRightDrawerOpen(true); }
+  }
+
   const liveProgress = researching ? chatLines[chatLines.length - 1]?.researchProgress : undefined;
   const composerStatus = (
     <div className="composer-status" role="status">
       <div>
         <strong>{thinkingStep || 'Reading your question…'}</strong>
-        <small>{plural(liveProgress?.sources.length ?? 0, 'source')} found · {composerMode === 'deep' ? 'Deep research' : 'Quick map'} · nothing joins your map until you keep it</small>
+        <small>{plural(liveProgress?.sources.length ?? 0, 'source')} found · {liveProgress?.mode === 'deep' ? 'Deep research' : 'Quick map'} · nothing joins your map until you keep it</small>
       </div>
       <button type="button" className="line-button" onClick={() => researchAbort.current?.abort()}><Square size={12} fill="currentColor" /> Stop</button>
     </div>
@@ -1584,13 +1812,13 @@ export default function SynthexWorkspace() {
           onSelectTool={value => { setTool(value); setLinkingFromId(null); }}
           onFit={() => setCanvasFitKey(value => value + 1)}
           onAddRecord={addRecord}
-          isResizeLocked={isResizeLocked}
-          onToggleResizeLock={toggleResizeLock}
+          sketchStyle={sketchStyle}
+          onSketchStyleChange={saveSketchStyle}
           onOrganizeLayout={strategy => {
             const positions = computeOrganizedLayout(graphRef.current, strategy);
             handleApplyLayout(positions);
-            const strategyName = strategy === 'cluster_by_type' ? 'Semantic Categories' : strategy === 'hierarchical' ? 'Hierarchical DAG' : 'Compact Grid';
-            announce(`Applied ${strategyName} layout across ${positions.length} cards.`);
+            const strategyName = strategy === 'cluster_by_type' ? 'Grouped by type' : strategy === 'hierarchical' ? 'Top-down layout' : 'Compact grid';
+            announce(`${strategyName}: moved ${plural(positions.length, 'note')}. Undo with Ctrl+Z.`);
           }}
         />
       )}
@@ -1601,14 +1829,11 @@ export default function SynthexWorkspace() {
           <div className="topbar-left">
             <button
               className={`topbar-home-button ${section === 'canvas' ? 'is-active' : ''}`}
-              title="Synthex Studio — Knowledge Canvas"
-              aria-label="Synthex Studio — Knowledge Canvas"
+              title="Back to the map"
+              aria-label="Synthex, back to the map"
               onClick={() => navigateTo('canvas')}
             >
-              <span className="home-brand-icon">
-                <SynthexLogo size={20} />
-              </span>
-              <span className="home-brand-text">Synthex</span>
+              <SynthexLogo size={18} />
             </button>
 
             <span className="topbar-slash" aria-hidden="true">/</span>
@@ -1617,44 +1842,64 @@ export default function SynthexWorkspace() {
             <div className="menu-anchor topbar-project-anchor" ref={projectMenuRef}>
               <button
                 className="topbar-project-trigger"
-                aria-label="Switch project"
+                aria-label={`Map: ${project?.title || 'Untitled map'}. Switch or create a map`}
                 aria-expanded={projectMenuOpen}
                 onClick={() => { setProjectMenuOpen(v => !v); setNavMenuOpen(false); setExportMenu(false); }}
               >
-                <FolderKanban size={13} className="project-icon" />
-                <span className="project-title">{project?.title || 'Research space'}</span>
-                <ChevronDown size={11} className="project-arrow" />
+                <span className="project-title">{project?.title || 'Untitled map'}</span>
+                <ChevronDown size={16} strokeWidth={1.75} className="project-arrow" />
               </button>
               {projectMenuOpen && (
-                <div className="menu-popover topbar-project-menu" role="menu">
-                  <div className="popover-heading">Research Projects</div>
-                  {projects.map(p => (
-                    <button
-                      key={p.id}
-                      className={`project-menu-item ${p.id === projectId ? 'is-active' : ''}`}
-                      onClick={() => {
-                        setProjectId(p.id);
-                        if (typeof window !== 'undefined') {
-                          localStorage.setItem('synthex_active_project_id', p.id);
-                        }
-                        setProjectMenuOpen(false);
-                      }}
-                    >
-                      <FolderKanban size={14} />
-                      <div className="project-item-text">
-                        <strong>{p.title}</strong>
+                <div className="menu-popover topbar-project-menu map-menu">
+                  <p className="map-menu-title">{workspaceKind === 'team' ? 'Team maps' : 'Your maps'}</p>
+                  <div className="map-menu-list" role="menu" aria-label={workspaceKind === 'team' ? 'Team maps' : 'Your maps'}>
+                    {projects.map(p => (
+                      <div key={p.id} className="map-menu-row">
+                        <button
+                          role="menuitemradio"
+                          aria-checked={p.id === projectId}
+                          className={p.id === projectId ? 'is-active' : ''}
+                          onClick={() => {
+                            setProjectId(p.id);
+                            if (typeof window !== 'undefined') {
+                              localStorage.setItem('synthex_active_project_id', p.id);
+                            }
+                            setProjectMenuOpen(false);
+                          }}
+                        >
+                          <strong>{p.title}</strong>
+                          {p.id === projectId && <Check size={16} strokeWidth={1.75} />}
+                        </button>
+                        {workspaceKind === 'team' && p.isOwner && (
+                          <button type="button" className="text-button map-menu-move" title="Only you will see it again; teammates lose access" onClick={() => void moveProject(p.id, 'personal')}>Make personal</button>
+                        )}
                       </div>
-                      {p.id === projectId && <Check size={14} className="project-check" />}
-                    </button>
-                  ))}
-                  <div className="menu-separator" />
-                  <button
-                    className="project-menu-item new-project-item"
-                    onClick={() => { setModal('project'); setProjectMenuOpen(false); }}
-                  >
-                    <Plus size={14} />
-                    <span>Create new project</span>
-                  </button>
+                    ))}
+                  </div>
+                  {workspaceKind === 'team' && personalProjects.length > 0 && (
+                    <div className="map-menu-personal">
+                      <p className="map-menu-title">Your personal maps</p>
+                      <p className="note-meta">Move one into the team so everyone here can open and edit it.</p>
+                      <ul>
+                        {personalProjects.map(p => (
+                          <li key={p.id}>
+                            <span>{p.title}</span>
+                            <button type="button" className="line-button" onClick={() => void moveProject(p.id, 'team')}>Move to team</button>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  <form className="map-menu-new" onSubmit={createProject}>
+                    <p className="map-menu-title">New map</p>
+                    <label className="field-label" htmlFor="project-name">Name</label>
+                    <input className="field-input" id="project-name" value={projectTitleDraft} onChange={event => setProjectTitleDraft(event.target.value)} maxLength={80} minLength={2} placeholder="e.g. Small language models" required />
+                    <div className="layout-switch map-menu-starter" role="group" aria-label="Start with">
+                      <button type="button" aria-pressed={projectTemplate === 'blank'} onClick={() => setProjectTemplate('blank')}>Empty map</button>
+                      <button type="button" aria-pressed={projectTemplate === 'rag'} onClick={() => setProjectTemplate('rag')}>Guided example</button>
+                    </div>
+                    <button type="submit" className="ink-button" disabled={creatingProject || projectTitleDraft.trim().length < 2}>{creatingProject ? 'Creating…' : 'Create map'}</button>
+                  </form>
                 </div>
               )}
             </div>
@@ -1681,23 +1926,43 @@ export default function SynthexWorkspace() {
                       <small>{hint}</small>
                     </button>
                   ))}
+                  <div className="menu-separator" />
+                  {sketch.length > 0 && (
+                    <button type="button" role="menuitem" onClick={() => { saveSketch(() => []); setNavMenuOpen(false); announce('Drawings cleared.'); }}>
+                      <strong>Clear drawings</strong>
+                      <small>Removes pen and marker marks from this map</small>
+                    </button>
+                  )}
+                  <button type="button" role="menuitemcheckbox" aria-checked={isResizeLocked} onClick={() => { toggleResizeLock(); setNavMenuOpen(false); }}>
+                    <strong>{isResizeLocked ? 'Unlock note sizes' : 'Lock note sizes'}</strong>
+                    <small>{isResizeLocked ? 'Notes can be resized again' : 'Stop notes being resized by accident'}</small>
+                  </button>
                 </div>
               )}
             </div>
           </div>
 
           <div className="topbar-actions">
-            <button type="button" className="icon-button" aria-label="Search the map" title="Search (Ctrl+K)" onClick={() => setModal('search')}><Search size={18} /></button>
-            <button type="button" className="icon-button" title="Undo (Ctrl+Z)" aria-label="Undo" disabled={!undoReady} onClick={undo}><Undo2 size={18} /></button>
-            <button type="button" className="icon-button" title="Redo (Ctrl+Y)" aria-label="Redo" disabled={!redoReady} onClick={redo}><Redo2 size={18} /></button>
-            <button
-              type="button"
-              className={`text-button ask-button ${rightDrawerOpen && drawerTab === 'chat' ? 'is-active' : ''}`}
-              title="Ask questions about this map"
-              onClick={() => { if (rightDrawerOpen && drawerTab === 'chat') setRightDrawerOpen(false); else { setDrawerTab('chat'); setRightDrawerOpen(true); } }}
-            >
-              Ask AI
-            </button>
+            {/* Phones: one "…" menu holds search, undo/redo, Share and the other views */}
+            <div className="menu-anchor topbar-overflow" ref={overflowMenuRef}>
+              <button type="button" className="icon-button" aria-label="More actions" aria-expanded={overflowMenuOpen} onClick={() => { setOverflowMenuOpen(v => !v); setNavMenuOpen(false); setProjectMenuOpen(false); setExportMenu(false); }}><MoreHorizontal size={20} strokeWidth={1.75} /></button>
+              {overflowMenuOpen && (
+                <div className="menu-popover views-menu overflow-menu" role="menu" aria-label="More actions">
+                  <button type="button" role="menuitem" onClick={() => { setOverflowMenuOpen(false); setModal('search'); }}><strong>Search</strong></button>
+                  <button type="button" role="menuitem" disabled={!undoReady} onClick={() => { undo(); setOverflowMenuOpen(false); }}><strong>Undo</strong></button>
+                  <button type="button" role="menuitem" disabled={!redoReady} onClick={() => { redo(); setOverflowMenuOpen(false); }}><strong>Redo</strong></button>
+                  <button type="button" role="menuitem" onClick={() => { setOverflowMenuOpen(false); setExportMenu(true); }}><strong>Share</strong></button>
+                  <button type="button" role="menuitem" onClick={() => { setOverflowMenuOpen(false); setModal('credits'); }}><strong>Credits</strong></button>
+                  <div className="menu-separator" />
+                  {MORE_VIEWS.map(([key, label]) => (
+                    <button key={key} type="button" role="menuitem" className={section === key ? 'is-active' : ''} onClick={() => { navigateTo(key); setOverflowMenuOpen(false); }}><strong>{label}</strong></button>
+                  ))}
+                </div>
+              )}
+            </div>
+            <button type="button" className="icon-button" aria-label="Search the map" title="Search (Ctrl+K)" onClick={() => setModal('search')}><Search size={18} strokeWidth={1.75} /></button>
+            <button type="button" className="icon-button" title="Undo (Ctrl+Z)" aria-label="Undo" disabled={!undoReady} onClick={undo}><Undo2 size={18} strokeWidth={1.75} /></button>
+            <button type="button" className="icon-button" title="Redo (Ctrl+Y)" aria-label="Redo" disabled={!redoReady} onClick={redo}><Redo2 size={18} strokeWidth={1.75} /></button>
             <div className="menu-anchor" ref={exportMenuRef}>
               <button type="button" className="ink-button share-button" aria-expanded={exportMenu} onClick={() => { setExportMenu(v => !v); setNavMenuOpen(false); setProjectMenuOpen(false); }}>
                 <Share size={17} /><span>Share</span>
@@ -1727,37 +1992,12 @@ export default function SynthexWorkspace() {
                 </div>
               )}
             </div>
-            <UserNav contextCredits={userAuth?.contextCredits} subscriptionTier={userAuth?.subscriptionTier} onOpenCreditsModal={() => setModal('credits')} />
+            <PresenceBar status={collab.status} peers={collab.peers} self={collab.self} onJumpTo={jumpToPeer} titleOf={id => graph.nodesById[id]?.title} />
+            <UserNav contextCredits={userAuth?.contextCredits} subscriptionTier={userAuth?.subscriptionTier} onOpenCreditsModal={() => setModal('credits')} onWorkspaceChange={() => void loadProjects()} />
           </div>
           <input ref={fileRef} type="file" accept="application/json,.json" hidden onChange={handleImport} />
           <input ref={bibRef} type="file" accept=".bib,.txt" hidden onChange={handleBibImport} />
         </header>
-
-        {section !== 'canvas' && (
-          <section className="page-heading">
-            <div className="heading-copy">
-              <span className="heading-icon">
-                {section === 'table' ? <Files size={17} /> : section === 'history' ? <FileClock size={17} /> : section === 'revisions' ? <History size={17} /> : section === 'evidence' ? <Shapes size={17} /> : section === 'sources' ? <FolderKanban size={17} /> : section === 'questions' ? <CircleHelp size={17} /> : <BookOpenText size={17} />}
-              </span>
-              <div>
-                <h1>{section === 'table' ? 'Claims & questions' : section === 'history' ? 'Research history' : section === 'revisions' ? 'Persistent revisions & time-travel' : section === 'evidence' ? 'Evidence paths' : section === 'sources' ? 'Sources' : section === 'questions' ? 'Open questions' : 'Outline'}</h1>
-                <p>{plural(nodes.length, 'record')} <span>·</span> {plural(edges.length, 'relationship')} <span>·</span> {plural(nodes.filter(node => node.type === 'source' || node.type === 'link').length, 'source')}</p>
-              </div>
-            </div>
-            <div className="heading-actions">
-              <button
-                className={`quiet-button assistant-trigger ${rightDrawerOpen && drawerTab === 'chat' ? 'is-active' : ''}`}
-                aria-expanded={rightDrawerOpen && drawerTab === 'chat'}
-                onClick={() => {
-                  if (rightDrawerOpen && drawerTab === 'chat') setRightDrawerOpen(false);
-                  else { setDrawerTab('chat'); setRightDrawerOpen(true); }
-                }}
-              >
-                <MessageCircle size={15} /> Ask this graph
-              </button>
-            </div>
-          </section>
-        )}
 
         <section className={`workspace-stage ${section === 'canvas' ? 'stage-canvas' : 'stage-view'}`}>
           {section === 'canvas' ? <>
@@ -1767,32 +2007,27 @@ export default function SynthexWorkspace() {
                   <div className="map-start-inner">
                     <h1>What are you trying to figure&nbsp;out?</h1>
                     <p className="map-start-lede">Ask a question, dump your thoughts, or paste notes. Synthex pins it onto a map you can reshape, then share anywhere.</p>
-                    <form className="composer" onSubmit={event => { event.preventDefault(); buildMap(composerText); }}>
-                      {researching ? composerStatus : <>
-                        <label htmlFor="map-question" className="sr-only">Your question or notes</label>
-                        <textarea
-                          id="map-question"
-                          ref={element => { composerRef.current = element; }}
-                          value={composerText}
-                          onChange={event => setComposerText(event.target.value)}
-                          onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); buildMap(composerText); } }}
-                          maxLength={500}
-                          placeholder="How does sleep affect memory? What do we actually know, and what is still debated?"
-                          autoFocus
-                        />
-                        <div className="composer-row">
-                          <div><button type="button" className="line-button" onClick={() => addRecord('note')}><Plus size={16} /> Write a note instead</button></div>
-                          <div>
-                            <label htmlFor="map-depth" className="sr-only">Depth</label>
-                            <select id="map-depth" value={composerMode} onChange={event => setComposerMode(event.target.value as 'quick' | 'deep')}>
-                              <option value="quick">Quick map</option>
-                              <option value="deep">Deep research</option>
-                            </select>
-                            <button type="submit" className="ink-button" disabled={!composerText.trim()}>Build map <ArrowRight size={18} /></button>
-                          </div>
-                        </div>
-                      </>}
-                    </form>
+                    {researching ? <div className="composer">{composerStatus}</div> : (
+                      <ToolComposer
+                        inputId="map-question"
+                        inputLabel="Your question or notes"
+                        size="large"
+                        menuPlacement="below"
+                        value={composerText}
+                        onValueChange={setComposerText}
+                        onSubmit={submitComposer}
+                        tools={composerTools}
+                        activeToolId={startTool}
+                        onActiveToolChange={setStartTool}
+                        onRunTool={runComposerTool}
+                        inputRef={element => { composerRef.current = element; }}
+                        maxLength={500}
+                        placeholder="How does sleep affect memory? Type / for tools"
+                        busy={chatBusy}
+                        sendLabel="Build map"
+                        autoFocus
+                      />
+                    )}
                     {!aiConfigured && <p className="composer-note">AI is not set up on this server yet, so maps can only be built by hand. Add OPENAI_API_KEY or GEMINI_API_KEY to enable it.</p>}
                     <div className="map-starters">
                       {STARTERS.map(starter => (
@@ -1804,22 +2039,25 @@ export default function SynthexWorkspace() {
                     </div>
                   </div>
                 </div> : <GraphCanvas
-                  graph={displayGraph} draftIds={draftIds} detachingIds={detachingIds} selectedNodeIds={selectedIds} viewport={viewport} setViewport={setViewport} activeTool={tool} spacePressed={spacePressed}
+                  graph={displayGraph} draftIds={draftIds} detachingIds={detachingIds} keptIds={keptIds} sketch={sketch} sketchStyle={sketchStyle} onSketchChange={saveSketch} selectedNodeIds={selectedIds} viewport={viewport} setViewport={setViewport} activeTool={tool} spacePressed={spacePressed}
                   linkingFromId={linkingFromId} autoFitKey={canvasFitKey} editingNoteId={editingNoteId}
                   onSelectNode={(id, additive) => {
                     setSelectedIds(current => additive ? current.includes(id) ? current.filter(value => value !== id) : [...current, id] : [id]);
-                    setDrawerTab('inspector');
-                    setRightDrawerOpen(true);
                   }}
+                  onOpenEditor={setEditorId}
+                  placingIds={placingIds}
+                  onPlaced={markPlaced}
                   onSelectMultipleNodes={selectMultipleNodes}
                   onDeleteNodes={deleteNodes}
-                  onClearSelection={() => setSelectedIds([])} onClickAway={() => setEditingNoteId(null)} onCancelLinking={() => setLinkingFromId(null)} onMoveNodes={moveNodes} onConnect={connectNodes}
+                  onClearSelection={() => setSelectedIds([])} onClickAway={() => setEditingNoteId(null)} onCancelLinking={() => setLinkingFromId(null)} onMoveNodes={moveNodes} onAssignCluster={assignCluster} onConnect={connectNodes}
                   onStartLinking={setLinkingFromId} onToggleGroup={toggleGroup} onEditNote={setEditingNoteId}
                   onUpdateNote={(id, content) => updateGraph(current => updateNode(current, id, withAutoTitle(current.nodesById[id], { content })), false)}
                   onUpdateRelationship={editRelationship} onDeleteRelationship={deleteRelationship} onResizeGroup={resizeGroup} onOpenGroup={id => { setEditingNoteId(null); setGroupCanvasId(id); }}
                   onAddRecordWithData={addRecord}
                   projectId={projectId}
                   isResizeLocked={isResizeLocked}
+                  presence={collab.peers}
+                  onPointerWorld={collab.status === 'off' ? undefined : collab.setCursor}
                 />}
 
                 {!loading && Object.keys(displayGraph.nodesById).length > 0 && (
@@ -1844,32 +2082,25 @@ export default function SynthexWorkspace() {
                 )}
 
                 {!loading && Object.keys(displayGraph.nodesById).length > 0 && (
-                  <form className="composer dock-composer" onSubmit={event => { event.preventDefault(); buildMap(selectedNode ? `${composerText.trim()} (about "${selectedNode.title}")` : composerText); }}>
-                    {researching ? composerStatus : <>
-                      {selectedNode && (
-                        <div className="composer-context">
-                          <span className="composer-target" title={selectedNode.title}>On “{selectedNode.title}”</span>
-                          <button type="button" className="line-button" onClick={() => buildMap(`Expand on "${selectedNode.title}": the key sub-ideas, mechanisms and examples.`)}>Expand</button>
-                          <button type="button" className="line-button" onClick={() => buildMap(`Find authoritative sources that support or dispute: "${selectedNode.title}".`)}>Find sources</button>
-                          <button type="button" className="line-button" onClick={() => buildMap(`What evidence or arguments challenge "${selectedNode.title}"?`)}>Challenge it</button>
-                        </div>
-                      )}
-                      <div className="composer-input">
-                        <label htmlFor="dock-question" className="sr-only">Ask to grow the map</label>
-                        <input
-                          id="dock-question"
-                          type="text"
-                          ref={element => { composerRef.current = element; }}
-                          value={composerText}
-                          onChange={event => setComposerText(event.target.value)}
-                          maxLength={400}
-                          placeholder={selectedNode ? 'Ask about this idea' : 'Ask a question to grow the map'}
-                          title="Press N anywhere on the map to write a note by hand"
-                        />
-                        <button type="submit" className="ink-button icon-send" aria-label="Grow the map" disabled={!composerText.trim()}><ArrowRight size={18} /></button>
-                      </div>
-                    </>}
-                  </form>
+                  researching ? <div className="composer dock-composer">{composerStatus}</div> : (
+                    <ToolComposer
+                      className="dock-composer"
+                      inputId="dock-question"
+                      inputLabel="Ask to grow the map"
+                      value={composerText}
+                      onValueChange={setComposerText}
+                      onSubmit={submitComposer}
+                      busy={chatBusy}
+                      tools={composerTools}
+                      activeToolId={composerTool}
+                      onActiveToolChange={setComposerTool}
+                      onRunTool={runComposerTool}
+                      inputRef={element => { composerRef.current = element; }}
+                      maxLength={400}
+                      placeholder={selectedTitle ? `Ask about “${selectedTitle.slice(0, 32)}”, or type /` : 'Ask about your map, or type /'}
+                      sendLabel="Grow the map"
+                    />
+                  )
                 )}
               </div>
 
@@ -1885,170 +2116,52 @@ export default function SynthexWorkspace() {
                 />
               )}
 
-              <aside className={`workspace-drawer ${rightDrawerOpen ? 'is-open' : ''}`} aria-label="Workspace tools and details">
+              <aside className={`workspace-drawer ${rightDrawerOpen ? 'is-open' : ''}`} aria-label="Chat about your map">
                 <div className="drawer-header">
                   <div className="drawer-tabs">
-                    <button
-                      className={`drawer-tab ${drawerTab === 'inspector' ? 'active' : ''}`}
-                      onClick={() => setDrawerTab('inspector')}
-                      title="Inspect and edit properties"
-                    >
-                      <SlidersHorizontal size={13} />
-                      <span>Properties</span>
-                      {selectedIds.length > 0 && <span className="tab-badge">{selectedIds.length}</span>}
-                    </button>
-                    <button
-                      className={`drawer-tab ${drawerTab === 'chat' ? 'active' : ''}`}
-                      onClick={() => setDrawerTab('chat')}
-                      title="Ask AI assistant"
-                    >
-                      <Sparkles size={13} />
-                      <span>Ask AI</span>
-                    </button>
+                    <h2 className="drawer-tab active">Chat</h2>
                   </div>
-                  <button className="icon-button close-drawer-btn" aria-label="Close panel" onClick={() => { setRightDrawerOpen(false); setSelectedIds([]); }}>
+                  <button className="icon-button close-drawer-btn" aria-label="Close chat" onClick={() => setRightDrawerOpen(false)}>
                     <X size={15} />
                   </button>
                 </div>
 
                 <div className="drawer-body">
-                  {drawerTab === 'inspector' ? (
-                    selectedNode ? (
-                      <NodeInspector
-                        hideHeader
-                        floating={false}
-                        node={selectedNode}
-                        relationshipCount={edges.filter(edge => edge.from === selectedNode.id || edge.to === selectedNode.id).length}
-                        onUpdate={updateSelectedNode}
-                        onDelete={() => { deleteSelected(); setRightDrawerOpen(false); }}
-                        onClose={() => { setSelectedIds([]); setRightDrawerOpen(false); }}
-                        projectId={projectId}
-                        allNodes={nodes}
-                      />
-                    ) : selectedIds.length > 1 ? (
-                      <div className="drawer-multi-select">
-                        <div className="multi-select-icon"><Layers2 size={26} /></div>
-                        <h3>{plural(selectedIds.length, 'record')} selected</h3>
-                        <p>Drag any of the selected records to move them together across the canvas.</p>
-
-                        <div className="inspector-color-section" style={{ width: '100%', boxSizing: 'border-box', marginTop: 12 }}>
-                          <div className="inspector-color-head">
-                            <label className="field-label" style={{ margin: 0 }}>Color accent for selection</label>
-                            <button
-                              type="button"
-                              className="color-reset-btn"
-                              onClick={() => {
-                                updateGraph(current => selectedIds.reduce((g, id) => updateNode(g, id, { color: undefined }), current), false);
-                              }}
-                              title="Reset all selected to default color"
-                            >
-                              Reset
-                            </button>
-                          </div>
-                          <div className="inspector-palette-grid">
-                            {ELEMENT_PALETTE.map(hex => (
-                              <button
-                                key={hex}
-                                type="button"
-                                className="palette-swatch"
-                                style={{ backgroundColor: hex }}
-                                onClick={() => {
-                                  updateGraph(current => selectedIds.reduce((g, id) => updateNode(g, id, { color: hex }), current), false);
-                                }}
-                                title={`Set ${hex} for all selected`}
-                              />
-                            ))}
-                          </div>
-                        </div>
-
-                        <button
-                          className="danger-button"
-                          title="Delete selection (Delete / Backspace)"
-                          onClick={() => {
-                            deleteSelected();
-                            setRightDrawerOpen(false);
-                          }}
-                        >
-                          <Trash2 size={14} /> Delete selection
-                        </button>
-                      </div>
-                    ) : (
-                      <div className="drawer-empty-state">
-                        <div className="empty-state-icon"><Layers2 size={24} /></div>
-                        <h3>No record selected</h3>
-                        <p>Click any card, cluster, or connection on the canvas to inspect and edit details.</p>
-                        <div className="empty-quick-actions">
-                          <button className="quiet-button" onClick={() => addRecord('concept')}><Plus size={13} /> Add Concept</button>
-                          <button className="quiet-button" onClick={() => addRecord('claim')}><Plus size={13} /> Add Claim</button>
-                          <button className="quiet-button" onClick={() => setDrawerTab('chat')}><Sparkles size={13} /> Ask AI</button>
-                        </div>
-                      </div>
-                    )
-                  ) : (
                     <div className="drawer-chat-pane">
-                      <div className="chat-intro-card">
-                        <div className="chat-intro-header">
-                          <span className="chat-sparkle-pill"><Sparkles size={12} /> Graph Assistant</span>
-                          {aiStatus?.configured && (
-                            <span className={`chat-model-pill ${aiStatus.usingFallback ? 'fallback' : ''}`} title={`Active: ${aiStatus.activeModel}`}>
-                              <span className="model-dot" />
-                              <span>{aiStatus.activeModel}</span>
-                            </span>
-                          )}
-                        </div>
-                        <p style={{ margin: '4px 0 0', fontSize: '11px', color: '#64748b' }}>
-                          {selectedNode ? `Grounded in graph context · Focused on "${selectedNode.title.slice(0, 28)}"` : 'Grounded in graph context · Strict epistemic provenance'}
+                      <div className="chat-scope chat-scope-row">
+                        <p className="note-meta">
+                          Answers use only what&apos;s on your map{selectedNode ? ` · On "${selectedNode.title.slice(0, 28)}"` : ''}
                         </p>
+                        {chatLines.length > 0 && (
+                          <button type="button" className="text-button" onClick={startNewChat} disabled={chatBusy}>New chat</button>
+                        )}
                       </div>
 
                       {!aiConfigured && (
-                        <div className="configuration-note"><CircleHelp size={14} /> Add <code>OPENAI_API_KEY</code> or <code>GEMINI_API_KEY</code> to enable AI features.</div>
+                        <p className="chat-config-note">Add <code>OPENAI_API_KEY</code> or <code>GEMINI_API_KEY</code> to turn on Ask AI.</p>
                       )}
 
                       <div className="chat-transcript" aria-live="polite">
                         {chatLines.length === 0 && (
                           <div className="chat-welcome">
-                            <span className="chat-avatar-assistant"><Sparkles size={16} /></span>
-                            <strong style={{ fontSize: '13px', marginTop: '10px' }}>
-                              {selectedNode ? `Focused on "${selectedNode.title}"` : 'Synthex Knowledge Assistant'}
-                            </strong>
-                            <p style={{ fontSize: '11px', color: '#64748b', margin: '4px 0 12px' }}>
+                            <h3>{selectedNode ? `Ask about "${selectedNode.title}"` : 'Ask about your map'}</h3>
+                            <p>
                               {selectedNode
-                                ? 'Ask about supporting evidence, counterarguments, or related graph nodes.'
-                                : 'Ask questions about your research graph, or run web-grounded research across authoritative sources.'}
+                                ? 'Ask for evidence, counterarguments or related ideas.'
+                                : 'Ask anything about what’s on your map in the box at the bottom of the board. Type / there for research and other tools.'}
                             </p>
-                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', justifyContent: 'center', maxWidth: '320px', margin: '0 auto' }}>
-                              <button
-                                type="button"
-                                className="quiet-button"
-                                style={{ fontSize: '10.5px', padding: '3px 8px' }}
-                                onClick={() => executeToolDirectly('deep_research')}
-                              >
-                                <Sparkles size={11} style={{ color: '#7c3aed' }} /> Deep Web Research
-                              </button>
-                              <button
-                                type="button"
-                                className="quiet-button"
-                                style={{ fontSize: '10.5px', padding: '3px 8px' }}
-                                onClick={() => executeToolDirectly('quick_research')}
-                              >
-                                <Zap size={11} style={{ color: '#059669' }} /> Quick Research
-                              </button>
-                            </div>
+                            <button type="button" className="line-button" onClick={() => executeToolDirectly('recommend_improvements')}>
+                              Audit my map
+                            </button>
                           </div>
                         )}
 
                         {chatLines.map((line, index) => (
                           line.role === 'user' ? (
-                            <div className="chat-line user" key={`${index}-${line.text.slice(0, 10)}`}>
-                              <div className="chat-bubble-user">{line.text}</div>
-                            </div>
+                            <p className="chat-line user" key={`${index}-${line.text.slice(0, 10)}`}>{line.text}</p>
                           ) : (
                             <div className="chat-line assistant" key={`${index}-${line.text.slice(0, 10)}`}>
-                              <div className="chat-avatar-assistant">
-                                <Sparkles size={14} />
-                              </div>
-                              <div className="chat-bubble-assistant">
+                              <div>
                                 <div className="chat-markdown-body">
                                   <MarkdownView content={line.text} />
                                   {line.isStreaming && !line.researchProgress && <span className="streaming-cursor" />}
@@ -2064,15 +2177,15 @@ export default function SynthexWorkspace() {
                                   />
                                 )}
 
-                                {line.model && !line.isStreaming && !line.researchProgress && (
-                                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '10px', paddingTop: '8px', borderTop: '1px solid #f1f5f9' }}>
-                                    <span style={{ fontSize: '10.5px', color: line.usedFallback ? '#d97706' : '#64748b', fontWeight: 600 }}>
-                                      via {line.model}{line.usedFallback ? ' (fallback)' : ''}
-                                    </span>
+                                {!line.isStreaming && !line.researchProgress && line.text.trim() && (
+                                  <div className="chat-answer-meta">
                                     {line.referencedNodeIds && line.referencedNodeIds.length > 0 && (
-                                      <span style={{ fontSize: '10.5px', color: '#94a3b8' }}>
-                                        · {line.referencedNodeIds.length} {line.referencedNodeIds.length === 1 ? 'record' : 'records'} cited
-                                      </span>
+                                      <p className="note-meta">Cites {plural(line.referencedNodeIds.length, 'idea')}</p>
+                                    )}
+                                    {line.model && (
+                                      <button type="button" className="text-button" onClick={() => saveAnswerToMap(index)} disabled={line.savedToMap}>
+                                        {line.savedToMap ? 'Saved to map' : 'Save to map'}
+                                      </button>
                                     )}
                                   </div>
                                 )}
@@ -2092,164 +2205,14 @@ export default function SynthexWorkspace() {
                         ))}
 
                         {chatBusy && thinkingStep && (
-                          <div className="chat-thinking-card">
-                            <div className="thinking-icon-ring">
-                              <LoaderCircle size={14} className="spin" />
-                            </div>
-                            <span className="thinking-step-text">{thinkingStep}</span>
-                          </div>
+                          <p className="chat-thinking">{thinkingStep}</p>
                         )}
                       </div>
 
-                      {/* Compose bar with Tools Icon Menu */}
-                      <div className="chat-compose-wrapper">
-                        {showToolsMenu && (
-                          <div className="chat-tools-popover" ref={toolsMenuRef}>
-                            <div className="popover-header">
-                              <span>Available Graph Tools</span>
-                              <button
-                                type="button"
-                                className="icon-button"
-                                style={{ width: '20px', height: '20px' }}
-                                onClick={() => setShowToolsMenu(false)}
-                                aria-label="Close tools menu"
-                              >
-                                <X size={12} />
-                              </button>
-                            </div>
-                            <div className="tools-menu-grid">
-                              <button
-                                type="button"
-                                className="tool-menu-item"
-                                onClick={() => executeToolDirectly('deep_research')}
-                              >
-                                <div className="tool-item-icon" style={{ background: '#f5f3ff', color: '#7c3aed' }}>
-                                  <Sparkles size={14} />
-                                </div>
-                                <div className="tool-item-content">
-                                  <span className="tool-item-title">Deep Web Research</span>
-                                  <span className="tool-item-subtitle">Multi-step web search & grounding</span>
-                                </div>
-                              </button>
-
-                              <button
-                                type="button"
-                                className="tool-menu-item"
-                                onClick={() => executeToolDirectly('quick_research')}
-                              >
-                                <div className="tool-item-icon" style={{ background: '#ecfdf5', color: '#059669' }}>
-                                  <Zap size={14} />
-                                </div>
-                                <div className="tool-item-content">
-                                  <span className="tool-item-title">Quick Web Research</span>
-                                  <span className="tool-item-subtitle">Fast search on graph concepts</span>
-                                </div>
-                              </button>
-
-                              <button
-                                type="button"
-                                className="tool-menu-item"
-                                onClick={() => executeToolDirectly('recommend_improvements')}
-                              >
-                                <div className="tool-item-icon" style={{ background: '#fffbeb', color: '#d97706' }}>
-                                  <Compass size={14} />
-                                </div>
-                                <div className="tool-item-content">
-                                  <span className="tool-item-title">Audit &amp; Recommend</span>
-                                  <span className="tool-item-subtitle">Detect unverified claims & missing links</span>
-                                </div>
-                              </button>
-
-                            </div>
-                          </div>
-                        )}
-
-                        {activeResearchIntent && (
-                          <div className="active-research-banner">
-                            <div className="active-research-pill">
-                              {activeResearchIntent.mode === 'deep' ? <Sparkles size={12} /> : <Zap size={12} />}
-                              <span>{activeResearchIntent.mode === 'deep' ? 'Deep Research' : 'Quick Research'}</span>
-                            </div>
-                            <span className="active-research-hint">
-                              {activeResearchIntent.mode === 'deep'
-                                ? 'Type inquiry for multi-hop research…'
-                                : 'Type inquiry for quick grounded research…'}
-                            </span>
-                            <button
-                              type="button"
-                              className="active-research-cancel"
-                              onClick={() => setActiveResearchIntent(null)}
-                              title="Cancel research mode"
-                              aria-label="Cancel research mode"
-                            >
-                              <X size={12} />
-                            </button>
-                          </div>
-                        )}
-
-                        <form className="chat-compose-box" onSubmit={sendQuestion}>
-                          <button
-                            type="button"
-                            className={`tools-trigger-btn ${showToolsMenu ? 'active' : ''}`}
-                            onClick={() => setShowToolsMenu(v => !v)}
-                            title="Open available graph tools"
-                            aria-label="Open available tools"
-                          >
-                            <Wrench size={15} />
-                          </button>
-
-                          <input
-                            ref={chatInputRef}
-                            className="chat-input-field"
-                            aria-label="Ask a question or request a tool"
-                            placeholder={
-                              activeResearchIntent
-                                ? (activeResearchIntent.mode === 'deep'
-                                  ? 'Enter deep research inquiry and press Enter…'
-                                  : 'Enter quick research inquiry and press Enter…')
-                                : selectedNode
-                                  ? `Ask about "${selectedNode.title.slice(0, 24)}"…`
-                                  : 'Ask a question or select a tool…'
-                            }
-                            value={chatInput}
-                            onChange={event => setChatInput(event.target.value)}
-                            maxLength={2000}
-                            disabled={!aiConfigured || chatBusy}
-                          />
-
-                          <button
-                            type="button"
-                            onClick={() => setModal('credits')}
-                            className="chat-cost-pill"
-                            title="Context Credits required for this action · Click to view balance and refill"
-                          >
-                            <Zap size={10} className="fill-indigo-500 text-indigo-500 shrink-0" />
-                            <span>
-                              {activeResearchIntent?.mode === 'deep'
-                                ? '20 Credits'
-                                : activeResearchIntent?.mode === 'quick'
-                                  ? '5 Credits'
-                                  : '1 Credit'}
-                            </span>
-                          </button>
-
-                          <button
-                            type="submit"
-                            className="primary-button"
-                            style={{ width: '30px', height: '30px', minWidth: '30px', padding: 0 }}
-                            disabled={!chatInput.trim() || !aiConfigured || chatBusy}
-                            aria-label="Send message"
-                          >
-                            <Send size={13} />
-                          </button>
-                        </form>
-                      </div>
                     </div>
-                  )}
                 </div>
               </aside>
             </div>
-            <div className="canvas-footer"><span><i className="legend-dot idea" /> Ideas <i className="legend-dot claim" /> Claims <i className="legend-dot source" /> Sources <i className="legend-line" /> Relationships</span><span>{plural(nodes.length, 'record')} · {plural(edges.length, 'relationship')} · {viewport.zoom.toFixed(2)}×</span></div>
           </> : <div className="views-stage">
             <KnowledgeViews
               section={section}
@@ -2273,34 +2236,26 @@ export default function SynthexWorkspace() {
         const memberIds = new Set(members.map(node => node.id));
         const containedGraph = normalizeGraph(members, edges.filter(edge => memberIds.has(edge.from) && memberIds.has(edge.to)));
         return <div className="group-canvas-scrim" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setGroupCanvasId(null); }}>
-          <section className="group-canvas-modal" role="dialog" aria-modal="true" aria-label={`${group.title} sub-canvas`}>
-            <header className="group-canvas-header"><div><div className="group-breadcrumb"><span>Workspace</span><span>/</span><strong>{group.title}</strong></div><p>{plural(members.length, 'record')} in this knowledge cluster</p></div><button className="icon-button" aria-label="Close sub-canvas" onClick={() => setGroupCanvasId(null)}><X size={17} /></button></header>
+          <section className="group-canvas-modal" role="dialog" aria-modal="true" aria-label={`Cluster: ${group.title}`}>
+            <header className="group-canvas-header"><div><h2>{group.title}</h2><p className="note-meta">Cluster · {plural(members.length, 'idea')}</p></div><button className="icon-button" aria-label="Close cluster" onClick={() => setGroupCanvasId(null)}><X size={18} strokeWidth={1.75} /></button></header>
             {members.length ? <GraphCanvas graph={containedGraph} selectedNodeIds={selectedIds.filter(id => memberIds.has(id))} viewport={groupViewport} setViewport={setGroupViewport} activeTool={tool} spacePressed={spacePressed} linkingFromId={linkingFromId} autoFitKey={canvasFitKey + 1} editingNoteId={editingNoteId}
-              onSelectNode={(id, additive) => setSelectedIds(current => additive ? current.includes(id) ? current.filter(value => value !== id) : [...current, id] : [id])} onClearSelection={() => setSelectedIds([])} onClickAway={() => setEditingNoteId(null)} onCancelLinking={() => setLinkingFromId(null)} onMoveNodes={moveNodes} onConnect={connectNodes} onStartLinking={setLinkingFromId} onToggleGroup={toggleGroup} onEditNote={setEditingNoteId} onUpdateNote={(id, content) => updateGraph(current => updateNode(current, id, withAutoTitle(current.nodesById[id], { content })), false)} onUpdateRelationship={editRelationship} onDeleteRelationship={deleteRelationship} onResizeGroup={resizeGroup} onOpenGroup={id => { setEditingNoteId(null); setGroupCanvasId(id); }} onAddRecordWithData={addRecord} isResizeLocked={isResizeLocked} /> : <div className="subcanvas-empty"><Layers2 size={22} /><p>This cluster has no member records yet.</p><button className="quiet-button" onClick={() => { addRecord('note'); setGroupCanvasId(null); }}>Add a note & idea</button></div>}
+              onSelectNode={(id, additive) => setSelectedIds(current => additive ? current.includes(id) ? current.filter(value => value !== id) : [...current, id] : [id])} onClearSelection={() => setSelectedIds([])} onClickAway={() => setEditingNoteId(null)} onCancelLinking={() => setLinkingFromId(null)} onMoveNodes={moveNodes} onConnect={connectNodes} onStartLinking={setLinkingFromId} onToggleGroup={toggleGroup} onEditNote={setEditingNoteId} onUpdateNote={(id, content) => updateGraph(current => updateNode(current, id, withAutoTitle(current.nodesById[id], { content })), false)} onUpdateRelationship={editRelationship} onDeleteRelationship={deleteRelationship} onResizeGroup={resizeGroup} onOpenGroup={id => { setEditingNoteId(null); setGroupCanvasId(id); }} onAddRecordWithData={addRecord} isResizeLocked={isResizeLocked} /> : <div className="subcanvas-empty"><p>This cluster is empty.</p><button className="line-button" onClick={() => { addRecord('note'); setGroupCanvasId(null); }}><Plus size={16} strokeWidth={1.75} /> Add a note</button></div>}
           </section>
         </div>;
       })()}
 
 
-      {modal === 'project' && <div className="modal-scrim" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setModal(null); }}>
-        <section className="work-modal project-modal" role="dialog" aria-modal="true" aria-labelledby="project-title">
-          <div className="modal-head"><span className="modal-icon"><Layers2 size={18} /></span><button className="icon-button" aria-label="Close new workspace" onClick={() => setModal(null)}><X size={17} /></button></div>
-          <span className="panel-overline">Workspaces</span><h2 id="project-title">Choose a research sheet</h2><p className="modal-intro">Each workspace keeps its graph and research history separate.</p>
-          <div className="project-picker"><span className="field-label">Your workspaces</span>{projects.map(item => <button key={item.id} className={`project-pick-button ${item.id === projectId ? 'current' : ''}`} onClick={() => { setProjectId(item.id); setModal(null); }}><span>{item.title}</span>{item.id === projectId && <Check size={14} />}</button>)}</div>
-          <div className="project-form-divider"><span>Or create a new one</span></div>
-          <form onSubmit={createProject}>
-            <label className="field-label" htmlFor="project-name">Workspace name</label><input className="field-input" id="project-name" autoFocus value={projectTitleDraft} onChange={event => setProjectTitleDraft(event.target.value)} maxLength={80} minLength={2} placeholder="e.g. Small language models" required />
-            <span className="field-label">Start with</span><CustomSelect className="field-input project-template-select" ariaLabel="Start with" value={projectTemplate} options={[{ value: 'rag', label: 'Product documentation & elements guide' }, { value: 'blank', label: 'An empty sheet' }]} onChange={value => setProjectTemplate(value as 'blank' | 'rag')} />
-            <div className="modal-footer"><span>Stored in this local workspace</span><button className="primary-button" disabled={creatingProject || projectTitleDraft.trim().length < 2}>{creatingProject ? <><LoaderCircle size={15} className="spin" /> Creating…</> : <><Plus size={15} /> Create workspace</>}</button></div>
-          </form>
-        </section>
-      </div>}
-
       {modal === 'search' && <div className="modal-scrim search-scrim" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setModal(null); }}>
-        <section className="search-modal" role="dialog" aria-modal="true" aria-label="Search knowledge">
-          <div className="search-input-row"><Search size={18} /><input autoFocus placeholder="Search records in this workspace…" value={searchQuery} onChange={event => setSearchQuery(event.target.value)} /><kbd>ESC</kbd><button className="icon-button" aria-label="Close search" onClick={() => setModal(null)}><X size={16} /></button></div>
-          <div className="search-results">{searchQuery.trim() ? searchResults.length ? searchResults.map(node => <button className="search-result" key={node.id} onClick={() => { setSelectedIds([node.id]); setSection('canvas'); setModal(null); setSearchQuery(''); }}><span className={`record-icon type-${node.type}`}><Search size={14} /></span><span><strong>{node.title}</strong><small>{node.type} · {(node.content || node.url || 'No notes').slice(0, 100)}</small></span><ArrowRight size={15} /></button>) : <div className="search-empty">No records match “{searchQuery}”.</div> : <div className="search-empty">Search titles, notes, sources, and record types.</div>}</div>
-          <div className="search-bottom"><span><Search size={13} /> {plural(nodes.length, 'record')} indexed in this workspace</span><span>Press <kbd>Ctrl/⌘ K</kbd> to search</span></div>
+        <section className="search-modal" role="dialog" aria-modal="true" aria-label="Search this map">
+          <div className="search-input-row"><Search size={20} strokeWidth={1.75} /><input autoFocus aria-label="Search this map" placeholder="Search ideas, notes and sources" value={searchQuery} onChange={event => setSearchQuery(event.target.value)} /><button className="icon-button" aria-label="Close search (Esc)" onClick={() => setModal(null)}><X size={18} strokeWidth={1.75} /></button></div>
+          <div className="search-results">{searchQuery.trim() ? searchResults.length ? searchResults.map(node => {
+            const cited = node.metadata?.evidence?.length || 0;
+            return <button className="search-result" key={node.id} onClick={() => { setSelectedIds([node.id]); setSection('canvas'); setModal(null); setSearchQuery(''); }}>
+              <strong>{node.title}</strong>
+              <small>{[nodeLabel[node.type] || 'Idea', cited ? plural(cited, 'source') : null, (node.content || node.url || '').slice(0, 80) || null].filter(Boolean).join(' · ')}</small>
+            </button>;
+          }) : <div className="search-empty">Nothing on this map matches “{searchQuery}”.</div> : <div className="search-empty">Type to search titles, notes and sources.</div>}</div>
+          <div className="search-bottom"><span>{plural(nodes.length, 'idea')} on this map</span><span><kbd>Ctrl K</kbd> opens search · <kbd>Esc</kbd> closes it</span></div>
         </section>
       </div>}
 
@@ -2340,23 +2295,37 @@ export default function SynthexWorkspace() {
 
       {activeSession && <div className="modal-scrim" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) closeSession(); }}>
         <section className="work-modal review-modal" role="dialog" aria-modal="true" aria-labelledby="review-title">
-          <div className="modal-head"><span className="modal-icon"><Clock3 size={18} /></span><button className="icon-button" aria-label="Close review" onClick={closeSession}><X size={17} /></button></div>
-          <span className="panel-overline">{activeSession.mode === 'deep' ? 'Deep research' : 'Quick research'} · {new Date(activeSession.createdAt).toLocaleDateString()}</span>
-          <h2 id="review-title">{activeSession.query}</h2>
-          <p className="review-summary">{activeSession.summary}</p>
-          <details className="research-trail"><summary>Research trail <ChevronDown size={14} /></summary><ul>{activeSession.trail.map((item, index) => <li key={`${index}-${item}`}>{item}</li>)}</ul></details>
-          <div className="review-list-heading"><strong>Proposed changes</strong><span>{plural(activeSession.changes.filter(change => change.status === 'pending').length, 'pending review')}</span></div>
-          <div className="review-changes">{activeSession.changes.length === 0 ? <div className="empty-review">No graph changes were proposed for this run.</div> : activeSession.changes.map(change => <ReviewChangeCard key={change.id} change={change} graph={graph} sessionChanges={activeSession.changes} decision={reviewDecisions[change.id]} onDecision={status => setReviewDecisions(current => ({ ...current, [change.id]: status }))} />)}</div>
-          <div className="modal-footer review-footer"><button className="quiet-button" disabled={!activeSession.changes.some(change => change.status === 'pending')} onClick={() => setReviewDecisions(Object.fromEntries(activeSession.changes.filter(change => change.status === 'pending').map(change => [change.id, 'accepted'] as const)))}>Accept all pending</button><button className="primary-button" disabled={!Object.keys(reviewDecisions).length} onClick={() => saveReview(activeSession, Object.entries(reviewDecisions).map(([changeId, status]) => ({ changeId, status })))}><Check size={15} /> Save review</button></div>
+          <div className="review-head">
+            <div>
+              <h2 id="review-title">{activeSession.query}</h2>
+              <p className="note-meta">{activeSession.mode === 'deep' ? 'Deep research' : 'Quick research'} · {new Date(activeSession.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} · {plural(activeSession.changes.length, 'draft')}</p>
+            </div>
+            <button className="icon-button" aria-label="Close review" onClick={closeSession}><X size={18} strokeWidth={1.75} /></button>
+          </div>
+          {activeSession.summary && <p className="review-summary">{activeSession.summary}</p>}
+          {activeSession.trail.length > 0 && <details className="research-trail"><summary>How it was researched <ChevronDown size={16} strokeWidth={1.75} /></summary><ol>{activeSession.trail.map((item, index) => <li key={`${index}-${item}`}>{item}</li>)}</ol></details>}
+          <div className="review-changes">{activeSession.changes.length === 0 ? <p className="empty-review">This run didn&apos;t draft anything.</p> : activeSession.changes.map(change => <ReviewChangeCard key={change.id} change={change} graph={graph} sessionChanges={activeSession.changes} decision={reviewDecisions[change.id]} onDecision={status => setReviewDecisions(current => ({ ...current, [change.id]: status }))} />)}</div>
+          <div className="review-footer"><span className="note-meta">{plural(activeSession.changes.filter(change => change.status === 'pending').length, 'draft')} left to decide</span><div><button className="line-button" disabled={!activeSession.changes.some(change => change.status === 'pending')} onClick={() => setReviewDecisions(Object.fromEntries(activeSession.changes.filter(change => change.status === 'pending').map(change => [change.id, 'accepted'] as const)))}>Keep all</button><button className="ink-button" disabled={!Object.keys(reviewDecisions).length} onClick={() => saveReview(activeSession, Object.entries(reviewDecisions).map(([changeId, status]) => ({ changeId, status })))}>Save decisions</button></div></div>
         </section>
       </div>}
 
+      {editorId && graph.nodesById[editorId] && (
+        <NoteEditor
+          node={graph.nodesById[editorId]}
+          relationshipCount={edges.filter(edge => edge.from === editorId || edge.to === editorId).length}
+          projectId={projectId}
+          allNodes={nodes}
+          onUpdate={fields => updateGraph(current => current.nodesById[editorId] ? updateNode(current, editorId, withAutoTitle(current.nodesById[editorId], fields)) : current, false)}
+          onDelete={() => { const id = editorId; setEditorId(null); deleteNodes([id]); }}
+          onClose={() => setEditorId(null)}
+        />
+      )}
+
       {notice && (
-        <div role="status" className="toast-note">
-          <CircleHelp size={15} className="toast-icon" />
+        <div role="status" className="toast-note" key={notice}>
           <span>{notice}</span>
-          <button className="toast-close" onClick={() => setNotice('')} aria-label="Dismiss notification">
-            <X size={13} />
+          <button className="toast-close" onClick={() => setNotice('')} aria-label="Dismiss">
+            <X size={16} strokeWidth={1.75} />
           </button>
         </div>
       )}
@@ -2376,11 +2345,15 @@ function ReviewChangeCard({ change, graph, sessionChanges, decision, onDecision 
   const edge = !isNode ? change.payload as Connection : null;
   const proposedNodes = sessionChanges.filter(item => item.kind === 'node').map(item => item.payload as CanvasNode);
   const nodeTitle = (id: string) => graph.nodesById[id]?.title || proposedNodes.find(item => item.id === id)?.title;
-  const title = node?.title || `${nodeTitle(edge?.from || '') || 'Record'} ${edge?.label || 'relates to'} ${nodeTitle(edge?.to || '') || 'record'}`;
-  const subtitle = node ? `${node.type.replaceAll('_', ' ')}${node.type === 'claim' ? ' · unverified' : ''}` : 'Relationship';
-  return <article className={`review-change ${decision ? `decision-${decision}` : ''}`}>
-    <span className="change-kind-icon">{isNode ? <Layers2 size={15} /> : <GitBranch size={15} />}</span>
-    <div className="change-copy"><span>{subtitle}</span><strong>{title}</strong>{change.rationale && <small>{change.rationale}</small>}{node?.url && <a href={node.url} target="_blank" rel="noreferrer" onClick={event => event.stopPropagation()}>{node.url}</a>}</div>
-    {change.status === 'pending' ? <div className="review-actions"><button className={decision === 'accepted' ? 'chosen accept' : ''} aria-label="Accept proposal" title="Accept" onClick={() => onDecision('accepted')}><Check size={14} /></button><button className={decision === 'rejected' ? 'chosen reject' : ''} aria-label="Reject proposal" title="Reject" onClick={() => onDecision('rejected')}><X size={14} /></button></div> : <span className={`review-status ${change.status}`}>{change.status === 'accepted' ? 'Added' : 'Rejected'}</span>}
+  const title = node?.title || `${nodeTitle(edge?.from || '') || 'Idea'} ${(edge?.label || 'relates to').replaceAll('_', ' ')} ${nodeTitle(edge?.to || '') || 'idea'}`;
+  const meta = node ? `${nodeLabel[node.type] || 'Idea'}${node.type === 'claim' ? ' · Unverified' : ''}` : 'Relation';
+  return <article className={`review-change ${decision ? `decision-${decision}` : ''} ${change.status !== 'pending' ? `is-${change.status}` : ''}`}>
+    <div className="change-copy"><strong>{title}</strong>{change.rationale && <p>{change.rationale}</p>}{node?.url && <a href={node.url} target="_blank" rel="noreferrer" onClick={event => event.stopPropagation()}>{node.url}</a>}<span className="note-meta">{meta}</span></div>
+    {change.status === 'pending'
+      ? <div className="review-actions" role="group" aria-label={`Decide on ${title}`}>
+          <button type="button" className="ink-button" aria-pressed={decision === 'accepted'} onClick={() => onDecision('accepted')}>{decision === 'accepted' ? <><Check size={16} strokeWidth={1.75} /> Keep</> : 'Keep'}</button>
+          <button type="button" className="text-button" aria-pressed={decision === 'rejected'} onClick={() => onDecision('rejected')}>{decision === 'rejected' ? 'Discarded' : 'Discard'}</button>
+        </div>
+      : <span className="note-meta review-status">{change.status === 'accepted' ? 'Kept' : 'Discarded'}</span>}
   </article>;
 }
