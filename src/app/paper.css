@@ -436,3 +436,11 @@ h1, h2, h3 { font-family: var(--font-hand); font-weight: 700; letter-spacing: 0;
 .todo-add input::placeholder { color: var(--faint); }
 .knowledge-card .todo-clear { align-self: flex-start; padding: 2px 4px; border: 0; background: transparent; color: var(--faint); font: inherit; font-size: 12px; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
 .knowledge-card .todo-clear:hover { color: var(--ink); }
+
+/* ---------- Pan tool: the whole board, cards and their handles included, is something to grab ---------- */
+.graph-canvas.is-hand-tool .knowledge-card,
+.graph-canvas.is-hand-tool .graph-group,
+.graph-canvas.is-hand-tool .card-resize-handle { cursor: grab; }
+.graph-canvas.is-hand-tool:active,
+.graph-canvas.is-hand-tool:active .knowledge-card,
+.graph-canvas.is-hand-tool:active .card-resize-handle { cursor: grabbing; }

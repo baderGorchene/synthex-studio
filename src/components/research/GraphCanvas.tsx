@@ -1275,6 +1275,16 @@ export function GraphCanvas({
     event.currentTarget.setPointerCapture(event.pointerId);
   };
 
+  /** Pan tool, held Space or the middle button: every press moves the board, even on a card or its handles. */
+  const isPanPress = (event: React.PointerEvent) => spacePressed || activeTool === 'hand' || event.button === 1;
+
+  /** Starts panning from a card or a handle; the board's own handler must not also see the press. */
+  const startPan = (event: React.PointerEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    gesture.current = { kind: 'pan', start: { x: event.clientX, y: event.clientY }, origin: viewport.pan };
+  };
+
   const startCanvasPointerDown = (event: React.PointerEvent) => {
     if (gesture.current?.kind === 'pinch') return;
     if ((event.target as HTMLElement).closest('button, input, textarea, a, .markdown-editor, .relationship-controls, .knowledge-card, .graph-group-position, .canvas-tool-dock')) return;
@@ -1285,8 +1295,12 @@ export function GraphCanvas({
       return;
     }
 
-    if (spacePressed || activeTool === 'hand' || event.button === 1) {
-      gesture.current = { kind: 'pan', start: { x: event.clientX, y: event.clientY }, origin: viewport.pan };
+    if (isPanPress(event)) {
+      // The hand tool lets go of the selection as soon as you grab empty board; a held Space or middle
+      // button pans without changing it, unless it was only a click.
+      const clickAway = event.button === 0 && activeTool === 'hand' && !spacePressed;
+      if (clickAway) { onClearSelection(); onClickAway(); }
+      gesture.current = { kind: 'pan', start: { x: event.clientX, y: event.clientY }, origin: viewport.pan, ...(event.button === 0 && !clickAway ? { tap: { clear: true as const } } : {}) };
       return;
     }
 
@@ -1328,6 +1342,7 @@ export function GraphCanvas({
   };
 
   const startGroupResize = (event: React.PointerEvent, node: CanvasNode, handle: SectionResizeHandle) => {
+    if (isPanPress(event)) { startPan(event); return; }
     if (isResizeLocked) return;
     if (touchSkipsResize(event, node)) return;
     event.preventDefault(); event.stopPropagation();
@@ -1337,6 +1352,7 @@ export function GraphCanvas({
   };
 
   const startNodeResize = (event: React.PointerEvent, node: CanvasNode, handle: SectionResizeHandle) => {
+    if (isPanPress(event)) { startPan(event); return; }
     if (isResizeLocked) return;
     if (touchSkipsResize(event, node)) return;
     event.preventDefault(); event.stopPropagation();
@@ -1349,10 +1365,7 @@ export function GraphCanvas({
       event.stopPropagation();
       return;
     }
-    if (spacePressed || activeTool === 'hand' || event.button === 1) {
-      gesture.current = { kind: 'pan', start: { x: event.clientX, y: event.clientY }, origin: viewport.pan };
-      return;
-    }
+    if (isPanPress(event)) { startPan(event); return; }
     if (event.button !== 0) return;
     if ((event.target as HTMLElement).closest('button, input, textarea, a, .markdown-editor')) { event.stopPropagation(); return; }
     // Phones: a finger on a note that is not selected pans the map (notes cover most of a small
@@ -1655,7 +1668,7 @@ export function GraphCanvas({
               className={`graph-group-position ${group.metadata?.collapsed ? 'is-folded-position' : ''}`}
               style={{ transform: `translate3d(${bounds.x}px, ${bounds.y}px, 0)`, width: bounds.width, height: bounds.height }}
               onPointerDown={event => startNodeDrag(event, group)}
-              onClick={event => { event.stopPropagation(); onEditNote(null); onSelectNode(group.id, event.ctrlKey || event.metaKey); }}
+              onClick={event => { event.stopPropagation(); if (spacePressed || activeTool === 'hand') return; onEditNote(null); onSelectNode(group.id, event.ctrlKey || event.metaKey); }}
               onDoubleClick={event => { event.stopPropagation(); onOpenGroup(group.id); }}
             >
               <GroupCard
@@ -1701,6 +1714,7 @@ export function GraphCanvas({
             onPointerDown={startNodeDrag}
             onClick={(event, current) => {
               event.stopPropagation();
+              if (spacePressed || activeTool === 'hand') return;
               onSelectNode(current.id, event.ctrlKey || event.metaKey);
               if (current.type !== 'note' || editingNoteId !== current.id) onEditNote(null);
             }}
