@@ -5,7 +5,7 @@ import {
   BookOpenText, Check, ChevronDown,
   FileJson2, FileText, FolderArchive, GitBranch,
   Image as ImageIcon, LoaderCircle, MessagesSquare, MoreHorizontal, Plus, Redo2,
-  Search, Shapes, Share, Square, Undo2, Upload, UserRound, Users, X
+  Search, Shapes, Share, Square, Undo2, Upload, X
 } from 'lucide-react';
 import { GraphCanvas, adoptLegacyClusterMembers, membersOf } from '@/components/research/GraphCanvas';
 import { useCollaboration, type PresencePeer, type RemoteChange } from '@/components/collab/useCollaboration';
@@ -14,6 +14,7 @@ import { KnowledgeViews } from '@/components/research/KnowledgeViews';
 import { NoteEditor } from '@/components/research/NoteEditor';
 import { EmptyMapGuide } from '@/components/research/EmptyMapGuide';
 import { CanvasToolDock, type ResearchProject, type WorkspaceSection } from '@/components/research/WorkspaceSidebar';
+import { MapMenu } from '@/components/research/MapMenu';
 import { extractYouTubeVideoId } from '@/components/research/SourceMetadata';
 import { addNode, addRelationship, exportContextMarkdown, exportGraphJson, exportMermaid, normalizeGraph, removeNode, strokeForLabel, updateNode, updateRelationship, type KnowledgeGraph } from '@/lib/graph';
 import { parseBibTeX, bibEntriesToCanvasNodes } from '@/lib/bibtex';
@@ -177,7 +178,6 @@ export default function SynthexWorkspace() {
   const [overflowMenuOpen, setOverflowMenuOpen] = useState(false);
   const overflowMenuRef = useRef<HTMLDivElement>(null);
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
-  const [mapFilter, setMapFilter] = useState('');
   const [addRecordMenuOpen, setAddRecordMenuOpen] = useState(false);
   const navMenuRef = useRef<HTMLDivElement>(null);
   const projectMenuRef = useRef<HTMLDivElement>(null);
@@ -448,6 +448,39 @@ export default function SynthexWorkspace() {
     }
   }, [announce, loadProjects]);
 
+  const renameProject = useCallback(async (id: string, title: string) => {
+    try {
+      await readJson(await fetch('/api/projects', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId: id, title })
+      }));
+      const rename = (list: ResearchProject[]) => list.map(p => p.id === id ? { ...p, title } : p);
+      setProjects(rename);
+      setPersonalProjects(rename);
+      announce(`Map renamed to “${title}”.`);
+      return true;
+    } catch (error) {
+      announce(error instanceof Error ? error.message : 'Could not rename that map.');
+      return false;
+    }
+  }, [announce]);
+
+  const deleteProject = useCallback(async (id: string) => {
+    try {
+      await readJson(await fetch(`/api/projects?projectId=${encodeURIComponent(id)}`, { method: 'DELETE' }));
+      // Deleting the open map opens the workspace's first remaining map (or a fresh starter map).
+      if (typeof window !== 'undefined' && localStorage.getItem('synthex_active_project_id') === id) {
+        localStorage.removeItem('synthex_active_project_id');
+      }
+      await loadProjects();
+      announce('Map deleted.');
+      return true;
+    } catch (error) {
+      announce(error instanceof Error ? error.message : 'Could not delete that map.');
+      return false;
+    }
+  }, [announce, loadProjects]);
+
   useEffect(() => {
     let cancelled = false;
     void loadProjects();
@@ -673,7 +706,7 @@ export default function SynthexWorkspace() {
     const centred = initialData?.x === undefined && board
       ? { x: Math.round((board.width / 2 - view.pan.x) / view.zoom - width / 2), y: Math.round((board.height / 2 - view.pan.y) / view.zoom - (type === 'group' ? 180 : 70)) }
       : null;
-    const labels: Record<string, string> = { concept: 'New concept', claim: 'New claim', question: 'New question', hypothesis: 'New hypothesis', source: 'New source', note: 'New note', group: 'New knowledge cluster', ai_insight: 'New insight', image: 'Media & figure' };
+    const labels: Record<string, string> = { concept: 'New concept', claim: 'New claim', question: 'New question', hypothesis: 'New hypothesis', source: 'New source', note: 'New note', task: 'To-do list', group: 'New knowledge cluster', ai_insight: 'New insight', image: 'Media & figure' };
     const node: CanvasNode = {
       id: newId(),
       type,
@@ -754,6 +787,9 @@ export default function SynthexWorkspace() {
         } else if (key === 'n') {
           event.preventDefault();
           addRecord('note');
+        } else if (key === 't') {
+          event.preventDefault();
+          addRecord('task');
         } else if (key === 'k' || (key === 'c' && event.shiftKey)) {
           event.preventDefault();
           addRecord('claim');
@@ -1813,10 +1849,6 @@ export default function SynthexWorkspace() {
     else if (toolId === 'new') { startNewChat(); setRightDrawerOpen(true); }
   }
 
-  const mapFilterQuery = mapFilter.trim().toLowerCase();
-  const visibleProjects = mapFilterQuery ? projects.filter(p => p.title.toLowerCase().includes(mapFilterQuery)) : projects;
-  const visiblePersonalProjects = mapFilterQuery ? personalProjects.filter(p => p.title.toLowerCase().includes(mapFilterQuery)) : personalProjects;
-
   const liveProgress = researching ? chatLines[chatLines.length - 1]?.researchProgress : undefined;
   const composerStatus = (
     <div className="composer-status" role="status">
@@ -1870,113 +1902,31 @@ export default function SynthexWorkspace() {
                 className="topbar-project-trigger"
                 aria-label={`Map: ${project?.title || 'Untitled map'}. Switch or create a map`}
                 aria-expanded={projectMenuOpen}
-                onClick={() => { setProjectMenuOpen(v => !v); setMapFilter(''); setNavMenuOpen(false); setExportMenu(false); }}
+                onClick={() => { setProjectMenuOpen(v => !v); setNavMenuOpen(false); setExportMenu(false); }}
               >
                 <span className="project-title">{project?.title || 'Untitled map'}</span>
                 <ChevronDown size={16} strokeWidth={1.75} className="project-arrow" />
               </button>
               {projectMenuOpen && (
                 <div className="menu-popover topbar-project-menu map-menu">
-                  {projects.length + personalProjects.length > 6 && (
-                    <div className="map-menu-search">
-                      <Search size={14} strokeWidth={1.75} aria-hidden="true" />
-                      <input
-                        type="search"
-                        value={mapFilter}
-                        onChange={event => setMapFilter(event.target.value)}
-                        placeholder="Find a map…"
-                        aria-label="Find a map"
-                        autoFocus
-                      />
-                    </div>
-                  )}
-                  <div className="map-menu-scroll">
-                  <section className="map-menu-section">
-                    <p className="map-menu-heading">
-                      <span>{workspaceKind === 'team' ? 'Team maps' : 'Your maps'}</span>
-                      <small>{projects.length}</small>
-                    </p>
-                    <ul className="map-menu-list" role="menu" aria-label={workspaceKind === 'team' ? 'Team maps' : 'Your maps'}>
-                      {visibleProjects.map(p => {
-                        const isOpen = p.id === projectId;
-                        return (
-                          <li key={p.id} className={`map-menu-row ${isOpen ? 'is-active' : ''}`} role="none">
-                            <button
-                              type="button"
-                              role="menuitemradio"
-                              aria-checked={isOpen}
-                              className="map-menu-open"
-                              title={p.title}
-                              onClick={() => {
-                                setProjectId(p.id);
-                                if (typeof window !== 'undefined') {
-                                  localStorage.setItem('synthex_active_project_id', p.id);
-                                }
-                                setProjectMenuOpen(false);
-                              }}
-                            >
-                              <span className="map-menu-check" aria-hidden="true">{isOpen && <Check size={14} strokeWidth={2.25} />}</span>
-                              <span className="map-menu-name">{p.title || 'Untitled map'}</span>
-                              {isOpen && <span className="map-menu-badge">Open</span>}
-                            </button>
-                            {workspaceKind === 'team' && p.isOwner && (
-                              <button
-                                type="button"
-                                className="map-menu-action"
-                                title="Move to your personal workspace. Teammates lose access."
-                                aria-label={`Move “${p.title}” to your personal maps`}
-                                onClick={() => {
-                                  if (window.confirm(`Move “${p.title}” to your personal maps? Teammates will lose access to it.`)) void moveProject(p.id, 'personal');
-                                }}
-                              >
-                                <UserRound size={13} strokeWidth={1.75} aria-hidden="true" /> Make personal
-                              </button>
-                            )}
-                          </li>
-                        );
-                      })}
-                      {visibleProjects.length === 0 && (
-                        <li className="map-menu-empty" role="none">{mapFilterQuery ? 'No maps match.' : 'No maps yet. Create one below.'}</li>
-                      )}
-                    </ul>
-                  </section>
-                  {workspaceKind === 'team' && personalProjects.length > 0 && (
-                    <section className="map-menu-section map-menu-personal">
-                      <p className="map-menu-heading">
-                        <span>Your personal maps</span>
-                        <small>{personalProjects.length}</small>
-                      </p>
-                      <p className="map-menu-hint">Only you can see these. Move one into the team so everyone can open and edit it.</p>
-                      <ul className="map-menu-list">
-                        {visiblePersonalProjects.map(p => (
-                          <li key={p.id} className="map-menu-row">
-                            <span className="map-menu-check" aria-hidden="true" />
-                            <span className="map-menu-name" title={p.title}>{p.title || 'Untitled map'}</span>
-                            <button
-                              type="button"
-                              className="map-menu-action"
-                              aria-label={`Move “${p.title}” to the team`}
-                              onClick={() => void moveProject(p.id, 'team')}
-                            >
-                              <Users size={13} strokeWidth={1.75} aria-hidden="true" /> Move to team
-                            </button>
-                          </li>
-                        ))}
-                        {visiblePersonalProjects.length === 0 && <li className="map-menu-empty">No maps match.</li>}
-                      </ul>
-                    </section>
-                  )}
-                  </div>
-                  <form className="map-menu-new" onSubmit={createProject}>
-                    <label className="map-menu-heading" htmlFor="project-name"><span>New map</span></label>
-                    <div className="map-menu-new-row">
-                      <input className="field-input" id="project-name" value={projectTitleDraft} onChange={event => setProjectTitleDraft(event.target.value)} maxLength={80} minLength={2} placeholder="e.g. Small language models" required />
-                      <button type="submit" className="map-menu-create" disabled={creatingProject || projectTitleDraft.trim().length < 2}>
-                        {creatingProject ? <LoaderCircle size={14} className="spin" aria-hidden="true" /> : <Plus size={14} strokeWidth={2} aria-hidden="true" />}
-                        {creatingProject ? 'Creating…' : 'Create'}
-                      </button>
-                    </div>
-                  </form>
+                  <MapMenu
+                    projects={projects}
+                    personalProjects={personalProjects}
+                    activeId={projectId}
+                    workspaceKind={workspaceKind}
+                    onOpen={id => {
+                      setProjectId(id);
+                      if (typeof window !== 'undefined') localStorage.setItem('synthex_active_project_id', id);
+                      setProjectMenuOpen(false);
+                    }}
+                    onMove={moveProject}
+                    onRename={renameProject}
+                    onDelete={deleteProject}
+                    newTitle={projectTitleDraft}
+                    onNewTitleChange={setProjectTitleDraft}
+                    creating={creatingProject}
+                    onCreate={createProject}
+                  />
                 </div>
               )}
             </div>

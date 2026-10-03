@@ -22,6 +22,8 @@ import {
   isNeonConfigured,
   neonGetProjects,
   neonMoveProjectToWorkspace,
+  neonRenameProject,
+  neonDeleteProject,
   neonProjectExists,
   neonUserHasProjectAccess,
   neonCreateProject,
@@ -747,6 +749,40 @@ export function moveProjectToWorkspace(
     WHERE id = ? AND userId IN (${owners.map(() => '?').join(', ')})
   `).run(orgId, id, ...owners);
   return result.changes > 0;
+}
+
+/** Renames a map. The caller checks the user can open it (userHasProjectAccess) first. */
+export function renameProjectInDb(id: string, title: string): boolean | Promise<boolean> {
+  if (isNeonConfigured()) {
+    return neonRenameProject(id, title);
+  }
+  return getDatabase().prepare('UPDATE projects SET title = ? WHERE id = ?').run(title, id).changes > 0;
+}
+
+/**
+ * Deletes a map and everything scoped to it (notes, links, research, revisions, chat).
+ * Only the map's creator may delete it. Returns false when the map isn't theirs.
+ */
+export function deleteProjectFromDb(
+  id: string,
+  userId?: string | null,
+  clerkId?: string | null
+): boolean | Promise<boolean> {
+  if (isNeonConfigured()) {
+    return neonDeleteProject(id, userId, clerkId);
+  }
+  const owners = [userId, clerkId].filter((value): value is string => Boolean(value));
+  if (!owners.length) return false;
+  const db = getDatabase();
+  const owned = db.prepare(`SELECT 1 FROM projects WHERE id = ? AND userId IN (${owners.map(() => '?').join(', ')})`).get(id, ...owners);
+  if (!owned) return false;
+  db.transaction(() => {
+    for (const table of ['connections', 'nodes', 'research_sessions', 'graph_revisions', 'chat_messages']) {
+      db.prepare(`DELETE FROM ${table} WHERE projectId = ?`).run(id);
+    }
+    db.prepare('DELETE FROM projects WHERE id = ?').run(id);
+  })();
+  return true;
 }
 
 export function projectExistsInDb(id: string): boolean | Promise<boolean> {

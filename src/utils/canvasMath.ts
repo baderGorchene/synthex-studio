@@ -1,4 +1,5 @@
 import type { CanvasNode, Connection, ConnectionPath } from '../types/canvas';
+import { countTodos } from './todo.ts';
 
 /**
  * Accurately calculate or estimate a node's rendered height based on its measured
@@ -15,8 +16,9 @@ export function getNodeHeight(node: CanvasNode): number {
     return 290;
   }
   if (node.type === 'task') {
-    const itemCount = node.items?.length || 0;
-    return Math.max(90 + (itemCount > 0 ? 24 : 0) + itemCount * 30, 90);
+    const itemCount = countTodos(node.content, node.items);
+    // title + add-item row, plus a progress line and one row per item
+    return 124 + (itemCount > 0 ? 26 : 0) + itemCount * 28;
   }
   let h = 51;
   const titleLines = Math.max(1, Math.ceil((node.title?.length || 10) / 26));

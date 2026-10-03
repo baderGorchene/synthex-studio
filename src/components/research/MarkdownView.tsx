@@ -1,7 +1,7 @@
 'use client';
 
 import { marked, type Token, type Tokens } from 'marked';
-import type { ReactNode } from 'react';
+import { Fragment, type ReactNode } from 'react';
 import Image from 'next/image';
 
 function safeHref(value: string) {
@@ -57,15 +57,23 @@ function blocks(tokens: Token[], prefix = 'b', context: MarkdownContext = { task
         return <h3 key={key}>{children}</h3>;
       }
       case 'paragraph': return <p key={key}>{inline((token as Tokens.Paragraph).tokens, key)}</p>;
+      // Items of a tight list hold their words in a block-level `text` token: render it inline, not as a paragraph.
+      case 'text': {
+        const text = token as Tokens.Text;
+        return <Fragment key={key}>{text.tokens?.length ? inline(text.tokens, key) : text.text}</Fragment>;
+      }
+      // Task items carry a `checkbox` token; the list item below renders the (clickable) box itself.
+      case 'checkbox': return null;
       case 'code': return <pre key={key}><code>{(token as Tokens.Code).text}</code></pre>;
       case 'blockquote': return <blockquote key={key}>{blocks((token as Tokens.Blockquote).tokens, key, context)}</blockquote>;
       case 'list': {
         const list = token as Tokens.List;
         const items = list.items.map((item, itemIndex) => {
           const taskIndex = item.task ? context.taskIndex++ : undefined;
-          return <li key={`${key}-${itemIndex}`}>{item.task && <input type="checkbox" checked={Boolean(item.checked)} readOnly={!context.onToggleTask} aria-label={item.checked ? 'Completed task' : 'Incomplete task'} onChange={() => taskIndex !== undefined && context.onToggleTask?.(taskIndex)} />}{blocks(item.tokens, `${key}-${itemIndex}`, context)}</li>;
+          return <li key={`${key}-${itemIndex}`} className={item.task ? `task-list-item ${item.checked ? 'is-done' : ''}` : undefined}>{item.task && <input type="checkbox" checked={Boolean(item.checked)} readOnly={!context.onToggleTask} disabled={!context.onToggleTask} aria-label={item.checked ? 'Completed task' : 'Incomplete task'} onPointerDown={event => event.stopPropagation()} onClick={event => event.stopPropagation()} onChange={() => taskIndex !== undefined && context.onToggleTask?.(taskIndex)} />}{blocks(item.tokens, `${key}-${itemIndex}`, context)}</li>;
         });
-        return list.ordered ? <ol key={key} start={typeof list.start === 'number' ? list.start : undefined}>{items}</ol> : <ul key={key}>{items}</ul>;
+        const taskList = list.items.some(item => item.task) ? 'contains-task-list' : undefined;
+        return list.ordered ? <ol key={key} className={taskList} start={typeof list.start === 'number' && list.start !== 1 ? list.start : undefined}>{items}</ol> : <ul key={key} className={taskList}>{items}</ul>;
       }
       case 'table': {
         const table = token as Tokens.Table;
@@ -82,4 +90,12 @@ function blocks(tokens: Token[], prefix = 'b', context: MarkdownContext = { task
 export function MarkdownView({ content, className = '', onToggleTask }: { content: string; className?: string; onToggleTask?: (index: number) => void }) {
   if (!content.trim()) return null;
   return <div className={`markdown-view ${className}`}>{blocks(marked.lexer(content, { gfm: true }), 'md', { taskIndex: 0, onToggleTask })}</div>;
+}
+
+/** One line of Markdown (bold, italics, code, links) rendered inline, for places that hold a single line such as to-do items. */
+export function MarkdownInline({ text }: { text: string }) {
+  const tokens = marked.lexer(text, { gfm: true });
+  const first = tokens[0];
+  if (tokens.length !== 1 || first.type !== 'paragraph') return <>{text}</>;
+  return <>{inline((first as Tokens.Paragraph).tokens, 'mi')}</>;
 }

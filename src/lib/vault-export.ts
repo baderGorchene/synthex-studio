@@ -255,7 +255,7 @@ function buildOverviewMarkdown(projectTitle: string, nodes: CanvasNode[], noteTi
     { type: 'hypothesis', label: 'Hypotheses' },
     { type: 'source', label: 'Sources & Evidence' },
     { type: 'link', label: 'External Links' },
-    { type: 'task', label: 'Research Tasks' },
+    { type: 'task', label: 'To-do lists' },
     { type: 'note', label: 'Notes & Ideas' },
     { type: 'group', label: 'Knowledge Clusters' }
   ];
