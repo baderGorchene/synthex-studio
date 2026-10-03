@@ -101,9 +101,10 @@ export function BaseKnowledgeCard({
       style={{
         transform: `translate3d(${node.x}px, ${node.y}px, 0) scale(${isGrabbed ? 1.035 : 1}) rotate(${isGrabbed ? dragTilt : hangTilt(node.id)}deg) translateY(${isGrabbed ? -4 : 0}px)`,
         width: node.width || (isImage ? 320 : 280),
-        height: node.height ? `${node.height}px` : undefined,
-        minHeight: '124px',
-        maxHeight: node.height ? `${node.height}px` : undefined,
+        // A photo's height always follows its picture, so it keeps the image's real proportions.
+        height: node.height && !isImage ? `${node.height}px` : undefined,
+        minHeight: isImage ? undefined : '124px',
+        maxHeight: node.height && !isImage ? `${node.height}px` : undefined,
         display: 'flex',
         flexDirection: 'column',
         backgroundColor: '#ffffff',
@@ -134,24 +135,26 @@ export function BaseKnowledgeCard({
           <Pencil size={14} strokeWidth={1.75} /><span>Edit</span>
         </button>
       )}
-      <h2>{node.title}</h2>
+      {!isImage && <h2>{node.title}</h2>}
 
-      <div className={`knowledge-card-body-scroll ${node.height ? 'has-custom-height' : ''}`}>
-        {/* Media & Figure preview */}
+      <div className={`knowledge-card-body-scroll ${node.height && !isImage ? 'has-custom-height' : ''}`}>
+        {/* A photo print: the picture at its own proportions, the title written on the margin below */}
         {isImage && (
-          <div className="figure-card-wrap">
+          <figure className="photo-print">
             {previewImage ? (
-              <div className="figure-image-container">
+              <div className="photo-frame">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src={previewImage}
                   alt={caption || node.title}
-                  className="figure-card-img"
+                  title={[node.fileName, node.fileSize ? formatFileSize(node.fileSize) : null].filter(Boolean).join(' · ') || undefined}
+                  className="photo-image"
                   loading="lazy"
+                  draggable={false}
                 />
                 <button
                   type="button"
-                  className="figure-zoom-btn"
+                  className="photo-zoom"
                   title="Expand and view image"
                   aria-label="Expand and view image"
                   onPointerDown={event => event.stopPropagation()}
@@ -164,20 +167,16 @@ export function BaseKnowledgeCard({
                 </button>
               </div>
             ) : (
-              <div className="figure-placeholder-box">
-                <Images size={26} className="figure-placeholder-icon" />
-                <span>Select record to add image</span>
+              <div className="photo-frame is-empty">
+                <Images size={26} strokeWidth={1.5} />
+                <span>No picture yet</span>
               </div>
             )}
-            {/* Bottom part: image name and size */}
-            {(node.fileName || node.fileSize) && (
-              <div className="figure-file-meta">
-                <span className="figure-filename" title={node.fileName}>{node.fileName || 'Image asset'}</span>
-                {node.fileSize ? <span className="figure-filesize">{formatFileSize(node.fileSize)}</span> : null}
-              </div>
-            )}
-            {caption && <figcaption className="figure-card-caption">{caption}</figcaption>}
-          </div>
+            <figcaption className="photo-caption">
+              <h2>{node.title}</h2>
+              {caption && <p>{caption}</p>}
+            </figcaption>
+          </figure>
         )}
 
         {/* Messenger-style Link Preview: Thumbnail banner (with YouTube play badge) OR clean favicon preview */}
@@ -301,12 +300,13 @@ export function BaseKnowledgeCard({
         ) : null}
       </div>
 
-      <p className="note-meta">
+      {(!isImage || isDraft) && <p className="note-meta">
         {[nodeLabel[node.type] || 'Idea', isDraft ? 'Draft' : node.metadata?.origin === 'ai' ? 'From research' : null, siteName, status, node.metadata?.evidence?.length ? `${node.metadata.evidence.length} source${node.metadata.evidence.length === 1 ? '' : 's'}` : null].filter(Boolean).join(' · ')}
-      </p>
+      </p>}
 
       {/* 8-point resize handles when card is selected and resize is unlocked */}
-      {selected && !isResizeLocked && !isGrabbed && (['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'] as SectionResizeHandle[]).map(handle => (
+      {/* A photo only resizes in width: its height follows the picture. */}
+      {selected && !isResizeLocked && !isGrabbed && ((isImage ? ['e', 'se', 'sw', 'w'] : ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']) as SectionResizeHandle[]).map(handle => (
         <span
           key={handle}
           className={`card-resize-handle handle-${handle}`}

@@ -640,6 +640,13 @@ export function GraphCanvas({
     const canvas = canvasRef.current;
     if (!canvas || !onAddRecordWithData) return;
 
+    // Drops are for things brought in from outside. A picture or link inside a card must not be dragged out of it:
+    // the drop below would turn its URL into a copy of the card. Text being dragged inside an editor still moves.
+    const handleDragStart = (e: DragEvent) => {
+      const target = e.target instanceof Element ? e.target : null;
+      if (!target?.closest('input, textarea, [contenteditable]:not([contenteditable="false"])')) e.preventDefault();
+    };
+
     const handleDragOver = (e: DragEvent) => {
       if (
         e.dataTransfer?.types.includes('Files') ||
@@ -766,10 +773,12 @@ export function GraphCanvas({
       }
     };
 
+    canvas.addEventListener('dragstart', handleDragStart);
     canvas.addEventListener('dragover', handleDragOver);
     canvas.addEventListener('drop', handleDrop);
     window.addEventListener('paste', handlePaste);
     return () => {
+      canvas.removeEventListener('dragstart', handleDragStart);
       canvas.removeEventListener('dragover', handleDragOver);
       canvas.removeEventListener('drop', handleDrop);
       window.removeEventListener('paste', handlePaste);
