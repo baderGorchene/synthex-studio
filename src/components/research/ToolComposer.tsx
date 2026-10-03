@@ -36,6 +36,9 @@ type ToolComposerProps = {
   size?: 'large' | 'regular';
   menuPlacement?: 'above' | 'below';
   className?: string;
+  /** Cards attached to the next question, shown as removable chips above the input. */
+  attachments?: { id: string; label: string }[];
+  onRemoveAttachment?: (id: string) => void;
 };
 
 const SLASH_QUERY = /^\/(\S*)$/;
@@ -43,7 +46,7 @@ const SLASH_PREFIX = /^\/(\S+)\s+([\s\S]*)$/;
 
 export function ToolComposer({
   inputId, inputLabel, value, onValueChange, onSubmit, tools, activeToolId, onActiveToolChange, onRunTool,
-  placeholder, sendLabel, inputRef, disabled = false, busy = false, maxLength, autoFocus, size = 'regular', menuPlacement = 'above', className = ''
+  placeholder, sendLabel, inputRef, disabled = false, busy = false, maxLength, autoFocus, size = 'regular', menuPlacement = 'above', className = '', attachments = [], onRemoveAttachment
 }: ToolComposerProps) {
   const formRef = useRef<HTMLFormElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -171,6 +174,20 @@ export function ToolComposer({
       className={`composer tool-composer is-${size} ${className}`}
       onSubmit={event => { event.preventDefault(); submit(); }}
     >
+      {attachments.length > 0 && (
+        <ul className="composer-attachments" aria-label="Cards attached to your question">
+          {attachments.map(item => (
+            <li key={item.id} className="tool-chip attachment-chip" title={item.label}>
+              <span className="attachment-chip-label">{item.label}</span>
+              {onRemoveAttachment && (
+                <button type="button" aria-label={`Remove ${item.label} from the chat`} onClick={() => { onRemoveAttachment(item.id); textareaRef.current?.focus(); }}>
+                  <X size={12} strokeWidth={2} />
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
       <div className="tool-composer-line">
         <button
           type="button"

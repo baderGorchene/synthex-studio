@@ -76,6 +76,20 @@ export function removeNode(graph: KnowledgeGraph, id: string): KnowledgeGraph {
   return { nodesById, edgesById };
 }
 
+/** Cards a user may attach to one chat question. */
+export const CHAT_CONTEXT_LIMIT = 10;
+
+/** Untrusted ids from a request: unique strings naming nodes in this graph, at most `limit`. */
+export function pickContextNodeIds(graph: KnowledgeGraph, raw: unknown, limit = CHAT_CONTEXT_LIMIT): string[] {
+  if (!Array.isArray(raw)) return [];
+  const ids = new Set<string>();
+  for (const id of raw) {
+    if (ids.size >= limit) break;
+    if (typeof id === 'string' && Object.hasOwn(graph.nodesById, id)) ids.add(id);
+  }
+  return [...ids];
+}
+
 export function neighborhood(graph: KnowledgeGraph, startId: string, depth = 1): Set<string> {
   if (!graph.nodesById[startId]) return new Set();
   const visited = new Set([startId]);

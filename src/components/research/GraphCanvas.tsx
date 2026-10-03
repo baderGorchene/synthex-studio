@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { PresencePeer } from '@/components/collab/useCollaboration';
 import { initialsOf } from '@/components/collab/PresenceBar';
-import { ExternalLink, Pencil, Trash2 } from 'lucide-react';
+import { ExternalLink, MessageSquarePlus, Pencil, Trash2 } from 'lucide-react';
 import type { CanvasNode, Connection, Coordinates, SectionResizeHandle, CanvasNodeType, Viewport } from '@/types/canvas';
 import type { KnowledgeGraph } from '@/lib/graph';
 import { RelationshipControls } from './RelationshipControls';
@@ -27,6 +27,32 @@ const isPhoneTouch = (event: { pointerType: string }) =>
   event.pointerType === 'touch' && typeof window !== 'undefined' && window.matchMedia('(max-width: 760px)').matches;
 /** How far two fingers must spread or pinch (as a share of their start distance) before the map zooms. */
 const PINCH_ZOOM_THRESHOLD = .1;
+/** How far outside a drop zone a drag still counts as over it. */
+const DROP_ZONE_SLOP = 28;
+
+type DropZone = 'trash' | 'context';
+
+/**
+ * The drop zone under the pointer. The two zones sit side by side, so their slop overlaps: the nearer one wins,
+ * and the strip between them belongs to neither (a drop meant for the chat must never delete).
+ */
+function dropZoneAt(x: number, y: number, trash: DOMRect | undefined, context: DOMRect | undefined): DropZone | null {
+  const distance = (rect: DOMRect) => Math.hypot(
+    Math.max(rect.left - x, 0, x - rect.right),
+    Math.max(rect.top - y, 0, y - rect.bottom)
+  );
+  const near = (rect: DOMRect | undefined) => (rect && distance(rect) <= DROP_ZONE_SLOP ? rect : undefined);
+  const t = near(trash);
+  const c = near(context);
+  if (t && c) {
+    const gapLeft = Math.min(t.right, c.right);
+    const gapRight = Math.max(t.left, c.left);
+    if (x >= gapLeft && x <= gapRight) return null;
+    const dt = distance(t), dc = distance(c);
+    return dt < dc ? 'trash' : dc < dt ? 'context' : null;
+  }
+  return t ? 'trash' : c ? 'context' : null;
+}
 
 type Gesture =
   // On phones a one-finger touch pans; `tap` records what a touch that never moved should do instead.
@@ -470,7 +496,7 @@ export function GraphCanvas({
   graph, selectedNodeIds, viewport, setViewport, activeTool, spacePressed, linkingFromId,
   autoFitKey, editingNoteId, onSelectNode, onSelectMultipleNodes, onClearSelection, onClickAway, onCancelLinking, onMoveNodes, onConnect,
   onStartLinking, onToggleGroup, onEditNote, onUpdateNote, onUpdateRelationship, onDeleteRelationship, onResizeGroup, onOpenGroup,
-  onAddRecordWithData, onDeleteNodes, onAssignCluster, presence, onPointerWorld, projectId, isResizeLocked = false, draftIds, detachingIds, keptIds, sketch, sketchStyle, onSketchChange, onOpenEditor, placingIds, onPlaced
+  onAddRecordWithData, onDeleteNodes, onAddToContext, onAssignCluster, presence, onPointerWorld, projectId, isResizeLocked = false, draftIds, detachingIds, keptIds, sketch, sketchStyle, onSketchChange, onOpenEditor, placingIds, onPlaced
 }: {
   graph: KnowledgeGraph;
   selectedNodeIds: string[];
@@ -498,6 +524,8 @@ export function GraphCanvas({
   onOpenGroup: (id: string) => void;
   onAddRecordWithData?: (type: CanvasNodeType, initialData?: Partial<CanvasNode>) => void;
   onDeleteNodes?: (ids: string[]) => void;
+  /** Cards were dropped on "Add to chat": they snap back and join the next question's context. */
+  onAddToContext?: (ids: string[]) => void;
   /** Notes were dropped into a cluster (id) or out of every cluster (null). Without it, membership never changes. */
   onAssignCluster?: (ids: string[], clusterId: string | null) => void;
   /** Teammates on this map: their cursors and the notes they have selected or are writing in. */
@@ -534,8 +562,12 @@ export function GraphCanvas({
   const dropTargetRef = useRef<string | null>(null);
   const [dragTilt, setDragTilt] = useState<number>(0);
   const [marqueeBox, setMarqueeBox] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
-  const [isOverTrash, setIsOverTrash] = useState(false);
+  const [overZone, setOverZone] = useState<DropZone | null>(null);
+  const isOverTrash = overZone === 'trash';
+  const isOverContext = overZone === 'context';
+  const draggedCount = draggedNodeIds.length;
   const trashRef = useRef<HTMLDivElement>(null);
+  const contextRef = useRef<HTMLDivElement>(null);
   const [activeImage, setActiveImage] = useState<{ src: string; title?: string; caption?: string } | null>(null);
   const [activeFile, setActiveFile] = useState<{ fileData?: string; fileName?: string; fileSize?: number; fileType?: string; content?: string; initialPage?: number; highlightExcerpt?: string } | null>(null);
 
@@ -1088,16 +1120,11 @@ export function GraphCanvas({
             }
             lastClientX.current = ev.clientX;
 
-            if (trashRef.current) {
-              const tRect = trashRef.current.getBoundingClientRect();
-              const isOver = (
-                ev.clientX >= tRect.left - 28 &&
-                ev.clientX <= tRect.right + 28 &&
-                ev.clientY >= tRect.top - 28 &&
-                ev.clientY <= tRect.bottom + 28
-              );
-              setIsOverTrash(isOver);
-            }
+            setOverZone(dropZoneAt(
+              ev.clientX, ev.clientY,
+              trashRef.current?.getBoundingClientRect(),
+              onAddToContext ? contextRef.current?.getBoundingClientRect() : undefined
+            ));
 
             // Notes may not land on other notes: flag the collision now, snap back on drop.
             const movingBoxes: Record<string, Box> = {};
@@ -1171,6 +1198,7 @@ export function GraphCanvas({
         setMarqueeBox(null);
       } else if (gesture.current?.kind === 'drag') {
         const isTrashDrop = isOverTrash;
+        const isContextDrop = isOverContext;
         const nodesToDelete = [...draggedNodeIds];
         const carried = gesture.current.noteIds;
         const target = dropTargetRef.current;
@@ -1178,10 +1206,18 @@ export function GraphCanvas({
         setCarriedNoteIds([]);
         dropTargetRef.current = null; setDropTargetId(null);
         setDragTilt(0);
-        setIsOverTrash(false);
+        setOverZone(null);
 
         if (isTrashDrop && nodesToDelete.length > 0) {
           onDeleteNodes?.(nodesToDelete);
+          gesture.current = null;
+          blockedRef.current = []; setBlockedIds([]);
+          return;
+        }
+        // Added to the chat: nothing moves or changes cluster, everything goes back to where it started.
+        if (isContextDrop && nodesToDelete.length > 0) {
+          onMoveNodes(gesture.current.origins);
+          onAddToContext?.(nodesToDelete);
           gesture.current = null;
           blockedRef.current = []; setBlockedIds([]);
           return;
@@ -1217,7 +1253,7 @@ export function GraphCanvas({
       setCarriedNoteIds([]);
       dropTargetRef.current = null; setDropTargetId(null);
       setDragTilt(0);
-      setIsOverTrash(false);
+      setOverZone(null);
       setMarqueeBox(null);
       blockedRef.current = []; setBlockedIds([]);
       gesture.current = null;
@@ -1238,7 +1274,7 @@ export function GraphCanvas({
       window.removeEventListener('pointerup', up);
       window.removeEventListener('pointercancel', cancel);
     };
-  }, [onMoveNodes, onResizeGroup, onSelectMultipleNodes, onDeleteNodes, setViewport, viewport.zoom, viewport.pan, nodes, visibleIds, nodeHeights, isOverTrash, draggedNodeIds, onClearSelection, onClickAway, onSelectNode, graph.nodesById, nodeBounds, groups, onAssignCluster]);
+  }, [onMoveNodes, onResizeGroup, onSelectMultipleNodes, onDeleteNodes, onAddToContext, setViewport, viewport.zoom, viewport.pan, nodes, visibleIds, nodeHeights, isOverTrash, isOverContext, draggedNodeIds, onClearSelection, onClickAway, onSelectNode, graph.nodesById, nodeBounds, groups, onAssignCluster]);
 
   const trackTouchPointer = (event: React.PointerEvent<HTMLDivElement>) => {
     if (event.pointerType !== 'touch') return;
@@ -1255,7 +1291,7 @@ export function GraphCanvas({
       setCarriedNoteIds([]);
       dropTargetRef.current = null; setDropTargetId(null);
       setDragTilt(0);
-      setIsOverTrash(false);
+      setOverZone(null);
       setAlignmentGuides([]);
       if (blockedRef.current.length) { blockedRef.current = []; setBlockedIds([]); }
     }
@@ -1765,15 +1801,34 @@ export function GraphCanvas({
       {linkingFromId && <div className="canvas-instruction" role="status"><span>Now click the idea to connect it to</span><button type="button" className="text-button" onClick={onCancelLinking}>Cancel</button></div>}
       {activeTool === 'connect' && !linkingFromId && <div className="canvas-instruction" role="status"><span>Click one idea, then another, to connect them</span></div>}
 
-      {/* Interactive Floating Garbage / Trash Drop Zone */}
-      <div
-        ref={trashRef}
-        className={`canvas-trash-zone ${draggedNodeIds.length > 0 ? 'is-visible' : ''} ${isOverTrash ? 'is-active' : ''}`}
-        role="region"
-        aria-label="Drop here to remove from the map"
-      >
-        <Trash2 size={18} strokeWidth={1.75} />
-        <span>{isOverTrash ? `Release to remove${draggedNodeIds.length > 1 ? ` ${draggedNodeIds.length} ideas` : ''} · Ctrl+Z undoes it` : 'Drop to remove'}</span>
+      {/* Drop zones: add the dragged cards to the chat, or remove them. Phones show the short labels. */}
+      <div className="canvas-drop-zones">
+        {onAddToContext && (
+          <div
+            ref={contextRef}
+            className={`canvas-drop-zone canvas-context-zone ${draggedNodeIds.length > 0 ? 'is-visible' : ''} ${isOverContext ? 'is-active' : ''}`}
+            role="region"
+            aria-label="Drop here to add to the chat"
+          >
+            <MessageSquarePlus size={18} strokeWidth={1.75} />
+            <span className="drop-zone-label">
+              <span className="drop-zone-full">{isOverContext ? `Release to add${draggedCount > 1 ? ` ${draggedCount} ideas` : ''}` : 'Add to chat'}</span>
+              <span className="drop-zone-short">{isOverContext && draggedCount > 1 ? `Add ${draggedCount}` : 'Add to chat'}</span>
+            </span>
+          </div>
+        )}
+        <div
+          ref={trashRef}
+          className={`canvas-drop-zone canvas-trash-zone ${draggedNodeIds.length > 0 ? 'is-visible' : ''} ${isOverTrash ? 'is-active' : ''}`}
+          role="region"
+          aria-label="Drop here to remove from the map"
+        >
+          <Trash2 size={18} strokeWidth={1.75} />
+          <span className="drop-zone-label">
+            <span className="drop-zone-full">{isOverTrash ? `Release to remove${draggedCount > 1 ? ` ${draggedCount} ideas` : ''} · Ctrl+Z undoes it` : 'Drop to remove'}</span>
+            <span className="drop-zone-short">{isOverTrash && draggedCount > 1 ? `Remove ${draggedCount}` : 'Remove'}</span>
+          </span>
+        </div>
       </div>
 
       {/* Interactive Bird's-Eye Minimap Navigation */}

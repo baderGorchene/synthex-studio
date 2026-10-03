@@ -226,6 +226,16 @@ h1, h2, h3 { font-family: var(--font-hand); font-weight: 700; letter-spacing: 0;
 }
 .tool-chip button:hover { color: var(--ink); }
 
+/* cards attached to the next question sit above the ruled line */
+.composer-attachments {
+  display: flex; flex-wrap: wrap; gap: 6px 8px;
+  max-height: 76px; margin: 0; padding: 12px 8px 2px 52px;
+  overflow-y: auto; list-style: none;
+}
+.tool-composer.is-large .composer-attachments { padding-left: 60px; }
+.attachment-chip { max-width: 240px; border: 1px solid var(--line-strong); background: var(--paper); font-size: 17px; rotate: 0deg; }
+.attachment-chip-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+
 .tool-menu {
   position: absolute;
   z-index: 40;
@@ -445,27 +455,31 @@ h1, h2, h3 { font-family: var(--font-hand); font-weight: 700; letter-spacing: 0;
 .graph-canvas.is-hand-tool:active .knowledge-card,
 .graph-canvas.is-hand-tool:active .card-resize-handle { cursor: grabbing; }
 
-/* ---------- Trash zone: red, and the composer steps aside for it ----------
-   While a card is being dragged the trash zone rises where the chat composer sits, so the composer
-   slides down out of the way first, then slides back up once the trash zone has gone. */
-.canvas-trash-zone {
-  border-color: #E8B4AE; background: #FFF4F2; color: #B3261E;
-  translate: -50% 28px;
+/* ---------- Drop zones: add to chat (ink) and remove (red); the composer steps aside for them ----------
+   While a card is being dragged the zones rise where the chat composer sits, so the composer
+   slides down out of the way first, then slides back up once the zones have gone. */
+.canvas-drop-zone {
+  translate: 0 28px;
   transition: translate 160ms cubic-bezier(.5, 0, .75, .3), opacity 160ms cubic-bezier(.5, 0, .75, .3), scale 160ms cubic-bezier(.16, 1, .3, 1), background-color 120ms, color 120ms, border-color 120ms;
 }
-.canvas-trash-zone svg { color: currentColor; }
-.canvas-trash-zone.is-visible {
-  translate: -50% 0;
+.canvas-drop-zone svg { color: currentColor; }
+.canvas-drop-zone.is-visible {
+  translate: 0 0;
   transition-timing-function: cubic-bezier(.16, 1, .3, 1);
   transition-duration: 240ms, 200ms, 160ms, 120ms, 120ms, 120ms;
   transition-delay: 90ms, 90ms, 0ms, 0ms, 0ms, 0ms;
 }
+/* the second zone rises a beat after the first */
+.canvas-drop-zone.is-visible + .canvas-drop-zone.is-visible { transition-delay: 150ms, 150ms, 0ms, 0ms, 0ms, 0ms; }
+.canvas-context-zone { border-color: var(--ink); background: var(--paper); color: var(--ink); }
+.canvas-context-zone.is-active { background: var(--ink); color: #fff; scale: 1.06; box-shadow: 0 18px 40px -16px rgba(17, 18, 20, .5); }
+.canvas-trash-zone { border-color: #E8B4AE; background: #FFF4F2; color: #B3261E; }
 .canvas-trash-zone.is-active { border-color: #B3261E; background: #B3261E; color: #fff; scale: 1.06; box-shadow: 0 18px 40px -16px rgba(179, 38, 30, .55); }
 
 .dock-composer {
   transition: translate 280ms cubic-bezier(.16, 1, .3, 1) 120ms, opacity 220ms cubic-bezier(.16, 1, .3, 1) 120ms;
 }
-.graph-wrap:has(.canvas-trash-zone.is-visible) .dock-composer {
+.graph-wrap:has(.canvas-drop-zone.is-visible) .dock-composer {
   translate: 0 calc(100% + 48px);
   opacity: 0;
   pointer-events: none;
@@ -473,6 +487,6 @@ h1, h2, h3 { font-family: var(--font-hand); font-weight: 700; letter-spacing: 0;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .dock-composer, .graph-wrap:has(.canvas-trash-zone.is-visible) .dock-composer { transition: none; translate: none; }
-  .canvas-trash-zone.is-active { scale: none; }
+  .dock-composer, .graph-wrap:has(.canvas-drop-zone.is-visible) .dock-composer { transition: none; translate: none; }
+  .canvas-drop-zone.is-active { scale: none; }
 }

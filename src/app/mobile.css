@@ -214,3 +214,14 @@
   .auth-sheet .cl-formFieldInput { min-height: 44px; font-size: 16px; }
   .auth-sheet .cl-formButtonPrimary { min-height: 46px; font-size: 15px; }
 }
+
+/* Drop zones: both fit side by side inside the gutters, with short labels */
+@media (max-width: 760px) {
+  .canvas-drop-zones { bottom: var(--m-composer-bottom); left: var(--m-gutter); right: var(--m-gutter); translate: none; }
+  .canvas-drop-zone { flex: 1 1 0; min-width: 0; justify-content: center; gap: 8px; padding: 0 10px; }
+  .drop-zone-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .drop-zone-full { display: none; }
+  .drop-zone-short { display: inline; }
+  .composer-attachments { padding-left: 48px; }
+  .tool-composer .attachment-chip { max-width: 70%; }
+}

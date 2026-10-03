@@ -7,6 +7,7 @@ import {
   exportMermaid,
   neighborhood,
   normalizeGraph,
+  pickContextNodeIds,
   removeNode,
   strokeForLabel
 } from '../src/lib/graph.ts';
@@ -1591,4 +1592,12 @@ test('to-do cards read their checklist from Markdown and keep other lines', asyn
   assert.equal(countTodos(undefined, [{ id: 'a', text: 'Legacy', completed: true }]), 1);
   assert.equal(todoContent('', [{ id: 'a', text: 'Legacy', completed: true }, { id: 'b', text: 'Open', completed: false }]), '- [x] Legacy\n- [ ] Open');
   assert.equal(todoContent('- [ ] kept', [{ id: 'a', text: 'ignored', completed: false }]), '- [ ] kept');
+});
+
+test('keeps only unique, existing chat context ids, capped', () => {
+  const graph = normalizeGraph([concept('a'), concept('b'), concept('c')], []);
+  assert.deepEqual(pickContextNodeIds(graph, ['a', 'a', 'ghost', 42, '__proto__', 'b']), ['a', 'b']);
+  assert.deepEqual(pickContextNodeIds(graph, ['a', 'b', 'c'], 2), ['a', 'b']);
+  assert.deepEqual(pickContextNodeIds(graph, 'a'), []);
+  assert.deepEqual(pickContextNodeIds(graph, undefined), []);
 });

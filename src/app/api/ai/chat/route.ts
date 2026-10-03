@@ -9,7 +9,7 @@ import {
   userHasProjectAccess,
   type ChatMessageRecord
 } from '@/lib/db';
-import { normalizeGraph } from '@/lib/graph';
+import { normalizeGraph, pickContextNodeIds } from '@/lib/graph';
 import { getServerAuth } from '@/lib/auth';
 import { deductCredits, refundCredits } from '@/lib/credits';
 import type { CanvasNode, Connection } from '@/types/canvas';
@@ -111,6 +111,8 @@ export async function POST(request: Request) {
         .catch(err => console.error('Could not save chat messages:', err));
     };
     const graph = normalizeGraph(rawNodes as CanvasNode[], rawEdges as Connection[]);
+    // Cards the user attached: only ids on this (access-checked) map count.
+    const contextNodeIds = pickContextNodeIds(graph, body.contextNodeIds);
 
     // Charge Context Credits up front (atomic), refund if the answer fails.
     const creditNote = `Asked: "${question.slice(0, 50)}..."`;
@@ -145,7 +147,7 @@ export async function POST(request: Request) {
           };
           try {
             send('thread', { threadId });
-            for await (const event of askGraphStream(question, graph, { selectedNodeId, projectId, history, signal })) {
+            for await (const event of askGraphStream(question, graph, { selectedNodeId, projectId, history, contextNodeIds, signal })) {
               send(event.type, event);
               if (event.type === 'done') {
                 await remember({
@@ -193,7 +195,7 @@ export async function POST(request: Request) {
 
     let result: Awaited<ReturnType<typeof askGraph>>;
     try {
-      result = await askGraph(question, graph, { selectedNodeId, projectId, history, signal: request.signal });
+      result = await askGraph(question, graph, { selectedNodeId, projectId, history, contextNodeIds, signal: request.signal });
     } catch (err) {
       await refund();
       throw err;

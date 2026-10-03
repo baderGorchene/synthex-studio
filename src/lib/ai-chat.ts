@@ -57,6 +57,8 @@ export interface ChatOptions {
   /** Earlier turns of this conversation, oldest first (loaded server-side, never from the client). */
   history?: ChatHistoryTurn[];
   projectId?: string;
+  /** Nodes the user attached to this question (already checked against the graph by the route). */
+  contextNodeIds?: string[];
   /** Aborts the model call, e.g. when the client disconnects. */
   signal?: AbortSignal;
 }
@@ -259,6 +261,7 @@ async function prepareRequest(question: string, graph: KnowledgeGraph, options: 
     query: retrieval.query,
     selectedNodeId: options.selectedNodeId,
     extraSeedIds: retrieval.extraSeedIds,
+    pinnedIds: options.contextNodeIds,
     tokenBudget: CONTEXT_TOKEN_BUDGET
   });
   return { contextMarkdown: context.markdown, question, history };
