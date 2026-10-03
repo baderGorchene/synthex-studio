@@ -135,10 +135,10 @@ export function BaseKnowledgeCard({
           <Pencil size={14} strokeWidth={1.75} /><span>Edit</span>
         </button>
       )}
-      {!isImage && <h2>{node.title}</h2>}
+      <h2>{node.title}</h2>
 
       <div className={`knowledge-card-body-scroll ${node.height && !isImage ? 'has-custom-height' : ''}`}>
-        {/* A photo print: the picture at its own proportions, the title written on the margin below */}
+        {/* A photo print: the picture at its own proportions, its caption written on the margin below */}
         {isImage && (
           <figure className="photo-print">
             {previewImage ? (
@@ -172,10 +172,7 @@ export function BaseKnowledgeCard({
                 <span>No picture yet</span>
               </div>
             )}
-            <figcaption className="photo-caption">
-              <h2>{node.title}</h2>
-              {caption && <p>{caption}</p>}
-            </figcaption>
+            {caption && <figcaption className="photo-caption">{caption}</figcaption>}
           </figure>
         )}
 
