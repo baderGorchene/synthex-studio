@@ -11,6 +11,7 @@ import {
   isAbort,
   languageModel,
   logUsage,
+  meteredUsage,
   providerPlan,
   providerStatusCode,
   runWithFallback,
@@ -210,7 +211,7 @@ async function groundedCall(
       queries.push(...grounding.webSearchQueries.filter((q): q is string => typeof q === 'string'));
     }
 
-    const usage = { inputTokens: result.totalUsage.inputTokens, outputTokens: result.totalUsage.outputTokens };
+    const usage = meteredUsage(modelId, result.totalUsage);
     logUsage('research', provider, modelId, usage);
     return { output: result.output, seen: searched ? seen : new Map(), queries: [...new Set(queries)], searched, model: modelId, usage };
   }, signal);
@@ -241,8 +242,9 @@ Give each axis one specific web search query. Also list 2-3 testable preliminary
       timeout: PLAN_TIMEOUT_MS,
       abortSignal: signal
     });
-    logUsage('research-plan', provider, modelId, result.totalUsage);
-    return { plan: result.output, usage: result.totalUsage };
+    const usage = meteredUsage(modelId, result.totalUsage);
+    logUsage('research-plan', provider, modelId, usage);
+    return { plan: result.output, usage };
   }, signal);
 }
 
@@ -259,7 +261,7 @@ async function structuredCall(provider: ProviderName, label: string, system: str
       timeout: SEARCH_TIMEOUT_MS,
       abortSignal: signal
     });
-    const usage = { inputTokens: result.totalUsage.inputTokens, outputTokens: result.totalUsage.outputTokens };
+    const usage = meteredUsage(modelId, result.totalUsage);
     logUsage(label, provider, modelId, usage);
     return { output: result.output, model: modelId, usage };
   }, signal);

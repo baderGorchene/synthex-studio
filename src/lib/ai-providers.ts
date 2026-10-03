@@ -1,6 +1,7 @@
 import { createOpenAI } from '@ai-sdk/openai';
 import { createGoogle } from '@ai-sdk/google';
-import { APICallError, type LanguageModel } from 'ai';
+import { APICallError, type LanguageModel, type LanguageModelUsage } from 'ai';
+import { modelCostUsd } from './model-pricing.ts';
 
 export type ProviderName = 'OpenAI' | 'Gemini';
 
@@ -105,18 +106,29 @@ export async function withModelFallback<T>(
 export interface TokenUsage {
   inputTokens?: number;
   outputTokens?: number;
+  /** What the call(s) cost in USD at each model's price; drives extra credits for oversized requests. */
+  costUsd?: number;
+}
+
+/** One model call's usage, priced. A model with no price on file costs nothing extra (logged so the table gets updated). */
+export function meteredUsage(modelId: string, usage: LanguageModelUsage): TokenUsage {
+  const metered = { inputTokens: usage.inputTokens, cachedInputTokens: usage.inputTokenDetails?.cacheReadTokens, outputTokens: usage.outputTokens };
+  const costUsd = modelCostUsd(modelId, metered);
+  if (costUsd === undefined) console.warn(`[ai] No price on file for ${modelId}; add it to MODEL_PRICES in model-pricing.ts.`);
+  return { inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, costUsd };
 }
 
 export function addUsage(total: TokenUsage, usage: TokenUsage | undefined): TokenUsage {
   if (!usage) return total;
   return {
     inputTokens: (total.inputTokens ?? 0) + (usage.inputTokens ?? 0),
-    outputTokens: (total.outputTokens ?? 0) + (usage.outputTokens ?? 0)
+    outputTokens: (total.outputTokens ?? 0) + (usage.outputTokens ?? 0),
+    costUsd: (total.costUsd ?? 0) + (usage.costUsd ?? 0)
   };
 }
 
 export function logUsage(task: string, provider: ProviderName, model: string, usage: TokenUsage | undefined) {
-  if (usage) console.info(`[ai] ${task} ${provider}/${model} input=${usage.inputTokens ?? '?'} output=${usage.outputTokens ?? '?'}`);
+  if (usage) console.info(`[ai] ${task} ${provider}/${model} input=${usage.inputTokens ?? '?'} output=${usage.outputTokens ?? '?'} cost=$${usage.costUsd?.toFixed(5) ?? '?'}`);
 }
 
 export async function runWithFallback<T extends { usedFallback?: boolean }>(

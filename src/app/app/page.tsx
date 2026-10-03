@@ -16,7 +16,7 @@ import { EmptyMapGuide } from '@/components/research/EmptyMapGuide';
 import { CanvasToolDock, type ResearchProject, type WorkspaceSection } from '@/components/research/WorkspaceSidebar';
 import { MapMenu } from '@/components/research/MapMenu';
 import { extractYouTubeVideoId } from '@/components/research/SourceMetadata';
-import { addNode, addRelationship, exportContextMarkdown, exportGraphJson, exportMermaid, normalizeGraph, removeNode, strokeForLabel, updateNode, updateRelationship, type KnowledgeGraph } from '@/lib/graph';
+import { addNode, addRelationship, exportContextMarkdown, exportGraphJson, exportMermaid, normalizeGraph, removeNode, strokeForLabel, CHAT_CONTEXT_LIMIT, updateNode, updateRelationship, type KnowledgeGraph } from '@/lib/graph';
 import { parseBibTeX, bibEntriesToCanvasNodes } from '@/lib/bibtex';
 import { generateStandaloneSvg, exportGraphToPng } from '@/lib/canvas-export';
 import { RESEARCH_INPUT_LIMITS, RESEARCH_MODE_LABELS, type CanvasNode, type CanvasNodeType, type Connection, type Coordinates, type GraphRevisionSummary, type ResearchChange, type ResearchMode, type ResearchSession } from '@/types/canvas';
@@ -233,6 +233,8 @@ export default function SynthexWorkspace() {
   // Conversation memory lives on the server; the thread id ties this transcript to it.
   const [chatThreadId, setChatThreadId] = useState<string | null>(null);
   const [chatProjectId, setChatProjectId] = useState<string | null>(null);
+  // Cards attached to the next question (dropped on "Add to chat" or added with /attach).
+  const [chatContextIds, setChatContextIds] = useState<string[]>([]);
   const [activeSession, setActiveSession] = useState<ResearchSession | null>(null);
   const [reviewDecisions, setReviewDecisions] = useState<Record<string, 'accepted' | 'rejected'>>({});
   const [projectTitleDraft, setProjectTitleDraft] = useState('');
@@ -516,6 +518,7 @@ export default function SynthexWorkspace() {
     setChatProjectId(projectId);
     setChatLines([]);
     setChatThreadId(null);
+    setChatContextIds([]);
   }
 
   useEffect(() => {
@@ -543,7 +546,19 @@ export default function SynthexWorkspace() {
   const startNewChat = useCallback(() => {
     setChatThreadId(newId());
     setChatLines([]);
+    setChatContextIds([]);
   }, []);
+
+  const addToChatContext = useCallback((ids: string[]) => {
+    const current = chatContextIds.filter(id => graphRef.current.nodesById[id]);
+    const fresh = [...new Set(ids)].filter(id => graphRef.current.nodesById[id] && !current.includes(id));
+    const room = CHAT_CONTEXT_LIMIT - current.length;
+    const added = fresh.slice(0, Math.max(room, 0));
+    if (added.length) setChatContextIds([...current, ...added]);
+    if (fresh.length > added.length) announce(added.length ? `Added ${added.length} to the chat. It holds up to ${CHAT_CONTEXT_LIMIT} cards.` : `The chat holds up to ${CHAT_CONTEXT_LIMIT} cards.`);
+    else if (added.length) announce(`Added ${added.length} to the chat.`);
+    else announce('Already in the chat.');
+  }, [chatContextIds, announce]);
 
   const collab = useCollaboration({
     projectId,
@@ -1205,7 +1220,7 @@ export default function SynthexWorkspace() {
                   }
                   await reloadHistory();
                   setCanvasFitKey(value => value + 1);
-                  announce('Drafts are on your map. Keep what is right.');
+                  announce(typeof eventData.creditNotice === 'string' ? `Drafts are on your map. ${eventData.creditNotice}` : 'Drafts are on your map. Keep what is right.');
                 } else if (eventType === 'error') {
                   throw new Error(eventData.error || 'Research failed.');
                 }
@@ -1252,6 +1267,9 @@ export default function SynthexWorkspace() {
 
     setRightDrawerOpen(true);
     setComposerText('');
+    // Attached cards go with this question only; a card deleted since it was attached is left out.
+    const contextNodeIds = chatContextIds.filter(id => graphRef.current.nodesById[id]);
+    setChatContextIds([]);
     setChatLines(current => [...current, { role: 'user', text: question }]);
     setChatBusy(true);
     setThinkingStep('Retrieving knowledge graph context & semantic paths...');
@@ -1274,7 +1292,7 @@ export default function SynthexWorkspace() {
           'Content-Type': 'application/json',
           'Accept': 'text/event-stream'
         },
-        body: JSON.stringify({ projectId, question, selectedNodeId: selectedNode?.id, threadId: chatThreadId, stream: true })
+        body: JSON.stringify({ projectId, question, selectedNodeId: selectedNode?.id, threadId: chatThreadId, contextNodeIds, stream: true })
       });
 
       if (!response.ok) {
@@ -1305,6 +1323,7 @@ export default function SynthexWorkspace() {
         if (typeof data.creditsRemaining === 'number') {
           setUserAuth(prev => prev ? { ...prev, contextCredits: data.creditsRemaining } : { contextCredits: data.creditsRemaining });
         }
+        if (typeof data.creditNotice === 'string') announce(data.creditNotice);
         setChatLines(current => {
           const lastIdx = current.length - 1;
           if (lastIdx < 0) return current;
@@ -1400,6 +1419,7 @@ export default function SynthexWorkspace() {
                   }
                 } else if (eventType === 'credits' && typeof eventData.creditsRemaining === 'number') {
                   setUserAuth(prev => prev ? { ...prev, contextCredits: eventData.creditsRemaining } : { contextCredits: eventData.creditsRemaining });
+                  if (typeof eventData.creditNotice === 'string') announce(eventData.creditNotice);
                 } else if (eventType === 'error') {
                   throw new Error(eventData.error || 'Chat stream failed.');
                 }
@@ -1801,6 +1821,11 @@ export default function SynthexWorkspace() {
   const hasMapNodes = Object.keys(displayGraph.nodesById).length > 0;
   const selectedTitle = selectedNode?.title;
   const hasChat = chatLines.length > 0;
+  const hasSelection = selectedIds.length > 0;
+  const chatAttachments = chatContextIds.flatMap(id => {
+    const node = displayGraph.nodesById[id];
+    return node ? [{ id, label: node.title?.trim() || node.type }] : [];
+  });
   const credits = (amount: number) => plural(amount, 'credit');
 
   // Tools behind the paperclip (or `/`). A plain message asks about the map; research only runs when picked.
@@ -1814,6 +1839,9 @@ export default function SynthexWorkspace() {
       { id: 'sources', command: 'sources', label: 'Find sources', hint: 'Sources that support or dispute it', cost: credits(CREDIT_RATES.quick_research) },
       { id: 'challenge', command: 'challenge', label: 'Challenge it', hint: 'Evidence and arguments against it', cost: credits(CREDIT_RATES.quick_research) }
     ] : []),
+    ...(hasSelection ? [
+      { id: 'attach', command: 'attach', label: 'Add to chat', hint: 'Attach the selected cards to your next question', cost: 'Free' }
+    ] : []),
     { id: 'note', command: 'note', label: 'Write a note', hint: 'Pin what you typed as a note, no AI', cost: 'Free' },
     ...(hasMapNodes ? [
       { id: 'audit', command: 'audit', label: 'Audit my map', hint: 'Gaps, loose ideas and unverified claims', cost: 'Free' },
@@ -1823,7 +1851,7 @@ export default function SynthexWorkspace() {
       { id: 'chat', command: 'chat', label: 'Show the chat', hint: 'Open the conversation so far', cost: 'Free' },
       { id: 'new', command: 'new', label: 'New chat', hint: 'Start over with an empty conversation', cost: 'Free' }
     ] : [])
-  ], [selectedTitle, hasMapNodes, hasChat]);
+  ], [selectedTitle, hasMapNodes, hasChat, hasSelection]);
 
   function submitComposer(text: string, toolId: string | null) {
     if (toolId === 'quick' || toolId === 'deep') {
@@ -1842,6 +1870,7 @@ export default function SynthexWorkspace() {
     if (toolId === 'expand' && selectedTitle) buildMap(`Expand on "${selectedTitle}": the key sub-ideas, mechanisms and examples.${focus}`);
     else if (toolId === 'sources' && selectedTitle) buildMap(`Find authoritative sources that support or dispute: "${selectedTitle}".${focus}`);
     else if (toolId === 'challenge' && selectedTitle) buildMap(`What evidence or arguments challenge "${selectedTitle}"?${focus}`);
+    else if (toolId === 'attach') addToChatContext(selectedIds);
     else if (toolId === 'note') { setComposerText(''); addRecord('note', text ? { content: text } : undefined); }
     else if (toolId === 'audit') { setRightDrawerOpen(true); void executeToolDirectly('recommend_improvements'); }
     else if (toolId === 'tidy') handleApplyLayout(computeOrganizedLayout(graphRef.current, 'cluster_by_type'));
@@ -2080,6 +2109,7 @@ export default function SynthexWorkspace() {
                   onPlaced={markPlaced}
                   onSelectMultipleNodes={selectMultipleNodes}
                   onDeleteNodes={deleteNodes}
+                  onAddToContext={addToChatContext}
                   onClearSelection={() => setSelectedIds([])} onClickAway={() => setEditingNoteId(null)} onCancelLinking={() => setLinkingFromId(null)} onMoveNodes={moveNodes} onAssignCluster={assignCluster} onConnect={connectNodes}
                   onStartLinking={setLinkingFromId} onToggleGroup={toggleGroup} onEditNote={setEditingNoteId}
                   onUpdateNote={(id, content) => updateGraph(current => updateNode(current, id, withAutoTitle(current.nodesById[id], { content })), false)}
@@ -2126,6 +2156,8 @@ export default function SynthexWorkspace() {
                       activeToolId={composerTool}
                       onActiveToolChange={setComposerTool}
                       onRunTool={runComposerTool}
+                      attachments={chatAttachments}
+                      onRemoveAttachment={id => setChatContextIds(current => current.filter(value => value !== id))}
                       inputRef={element => { composerRef.current = element; }}
                       maxLength={RESEARCH_INPUT_LIMITS.organize}
                       placeholder={composerTool === 'organize' || composerTool === 'check' ? 'Paste or type your raw thinking. Messy is fine.' : selectedTitle ? `Ask about “${selectedTitle.slice(0, 32)}”, or type /` : 'Ask about your map, or type /'}

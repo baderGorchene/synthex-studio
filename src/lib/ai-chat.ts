@@ -11,6 +11,7 @@ import {
   isGeminiCapacityError,
   languageModel,
   logUsage,
+  meteredUsage,
   modelsFor,
   providerPlan,
   recordProviderOutcome,
@@ -57,6 +58,8 @@ export interface ChatOptions {
   /** Earlier turns of this conversation, oldest first (loaded server-side, never from the client). */
   history?: ChatHistoryTurn[];
   projectId?: string;
+  /** Nodes the user attached to this question (already checked against the graph by the route). */
+  contextNodeIds?: string[];
   /** Aborts the model call, e.g. when the client disconnects. */
   signal?: AbortSignal;
 }
@@ -246,9 +249,6 @@ function callSettings(provider: ProviderName, modelId: string, request: ChatRequ
   };
 }
 
-function toUsage(usage: { inputTokens?: number; outputTokens?: number } | undefined): TokenUsage | undefined {
-  return usage ? { inputTokens: usage.inputTokens, outputTokens: usage.outputTokens } : undefined;
-}
 
 async function prepareRequest(question: string, graph: KnowledgeGraph, options: ChatOptions): Promise<ChatRequest> {
   const history = recentHistory(options.history);
@@ -259,6 +259,7 @@ async function prepareRequest(question: string, graph: KnowledgeGraph, options: 
     query: retrieval.query,
     selectedNodeId: options.selectedNodeId,
     extraSeedIds: retrieval.extraSeedIds,
+    pinnedIds: options.contextNodeIds,
     tokenBudget: CONTEXT_TOKEN_BUDGET
   });
   return { contextMarkdown: context.markdown, question, history };
@@ -272,7 +273,7 @@ async function generateWithProvider(
 ): Promise<GraphAnswer> {
   return withModelFallback(provider, async modelId => {
     const result = await generateText(callSettings(provider, modelId, request, signal));
-    const usage = toUsage(result.totalUsage);
+    const usage = meteredUsage(modelId, result.totalUsage);
     logUsage('chat', provider, modelId, usage);
     return {
       ...finalizeChat(result.output, graph),
@@ -329,7 +330,7 @@ async function* streamWithProvider(
     }
     if (final.toolCall) yield { type: 'tool', toolCall: final.toolCall };
 
-    const usage = toUsage(await result.totalUsage);
+    const usage = meteredUsage(modelId, await result.totalUsage);
     logUsage('chat', provider, modelId, usage);
     yield {
       type: 'done',

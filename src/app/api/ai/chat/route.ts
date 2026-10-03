@@ -9,9 +9,9 @@ import {
   userHasProjectAccess,
   type ChatMessageRecord
 } from '@/lib/db';
-import { normalizeGraph } from '@/lib/graph';
+import { normalizeGraph, pickContextNodeIds } from '@/lib/graph';
 import { getServerAuth } from '@/lib/auth';
-import { deductCredits, refundCredits } from '@/lib/credits';
+import { chargeExtraForUsage, deductCredits, extraCreditsNotice, refundCredits } from '@/lib/credits';
 import type { CanvasNode, Connection } from '@/types/canvas';
 
 const THREAD_ID = /^[A-Za-z0-9_-]{1,64}$/;
@@ -111,6 +111,8 @@ export async function POST(request: Request) {
         .catch(err => console.error('Could not save chat messages:', err));
     };
     const graph = normalizeGraph(rawNodes as CanvasNode[], rawEdges as Connection[]);
+    // Cards the user attached: only ids on this (access-checked) map count.
+    const contextNodeIds = pickContextNodeIds(graph, body.contextNodeIds);
 
     // Charge Context Credits up front (atomic), refund if the answer fails.
     const creditNote = `Asked: "${question.slice(0, 50)}..."`;
@@ -130,6 +132,21 @@ export async function POST(request: Request) {
     const refund = async () => {
       if (userId) await refundCredits(userId, 'chat', `Refund: ${creditNote}`).catch(err => console.error('Credit refund failed:', err));
     };
+    // A question whose real model cost ran past its flat rate pays the difference, and the user is told.
+    let extraCredits = 0;
+    const chargeExtra = async (costUsd: number | undefined) => {
+      if (!userId) return;
+      const extra = await chargeExtraForUsage(userId, 'chat', costUsd, creditNote).catch(err => {
+        console.error('Extra credit charge failed:', err);
+        return { extraCredits: 0, balance: undefined };
+      });
+      extraCredits = extra.extraCredits;
+      if (extra.balance !== undefined) creditsRemaining = extra.balance;
+    };
+    const creditsPayload = () => ({
+      creditsRemaining,
+      ...(extraCredits ? { extraCredits, creditNotice: extraCreditsNotice(extraCredits, 'chat') } : {})
+    });
     const wantsStream = request.headers.get('accept')?.includes('text/event-stream') || body?.stream === true;
 
     if (wantsStream) {
@@ -145,7 +162,7 @@ export async function POST(request: Request) {
           };
           try {
             send('thread', { threadId });
-            for await (const event of askGraphStream(question, graph, { selectedNodeId, projectId, history, signal })) {
+            for await (const event of askGraphStream(question, graph, { selectedNodeId, projectId, history, contextNodeIds, signal })) {
               send(event.type, event);
               if (event.type === 'done') {
                 await remember({
@@ -155,9 +172,10 @@ export async function POST(request: Request) {
                   provider: event.provider,
                   model: event.model
                 });
+                await chargeExtra(event.usage?.costUsd);
               }
             }
-            if (creditsRemaining !== undefined) send('credits', { creditsRemaining });
+            if (creditsRemaining !== undefined) send('credits', creditsPayload());
           } catch (err) {
             if (signal.aborted) {
               console.info('Graph chat stream cancelled by the client.');
@@ -193,14 +211,15 @@ export async function POST(request: Request) {
 
     let result: Awaited<ReturnType<typeof askGraph>>;
     try {
-      result = await askGraph(question, graph, { selectedNodeId, projectId, history, signal: request.signal });
+      result = await askGraph(question, graph, { selectedNodeId, projectId, history, contextNodeIds, signal: request.signal });
     } catch (err) {
       await refund();
       throw err;
     }
 
     await remember(result);
-    return Response.json({ ...result, threadId, creditsRemaining });
+    await chargeExtra(result.usage?.costUsd);
+    return Response.json({ ...result, threadId, ...creditsPayload() });
   } catch (error) {
     if (error instanceof Error && error.message === 'AI_NOT_CONFIGURED') {
       return Response.json({ error: 'Add OPENAI_API_KEY or GEMINI_API_KEY to the server environment to enable AI.' }, { status: 503 });

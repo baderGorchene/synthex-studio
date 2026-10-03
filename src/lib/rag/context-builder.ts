@@ -10,6 +10,8 @@ export interface GraphRAGContextOptions {
   selectedNodeId?: string;
   /** Additional walk seeds, e.g. nodes cited earlier in the conversation. */
   extraSeedIds?: string[];
+  /** Nodes the user attached to the question: always in the context, ahead of anything retrieved. */
+  pinnedIds?: string[];
   tokenBudget?: number; // approximate token budget (chars / 4)
   maxNodes?: number;
 }
@@ -25,7 +27,7 @@ export interface GraphRAGContextResult {
 /**
  * Format a canvas node into concise markdown for LLM consumption
  */
-function serializeNode(node: CanvasNode): string {
+function serializeNode(node: CanvasNode, maxChars = Infinity): string {
   const lines: string[] = [];
   const status = node.metadata?.claimStatus ? ` [Status: ${node.metadata.claimStatus}]` : '';
   const conf = node.metadata?.confidence ? ` (confidence: ${(node.metadata.confidence * 100).toFixed(0)}%)` : '';
@@ -48,7 +50,8 @@ function serializeNode(node: CanvasNode): string {
     }
   }
 
-  return lines.join('\n');
+  const text = lines.join('\n');
+  return text.length > maxChars ? `${text.slice(0, maxChars)}…` : text;
 }
 
 /**
@@ -64,6 +67,7 @@ export async function buildGraphRAGContext(
     query,
     selectedNodeId,
     extraSeedIds = [],
+    pinnedIds = [],
     tokenBudget = 6000,
     maxNodes = 25
   } = options;
@@ -86,7 +90,8 @@ export async function buildGraphRAGContext(
     seedIds.push(selectedNodeId);
   }
 
-  for (const id of extraSeedIds) {
+  const pinned = [...new Set(pinnedIds)].map(id => graph.nodesById[id]).filter((node): node is CanvasNode => Boolean(node));
+  for (const id of [...pinned.map(node => node.id), ...extraSeedIds]) {
     if (graph.nodesById[id] && !seedIds.includes(id)) seedIds.push(id);
   }
 
@@ -122,27 +127,38 @@ export async function buildGraphRAGContext(
     damping: 0.85
   });
 
-  // 4. Token-budgeted serialization
+  // 4. Token-budgeted serialization. Attached nodes come first and are never dropped: together they may use
+  // up to 60% of the budget, each trimmed to its share, and retrieved nodes fill what is left.
   const maxCharBudget = tokenBudget * 4;
-  let currentChars = 0;
+  const pinnedShare = pinned.length ? Math.floor((maxCharBudget * 0.6) / pinned.length) : 0;
+  const pinnedText = pinned.map(node => serializeNode(node, pinnedShare));
+  let currentChars = pinnedText.reduce((sum, text) => sum + text.length + 4, 0);
+  const pinnedIdSet = new Set(pinned.map(node => node.id));
   const includedNodes: CanvasNode[] = [];
 
   for (const node of subgraph.nodes) {
+    if (pinnedIdSet.has(node.id)) continue;
     const serialized = serializeNode(node);
-    if (currentChars + serialized.length > maxCharBudget && includedNodes.length >= 3) {
+    if (currentChars + serialized.length > maxCharBudget && pinned.length + includedNodes.length >= 3) {
       break;
     }
     includedNodes.push(node);
     currentChars += serialized.length + 4;
   }
 
-  const includedNodeIds = new Set(includedNodes.map(n => n.id));
+  const includedNodeIds = new Set([...pinnedIdSet, ...includedNodes.map(n => n.id)]);
   const relevantEdges: Connection[] = subgraph.edges.filter(
     e => includedNodeIds.has(e.from) && includedNodeIds.has(e.to)
   );
 
   // 5. Construct Structured Markdown context
   const sections: string[] = [];
+
+  if (pinned.length) {
+    sections.push(`## Attached by the user (${pinned.length}): the question is about these`);
+    sections.push(...pinnedText);
+    sections.push('');
+  }
 
   sections.push(`## Active Knowledge Subgraph (${includedNodes.length} nodes retrieved from ${totalNodesInGraph} total)`);
 
@@ -175,7 +191,7 @@ export async function buildGraphRAGContext(
 
   const markdown = sections.join('\n');
   const json = JSON.stringify({
-    nodes: includedNodes.map(({ id, type, title, content, url, metadata }) => ({
+    nodes: [...pinned, ...includedNodes].map(({ id, type, title, content, url, metadata }) => ({
       id,
       type,
       title,
@@ -189,7 +205,7 @@ export async function buildGraphRAGContext(
   return {
     markdown,
     json,
-    retrievedNodeIds: includedNodes.map(n => n.id),
+    retrievedNodeIds: [...includedNodeIds],
     seedNodeIds: seedIds,
     totalNodesInGraph
   };
