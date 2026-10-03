@@ -47,15 +47,10 @@ h1, h2, h3 { font-family: var(--font-hand); font-weight: 700; letter-spacing: 0;
 .knowledge-card.type-source h2, .knowledge-card.type-link h2 { font-size: 22px; }
 
 /* ---------- Photo: a print pinned to the board ----------
-   White photo paper with an even border and a deeper bottom margin where the title is written.
-   The picture keeps its own proportions; the card's height follows it. */
-.knowledge-card.type-image {
-  padding: 10px 10px 0;
-  border: 0;
-  background: #fff !important;
-  box-shadow: 0 0 0 1px rgba(17, 18, 20, .06), 0 1px 1px rgba(17, 18, 20, .08), 0 16px 22px -16px rgba(17, 18, 20, .45);
-}
-.knowledge-card.type-image.is-selected { border: 0; box-shadow: 0 0 0 1px rgba(17, 18, 20, .06), 0 38px 34px -24px rgba(17, 18, 20, .38), 0 12px 14px -12px rgba(17, 18, 20, .18); }
+   White photo paper under the same coloured top rule and title as every note; a narrow, even border
+   round the picture and a deeper bottom margin. The picture keeps its own proportions; the card's height follows it. */
+.knowledge-card.type-image { padding: 20px 10px 14px; background: #fff !important; }
+.knowledge-card.type-image h2 { margin: 0 4px 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .knowledge-card.type-image .knowledge-card-body-scroll { overflow: visible; padding: 0; }
 .photo-print { margin: 0; }
 .photo-frame { position: relative; background: #ECEAE4; line-height: 0; }
@@ -66,10 +61,8 @@ h1, h2, h3 { font-family: var(--font-hand); font-weight: 700; letter-spacing: 0;
   display: grid; place-content: center; justify-items: center; gap: 8px;
   aspect-ratio: 4 / 3; color: var(--faint); font-size: 13px; line-height: 1.2;
 }
-.photo-caption { padding: 10px 4px 12px; }
-.knowledge-card.type-image .photo-caption h2 { overflow: hidden; font-size: 24px; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
-.photo-caption p { margin: 4px 0 0; color: var(--muted); font-family: var(--font-hand); font-size: 18px; line-height: 1.15; text-align: center; }
-.knowledge-card.type-image .note-meta { margin: -6px 0 10px; text-align: center; }
+.photo-caption { padding: 10px 4px 0; color: var(--muted); font-family: var(--font-hand); font-size: 19px; line-height: 1.15; text-align: center; }
+.knowledge-card.type-image .note-meta { margin: 8px 4px 0; }
 .photo-zoom {
   position: absolute; z-index: 2; top: 8px; right: 8px;
   display: grid; place-items: center; width: 30px; height: 30px; padding: 0;
