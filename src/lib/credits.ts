@@ -8,6 +8,7 @@ import { isNeonConfigured } from './neon.ts';
 
 export { CREDIT_RATES, TIER_CREDIT_QUOTAS, type CreditAction, type MeteredAction } from './plans.ts';
 import { CREDIT_RATES, type MeteredAction } from './plans.ts';
+import { extraCreditsFor } from './model-pricing.ts';
 
 
 /**
@@ -63,6 +64,33 @@ export async function refundCredits(
   metadata?: string
 ): Promise<void> {
   await topUpUserCredits(userIdentifier, getActionCost(action), 'refund', metadata);
+}
+
+/**
+ * After a metered AI call: charges extra credits when its real model cost ran past what the flat rate covers.
+ * Atomic like `deductCredits`; if the balance cannot cover the extra, it is waived rather than failing the request.
+ * Returns the extra charged (0 if none) and the new balance when it changed.
+ */
+export async function chargeExtraForUsage(
+  userIdentifier: string,
+  action: MeteredAction,
+  costUsd: number | undefined,
+  metadata: string
+): Promise<{ extraCredits: number; balance?: number }> {
+  const extraCredits = extraCreditsFor(costUsd, getActionCost(action));
+  if (!extraCredits) return { extraCredits: 0 };
+  const result = await deductUserCredits(userIdentifier, extraCredits, action, `Extra for a large request ($${costUsd?.toFixed(4)} model cost): ${metadata}`);
+  if (!result.success) {
+    console.info(`[credits] Waived ${extraCredits} extra credits for ${action}: balance too low.`);
+    return { extraCredits: 0 };
+  }
+  return { extraCredits, balance: result.balance };
+}
+
+/** The notice shown to the user when a request cost extra credits. */
+export function extraCreditsNotice(extraCredits: number, action: MeteredAction): string {
+  const total = getActionCost(action) + extraCredits;
+  return `This request was larger than usual, so it used ${total} credits instead of ${getActionCost(action)} (${extraCredits} extra).`;
 }
 
 /**

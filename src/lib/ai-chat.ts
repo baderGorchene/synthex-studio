@@ -11,6 +11,7 @@ import {
   isGeminiCapacityError,
   languageModel,
   logUsage,
+  meteredUsage,
   modelsFor,
   providerPlan,
   recordProviderOutcome,
@@ -248,9 +249,6 @@ function callSettings(provider: ProviderName, modelId: string, request: ChatRequ
   };
 }
 
-function toUsage(usage: { inputTokens?: number; outputTokens?: number } | undefined): TokenUsage | undefined {
-  return usage ? { inputTokens: usage.inputTokens, outputTokens: usage.outputTokens } : undefined;
-}
 
 async function prepareRequest(question: string, graph: KnowledgeGraph, options: ChatOptions): Promise<ChatRequest> {
   const history = recentHistory(options.history);
@@ -275,7 +273,7 @@ async function generateWithProvider(
 ): Promise<GraphAnswer> {
   return withModelFallback(provider, async modelId => {
     const result = await generateText(callSettings(provider, modelId, request, signal));
-    const usage = toUsage(result.totalUsage);
+    const usage = meteredUsage(modelId, result.totalUsage);
     logUsage('chat', provider, modelId, usage);
     return {
       ...finalizeChat(result.output, graph),
@@ -332,7 +330,7 @@ async function* streamWithProvider(
     }
     if (final.toolCall) yield { type: 'tool', toolCall: final.toolCall };
 
-    const usage = toUsage(await result.totalUsage);
+    const usage = meteredUsage(modelId, await result.totalUsage);
     logUsage('chat', provider, modelId, usage);
     yield {
       type: 'done',

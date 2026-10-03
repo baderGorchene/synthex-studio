@@ -15,10 +15,17 @@ import { ONTOLOGY_PRESETS } from '../src/types/canvas.ts';
 import { buildVaultFiles, createZipArchive } from '../src/lib/vault-export.ts';
 import { parseBibTeX, bibEntriesToCanvasNodes } from '../src/lib/bibtex.ts';
 import { generateStandaloneSvg } from '../src/lib/canvas-export.ts';
+import { extraCreditsFor, modelCostUsd, USD_PER_CREDIT } from '../src/lib/model-pricing.ts';
 import { extractPageNumber, formatPdfPageUrl, normalizeEvidenceItem } from '../src/utils/citation.ts';
 
 const concept = (id, title = id, type = 'concept') => ({ id, type, x: 0, y: 0, title, createdAt: 1 });
 const relation = (id, from, to, label = 'supports') => ({ id, from, to, label });
+/** Token counts match, and the cost is those tokens at the model's current price. */
+const assertUsage = (usage, model, inputTokens, outputTokens) => {
+  assert.equal(usage.inputTokens, inputTokens);
+  assert.equal(usage.outputTokens, outputTokens);
+  assert.ok(Math.abs(usage.costUsd - modelCostUsd(model, { inputTokens, outputTokens })) < 1e-12, `cost ${usage.costUsd}`);
+};
 
 test('normalizes a graph and rejects duplicate or dangling ids', () => {
   const graph = normalizeGraph([concept('a'), concept('b')], [relation('e', 'a', 'b')]);
@@ -1303,7 +1310,7 @@ test('chat: tool calls are validated, and a failed OpenAI call falls back to Gem
     assert.equal(fallback.toolCall.tool, 'propose_nodes');
     assert.deepEqual(fallback.toolCall.parameters.nodes.map(n => n.title), ['New claim'], 'blank nodes are dropped');
     assert.equal(fallback.toolCall.parameters.relationships.length, 1);
-    assert.deepEqual(fallback.usage, { inputTokens: 100, outputTokens: 20 });
+    assertUsage(fallback.usage, 'gemini-3.8-flash', 100, 20);
     assert.equal(getAIStatus().usingFallback, true);
 
     calls.length = 0;
@@ -1395,7 +1402,7 @@ test('chat stream: Gemini answers are streamed incrementally', async () => {
     assert.equal(done.type, 'done');
     assert.equal(done.usedFallback, false, 'Gemini as the only provider is not a fallback');
     assert.deepEqual(done.referencedNodeIds, ['c1']);
-    assert.deepEqual(done.usage, { inputTokens: 50, outputTokens: 10 });
+    assertUsage(done.usage, 'gemini-3.8-flash', 50, 10);
   });
 });
 
@@ -1441,7 +1448,7 @@ test('research: OpenAI sources must come from web search results; progress strea
     assert.equal(done.type, 'done');
     assert.deepEqual(done.result.sources, [{ title: 'Reef study', url: 'https://www.example.org/reef/' }], 'unverified model citation is dropped');
     assert.deepEqual(done.result.searchQueries, ['coral bleaching 2026']);
-    assert.deepEqual(done.result.usage, { inputTokens: 500, outputTokens: 200 });
+    assertUsage(done.result.usage, 'gpt-6-luna', 500, 200);
     assert.equal(done.result.groundingNote, undefined);
   });
 });
@@ -1520,7 +1527,7 @@ test('research: Gemini deep research plans, runs two grounded hops, and links ho
     assert.deepEqual(result.sources.map(s => s.url), ['https://one.example.org/a', 'https://two.example.org/b']);
     assert.deepEqual(result.searchQueries, ['reef symbiosis', 'coral adaptation']);
     assert.equal(result.provider, 'Gemini');
-    assert.deepEqual(result.usage, { inputTokens: 300, outputTokens: 120 });
+    assertUsage(result.usage, 'gemini-3.8-flash', 300, 120);
   });
 });
 
@@ -1600,4 +1607,20 @@ test('keeps only unique, existing chat context ids, capped', () => {
   assert.deepEqual(pickContextNodeIds(graph, ['a', 'b', 'c'], 2), ['a', 'b']);
   assert.deepEqual(pickContextNodeIds(graph, 'a'), []);
   assert.deepEqual(pickContextNodeIds(graph, undefined), []);
+});
+
+test('prices model calls per model and date, and charges extra credits only past the flat rate', () => {
+  const usage = { inputTokens: 1_000_000, outputTokens: 1_000_000 };
+  assert.equal(modelCostUsd('gpt-6-luna', usage), 0.60);
+  assert.equal(modelCostUsd('gpt-6-luna', { ...usage, cachedInputTokens: 1_000_000 }), 0.51);
+  assert.equal(modelCostUsd('gemini-3.8-flash', usage, new Date('2026-12-31T23:00:00Z')), 4.50);
+  assert.equal(modelCostUsd('gemini-3.8-flash', usage, new Date('2027-01-01T00:00:00Z')), 9.00);
+  assert.equal(modelCostUsd('unknown-model', usage), undefined);
+
+  assert.equal(extraCreditsFor(undefined, 1), 0);
+  assert.equal(extraCreditsFor(USD_PER_CREDIT * 0.9, 1), 0);
+  assert.equal(extraCreditsFor(USD_PER_CREDIT, 1), 0);
+  assert.equal(extraCreditsFor(USD_PER_CREDIT * 1.2, 1), 1);
+  assert.equal(extraCreditsFor(USD_PER_CREDIT * 50, 1), 2);
+  assert.equal(extraCreditsFor(USD_PER_CREDIT * 21, 20), 1);
 });

@@ -9,7 +9,7 @@ import {
 } from '@/lib/db';
 import { normalizeGraph, strokeForLabel } from '@/lib/graph';
 import { getServerAuth } from '@/lib/auth';
-import { deductCredits, refundCredits } from '@/lib/credits';
+import { chargeExtraForUsage, deductCredits, extraCreditsNotice, refundCredits } from '@/lib/credits';
 import { RESEARCH_INPUT_LIMITS, RESEARCH_MODE_LABELS, type CanvasNode, type Connection, type ResearchChange, type ResearchMode, type ResearchSession } from '@/types/canvas';
 import type { MeteredAction } from '@/lib/plans';
 
@@ -207,6 +207,16 @@ export async function POST(request: Request) {
       creditsRemaining = charge.balance;
     }
     const refund = async () => { if (userId) await refundCredits(userId, creditAction, `Refund: ${creditNote}`); };
+    // A run whose real model cost ran past its flat rate pays the difference, and the user is told.
+    const chargeExtra = async (costUsd: number | undefined) => {
+      if (!userId) return {};
+      const extra = await chargeExtraForUsage(userId, creditAction, costUsd, creditNote).catch(err => {
+        console.error('Extra credit charge failed:', err);
+        return { extraCredits: 0, balance: undefined };
+      });
+      if (extra.balance !== undefined) creditsRemaining = extra.balance;
+      return extra.extraCredits ? { extraCredits: extra.extraCredits, creditNotice: extraCreditsNotice(extra.extraCredits, creditAction) } : {};
+    };
 
     const wantsStream = request.headers.get('accept')?.includes('text/event-stream') || body?.stream === true;
 
@@ -225,7 +235,8 @@ export async function POST(request: Request) {
               if (event.type === 'done') {
                 const session = buildSessionFromResearchResult(query, mode, graph, event.result);
                 await saveResearchSession(session, projectId);
-                send('done', { session, result: event.result, creditsRemaining });
+                const extra = await chargeExtra(event.result.usage?.costUsd);
+                send('done', { session, result: event.result, creditsRemaining, ...extra });
               } else {
                 send(event.type, event);
               }
@@ -259,8 +270,10 @@ export async function POST(request: Request) {
     }
 
     let session: ResearchSession;
+    let costUsd: number | undefined;
     try {
       const resultPayload = await researchGraph(query, mode, graph, { projectId });
+      costUsd = resultPayload.usage?.costUsd;
       session = buildSessionFromResearchResult(query, mode, graph, resultPayload);
       await saveResearchSession(session, projectId);
     } catch (err) {
@@ -268,7 +281,8 @@ export async function POST(request: Request) {
       throw err;
     }
 
-    return Response.json({ session, creditsRemaining }, { status: 201 });
+    const extra = await chargeExtra(costUsd);
+    return Response.json({ session, creditsRemaining, ...extra }, { status: 201 });
   } catch (error) {
     if (error instanceof Error && error.message === 'AI_NOT_CONFIGURED') {
       return Response.json({ error: 'Add OPENAI_API_KEY or GEMINI_API_KEY to the server environment to enable research.' }, { status: 503 });

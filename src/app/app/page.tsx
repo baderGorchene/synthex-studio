@@ -1220,7 +1220,7 @@ export default function SynthexWorkspace() {
                   }
                   await reloadHistory();
                   setCanvasFitKey(value => value + 1);
-                  announce('Drafts are on your map. Keep what is right.');
+                  announce(typeof eventData.creditNotice === 'string' ? `Drafts are on your map. ${eventData.creditNotice}` : 'Drafts are on your map. Keep what is right.');
                 } else if (eventType === 'error') {
                   throw new Error(eventData.error || 'Research failed.');
                 }
@@ -1323,6 +1323,7 @@ export default function SynthexWorkspace() {
         if (typeof data.creditsRemaining === 'number') {
           setUserAuth(prev => prev ? { ...prev, contextCredits: data.creditsRemaining } : { contextCredits: data.creditsRemaining });
         }
+        if (typeof data.creditNotice === 'string') announce(data.creditNotice);
         setChatLines(current => {
           const lastIdx = current.length - 1;
           if (lastIdx < 0) return current;
@@ -1418,6 +1419,7 @@ export default function SynthexWorkspace() {
                   }
                 } else if (eventType === 'credits' && typeof eventData.creditsRemaining === 'number') {
                   setUserAuth(prev => prev ? { ...prev, contextCredits: eventData.creditsRemaining } : { contextCredits: eventData.creditsRemaining });
+                  if (typeof eventData.creditNotice === 'string') announce(eventData.creditNotice);
                 } else if (eventType === 'error') {
                   throw new Error(eventData.error || 'Chat stream failed.');
                 }
