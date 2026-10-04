@@ -15,6 +15,9 @@ import { NoteEditor } from '@/components/research/NoteEditor';
 import { EmptyMapGuide } from '@/components/research/EmptyMapGuide';
 import { CanvasToolDock, type ResearchProject, type WorkspaceSection } from '@/components/research/WorkspaceSidebar';
 import { MapMenu } from '@/components/research/MapMenu';
+import { MapsManager } from '@/components/research/MapsManager';
+import { MapBriefDialog } from '@/components/research/MapBriefDialog';
+import { removeMapBrief, saveMapBrief, type MapBrief } from '@/lib/map-brief';
 import { extractYouTubeVideoId } from '@/components/research/SourceMetadata';
 import { addNode, addRelationship, exportContextMarkdown, exportGraphJson, exportMermaid, normalizeGraph, removeNode, strokeForLabel, CHAT_CONTEXT_LIMIT, updateNode, updateRelationship, type KnowledgeGraph } from '@/lib/graph';
 import { parseBibTeX, bibEntriesToCanvasNodes } from '@/lib/bibtex';
@@ -180,6 +183,9 @@ export default function SynthexWorkspace() {
   const [overflowMenuOpen, setOverflowMenuOpen] = useState(false);
   const overflowMenuRef = useRef<HTMLDivElement>(null);
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
+  const [mapsManagerOpen, setMapsManagerOpen] = useState(false);
+  // A map just created: ask what it's for (MapBriefDialog) before the person starts on it.
+  const [briefFor, setBriefFor] = useState<{ id: string; title: string } | null>(null);
   const [addRecordMenuOpen, setAddRecordMenuOpen] = useState(false);
   const navMenuRef = useRef<HTMLDivElement>(null);
   const projectMenuRef = useRef<HTMLDivElement>(null);
@@ -424,9 +430,10 @@ export default function SynthexWorkspace() {
       setPersonalProjects(data.personalProjects || []);
       setWorkspaceKind(data.workspace?.kind === 'team' ? 'team' : 'personal');
       if (data.projects.length > 0) {
-        // Keep the open map if it belongs to this workspace, otherwise open the workspace's first map.
+        // Keep the open map if it belongs to this workspace (or is one of your personal maps opened from a team),
+        // otherwise open the workspace's first map.
         const stored = typeof window !== 'undefined' ? localStorage.getItem('synthex_active_project_id') : null;
-        const matching = data.projects.find(p => p.id === stored);
+        const matching = [...data.projects, ...(data.personalProjects || [])].find(p => p.id === stored);
         const nextId = matching ? matching.id : data.projects[0].id;
         setProjectId(nextId);
         if (typeof window !== 'undefined') {
@@ -452,6 +459,21 @@ export default function SynthexWorkspace() {
     }
   }, [announce, loadProjects]);
 
+  /** Opens a map from the dropdown or the maps manager, a personal one included while in a team. */
+  const openMap = useCallback((id: string) => {
+    setProjectId(id);
+    if (typeof window !== 'undefined') localStorage.setItem('synthex_active_project_id', id);
+    setProjectMenuOpen(false);
+    setMapsManagerOpen(false);
+  }, []);
+  const closeMapsManager = useCallback(() => setMapsManagerOpen(false), []);
+  const skipBrief = useCallback(() => setBriefFor(null), []);
+  const saveBrief = useCallback((brief: MapBrief) => {
+    if (!briefFor) return;
+    announce(saveMapBrief(briefFor.id, brief) ? 'Saved. Your map is ready.' : 'This browser would not keep your answers, but your map is ready.');
+    setBriefFor(null);
+  }, [briefFor, announce]);
+
   const renameProject = useCallback(async (id: string, title: string) => {
     try {
       await readJson(await fetch('/api/projects', {
@@ -472,6 +494,7 @@ export default function SynthexWorkspace() {
   const deleteProject = useCallback(async (id: string) => {
     try {
       await readJson(await fetch(`/api/projects?projectId=${encodeURIComponent(id)}`, { method: 'DELETE' }));
+      removeMapBrief(id);
       // Deleting the open map opens the workspace's first remaining map (or a fresh starter map).
       if (typeof window !== 'undefined' && localStorage.getItem('synthex_active_project_id') === id) {
         localStorage.removeItem('synthex_active_project_id');
@@ -677,7 +700,7 @@ export default function SynthexWorkspace() {
   const nodes = useMemo(() => Object.values(graph.nodesById), [graph]);
   const edges = useMemo(() => Object.values(graph.edgesById), [graph]);
   const selectedNode = selectedIds.length === 1 ? graph.nodesById[selectedIds[0]] : undefined;
-  const project = projects.find(item => item.id === projectId);
+  const project = projects.find(item => item.id === projectId) ?? personalProjects.find(item => item.id === projectId);
 
 
   // Draft layer: the newest research run with undecided changes sits on the board in proof blue.
@@ -991,7 +1014,8 @@ export default function SynthexWorkspace() {
         body: JSON.stringify({ title: projectTitleDraft })
       }));
       setProjects(current => [...current, data.project]);
-      setProjectTitleDraft(''); setProjectMenuOpen(false); setProjectId(data.project.id);
+      setProjectTitleDraft(''); setProjectMenuOpen(false); setMapsManagerOpen(false); setProjectId(data.project.id);
+      setBriefFor({ id: data.project.id, title: data.project.title });
       if (typeof window !== 'undefined') {
         localStorage.setItem('synthex_active_project_id', data.project.id);
       }
@@ -1945,11 +1969,7 @@ export default function SynthexWorkspace() {
                     personalProjects={personalProjects}
                     activeId={projectId}
                     workspaceKind={workspaceKind}
-                    onOpen={id => {
-                      setProjectId(id);
-                      if (typeof window !== 'undefined') localStorage.setItem('synthex_active_project_id', id);
-                      setProjectMenuOpen(false);
-                    }}
+                    onOpen={openMap}
                     onMove={moveProject}
                     onRename={renameProject}
                     onDelete={deleteProject}
@@ -1957,6 +1977,7 @@ export default function SynthexWorkspace() {
                     onNewTitleChange={setProjectTitleDraft}
                     creating={creatingProject}
                     onCreate={createProject}
+                    onManage={() => { setProjectMenuOpen(false); setMapsManagerOpen(true); }}
                   />
                 </div>
               )}
@@ -2373,6 +2394,26 @@ export default function SynthexWorkspace() {
           <div className="review-footer"><span className="note-meta">{plural(activeSession.changes.filter(change => change.status === 'pending').length, 'draft')} left to decide</span><div><button className="line-button" disabled={!activeSession.changes.some(change => change.status === 'pending')} onClick={() => setReviewDecisions(Object.fromEntries(activeSession.changes.filter(change => change.status === 'pending').map(change => [change.id, 'accepted'] as const)))}>Keep all</button><button className="ink-button" disabled={!Object.keys(reviewDecisions).length} onClick={() => saveReview(activeSession, Object.entries(reviewDecisions).map(([changeId, status]) => ({ changeId, status })))}>Save decisions</button></div></div>
         </section>
       </div>}
+
+      {briefFor && <MapBriefDialog mapTitle={briefFor.title} onSave={saveBrief} onSkip={skipBrief} />}
+
+      {mapsManagerOpen && (
+        <MapsManager
+          projects={projects}
+          personalProjects={personalProjects}
+          activeId={projectId}
+          workspaceKind={workspaceKind}
+          onOpen={openMap}
+          onMove={moveProject}
+          onRename={renameProject}
+          onDelete={deleteProject}
+          newTitle={projectTitleDraft}
+          onNewTitleChange={setProjectTitleDraft}
+          creating={creatingProject}
+          onCreate={createProject}
+          onClose={closeMapsManager}
+        />
+      )}
 
       {editorId && graph.nodesById[editorId] && (
         <NoteEditor

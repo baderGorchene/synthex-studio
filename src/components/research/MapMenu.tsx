@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, type FormEvent } from 'react';
-import { Check, LoaderCircle, MoreHorizontal, Pencil, Plus, Search, Trash2, UserRound, Users, X } from 'lucide-react';
+import { Check, LayoutGrid, LoaderCircle, MoreHorizontal, Pencil, Plus, Search, Trash2, UserRound, Users, X } from 'lucide-react';
 import type { ResearchProject } from './WorkspaceSidebar';
 
 type RowMode = 'actions' | 'rename' | 'delete';
@@ -21,22 +21,34 @@ interface MapMenuProps {
   onNewTitleChange: (value: string) => void;
   creating: boolean;
   onCreate: (event: FormEvent) => void;
+  /** `page` is the full maps manager: search always on, a sort, and each map's date. `menu` is the topbar dropdown. */
+  layout?: 'menu' | 'page';
+  /** Opens the full maps manager (shown at the foot of the dropdown). */
+  onManage?: () => void;
 }
+
+const dateFormat = new Intl.DateTimeFormat(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
 
 /** The map switcher: open, rename, move and delete maps, and create a new one (pinned at the bottom). */
 export function MapMenu({
   projects, personalProjects, activeId, workspaceKind, onOpen, onMove, onRename, onDelete,
-  newTitle, onNewTitleChange, creating, onCreate
+  newTitle, onNewTitleChange, creating, onCreate, layout = 'menu', onManage
 }: MapMenuProps) {
+  const isPage = layout === 'page';
   const [filter, setFilter] = useState('');
+  const [sort, setSort] = useState<'recent' | 'name'>('recent');
   const [row, setRow] = useState<{ id: string; mode: RowMode } | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
   const [busy, setBusy] = useState(false);
 
   const query = filter.trim().toLowerCase();
   const matches = (p: ResearchProject) => !query || p.title.toLowerCase().includes(query);
-  const visibleProjects = projects.filter(matches);
-  const visiblePersonal = personalProjects.filter(matches);
+  // The dropdown keeps the server's order; the manager sorts by newest or by name.
+  const order = (list: ResearchProject[]) => !isPage ? list : [...list].sort(sort === 'name'
+    ? (a, b) => (a.title || '').localeCompare(b.title || '', undefined, { sensitivity: 'base' })
+    : (a, b) => b.createdAt - a.createdAt);
+  const visibleProjects = order(projects.filter(matches));
+  const visiblePersonal = order(personalProjects.filter(matches));
   const isTeam = workspaceKind === 'team';
 
   const toggleActions = (id: string) => setRow(current => current?.id === id ? null : { id, mode: 'actions' });
@@ -61,7 +73,7 @@ export function MapMenu({
   }
 
   function renderRow(p: ResearchProject, kind: 'workspace' | 'personal') {
-    const isOpen = kind === 'workspace' && p.id === activeId;
+    const isOpen = p.id === activeId;
     const mode = row?.id === p.id ? row.mode : null;
     // Personal maps are always the user's own; in a team only the creator may move or delete a map.
     const owns = kind === 'personal' || !isTeam || Boolean(p.isOwner);
@@ -91,25 +103,21 @@ export function MapMenu({
     return (
       <li key={p.id} className={`map-menu-row ${isOpen ? 'is-active' : ''} ${mode ? 'is-expanded' : ''}`} role="none">
         <div className="map-menu-line">
-          {kind === 'workspace' ? (
-            <button
-              type="button"
-              role="menuitemradio"
-              aria-checked={isOpen}
-              className="map-menu-open"
-              title={title}
-              onClick={() => onOpen(p.id)}
-            >
-              <span className="map-menu-check" aria-hidden="true">{isOpen && <Check size={14} strokeWidth={2.25} />}</span>
-              <span className="map-menu-name">{title}</span>
-              {isOpen && <span className="map-menu-badge">Open</span>}
-            </button>
-          ) : (
-            <span className="map-menu-open is-static" title={title}>
-              <span className="map-menu-check" aria-hidden="true" />
-              <span className="map-menu-name">{title}</span>
-            </span>
-          )}
+          {/* Personal maps open too, without leaving the team: only you can see them either way. */}
+          <button
+            type="button"
+            role={isPage ? undefined : 'menuitemradio'}
+            aria-checked={isPage ? undefined : isOpen}
+            aria-current={isPage && isOpen ? 'true' : undefined}
+            className="map-menu-open"
+            title={isOpen ? `${title} (open now)` : `Open ${title}`}
+            onClick={() => onOpen(p.id)}
+          >
+            <span className="map-menu-check" aria-hidden="true">{isOpen && <Check size={14} strokeWidth={2.25} />}</span>
+            <span className="map-menu-name">{title}</span>
+            {isPage && p.createdAt > 0 && <span className="map-menu-date">{dateFormat.format(p.createdAt)}</span>}
+            {isOpen && <span className="map-menu-badge">Open</span>}
+          </button>
           <button
             type="button"
             className={`map-menu-icon ${mode ? 'is-on' : ''}`}
@@ -172,10 +180,21 @@ export function MapMenu({
 
   return (
     <>
-      {projects.length + personalProjects.length > 6 && (
-        <div className="map-menu-search">
-          <Search size={14} strokeWidth={1.75} aria-hidden="true" />
-          <input type="search" value={filter} onChange={event => setFilter(event.target.value)} placeholder="Find a map…" aria-label="Find a map" autoFocus />
+      {(isPage || projects.length + personalProjects.length > 6) && (
+        <div className="map-menu-tools">
+          <div className="map-menu-search">
+            <Search size={14} strokeWidth={1.75} aria-hidden="true" />
+            <input type="search" value={filter} onChange={event => setFilter(event.target.value)} placeholder="Find a map…" aria-label="Find a map" autoFocus />
+          </div>
+          {isPage && (
+            <label className="map-menu-sort">
+              <span className="sr-only">Sort maps</span>
+              <select className="field-input" value={sort} onChange={event => setSort(event.target.value as 'recent' | 'name')}>
+                <option value="recent">Newest first</option>
+                <option value="name">By name</option>
+              </select>
+            </label>
+          )}
         </div>
       )}
       <div className="map-menu-scroll">
@@ -184,7 +203,7 @@ export function MapMenu({
             <span>{isTeam ? 'Team maps' : 'Your maps'}</span>
             <small>{projects.length}</small>
           </p>
-          <ul className="map-menu-list" role="menu" aria-label={isTeam ? 'Team maps' : 'Your maps'}>
+          <ul className="map-menu-list" role={isPage ? undefined : 'menu'} aria-label={isTeam ? 'Team maps' : 'Your maps'}>
             {visibleProjects.map(p => renderRow(p, 'workspace'))}
             {visibleProjects.length === 0 && (
               <li className="map-menu-empty" role="none">{query ? 'No maps match.' : 'No maps yet. Create one below.'}</li>
@@ -197,7 +216,7 @@ export function MapMenu({
               <span>Your personal maps</span>
               <small>{personalProjects.length}</small>
             </p>
-            <p className="map-menu-hint">Only you can see these. Move one into the team so everyone can open and edit it.</p>
+            <p className="map-menu-hint">Only you can see these. Open one here, or move it into the team so everyone can edit it.</p>
             <ul className="map-menu-list">
               {visiblePersonal.map(p => renderRow(p, 'personal'))}
               {visiblePersonal.length === 0 && <li className="map-menu-empty">No maps match.</li>}
@@ -205,6 +224,11 @@ export function MapMenu({
           </section>
         )}
       </div>
+      {onManage && (
+        <button type="button" className="map-menu-manage" onClick={onManage}>
+          <LayoutGrid size={14} strokeWidth={1.75} aria-hidden="true" /> Manage all maps
+        </button>
+      )}
       <form className="map-menu-new" onSubmit={onCreate}>
         <label className="map-menu-heading" htmlFor="project-name"><span>New map</span></label>
         <div className="map-menu-new-row">
