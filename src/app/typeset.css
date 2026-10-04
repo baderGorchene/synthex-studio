@@ -892,7 +892,6 @@ button.view-row:hover { background: var(--canvas); }
 .markdown-view a { color: var(--ink); text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 3px; }
 .markdown-editor { border: 1px solid var(--line-strong); border-radius: 2px; }
 .markdown-toolbar { gap: 0; min-height: 36px; padding: 2px; border-bottom: 1px solid var(--line); background: var(--canvas); }
-.markdown-editor textarea { padding: 10px 12px; color: var(--ink); font: 14px/1.6 var(--font-ui); }
 .markdown-toolbar button { display: inline-grid; place-items: center; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 2px; background: transparent; color: var(--ink); }
 .markdown-toolbar button:hover { background: var(--canvas); }
 

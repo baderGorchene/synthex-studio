@@ -444,6 +444,42 @@ h1, h2, h3 { font-family: var(--font-hand); font-weight: 700; letter-spacing: 0;
 .markdown-view .task-list-item > input[type="checkbox"]:disabled { cursor: default; opacity: 1; }
 .markdown-view .task-list-item.is-done { color: var(--faint); text-decoration: line-through; text-decoration-color: rgba(122, 116, 102, .6); }
 .markdown-view .task-list-item .contains-task-list { padding-left: 1.4em; }
+/* In a spaced-out list each item's text is a paragraph; keep a checklist item's text beside its box. */
+.markdown-view .task-list-item > p:first-of-type { display: inline; }
+
+/* ---------- Headings in notes: the handwriting at a clear scale, so a note's structure reads on the board ---------- */
+.knowledge-card .markdown-view h1, .markdown-editor-content h1 { margin: 12px 0 4px; font: 700 24px/1.1 var(--font-hand); color: var(--ink); }
+.knowledge-card .markdown-view h2, .markdown-editor-content h2 { margin: 10px 0 4px; font: 700 21px/1.1 var(--font-hand); color: var(--ink); }
+.knowledge-card .markdown-view h3, .markdown-editor-content h3 { margin: 8px 0 2px; font: 700 18px/1.15 var(--font-hand); color: var(--ink); }
+.knowledge-card .markdown-view > :first-child { margin-top: 0; }
+
+/* ---------- Note editor: formatted text, stored as Markdown (MarkdownEditor) ---------- */
+.markdown-toolbar button.is-active { background: var(--ink); color: #fff; }
+.markdown-toolbar button:disabled { opacity: .4; cursor: default; }
+.markdown-editor-content {
+  min-height: 140px; max-height: 60vh; padding: 10px 12px; overflow-y: auto;
+  outline: 0; color: var(--ink); font: 14px/1.6 var(--font-ui); white-space: pre-wrap; overflow-wrap: anywhere; cursor: text;
+}
+.card-markdown-editor .markdown-editor-content { min-height: 96px; max-height: 260px; font-size: 13.5px; }
+.markdown-editor:focus-within { border-color: var(--faint); }
+.markdown-editor-content p { margin: 0 0 6px; }
+.markdown-editor-content p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder); float: left; height: 0; color: var(--faint); pointer-events: none;
+}
+/* Checklists: the box, then the text beside it. Tiptap nests the text in a div. */
+.markdown-editor-content ul[data-type="taskList"] { padding-left: .3em; list-style: none; }
+.markdown-editor-content ul[data-type="taskList"] li { display: flex; align-items: flex-start; gap: 7px; list-style: none; }
+.markdown-editor-content ul[data-type="taskList"] li::marker { content: none; }
+.markdown-editor-content ul[data-type="taskList"] li > label { flex: none; margin-top: 4px; user-select: none; }
+.markdown-editor-content ul[data-type="taskList"] li > label input { width: 14px; height: 14px; margin: 0; accent-color: var(--ink); cursor: pointer; }
+.markdown-editor-content ul[data-type="taskList"] li > div { flex: 1; min-width: 0; }
+.markdown-editor-content ul[data-type="taskList"] li[data-checked="true"] > div { color: var(--faint); text-decoration: line-through; }
+.markdown-editor-content pre { white-space: pre; }
+.markdown-editor-content img { max-width: 100%; height: auto; }
+.markdown-editor-content img.ProseMirror-selectednode, .markdown-editor-content .selectedCell { outline: 2px solid var(--proof, #1F3DFF); }
+.markdown-editor-content table { table-layout: fixed; }
+/* The edit dialog's preview stops at a sensible height; the full note is in the editor beside it. */
+.editor-preview-note .note-markdown-preview { max-height: 340px; overflow: hidden; -webkit-mask-image: linear-gradient(to bottom, #000 80%, transparent); mask-image: linear-gradient(to bottom, #000 80%, transparent); }
 
 /* ---------- To-do card: a checklist pinned to the board ---------- */
 .todo-card { display: flex; flex-direction: column; gap: 6px; font-size: 14px; }

@@ -4,6 +4,17 @@ import { marked, type Token, type Tokens } from 'marked';
 import { Fragment, type ReactNode } from 'react';
 import Image from 'next/image';
 
+const ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: '\u00a0' };
+
+/** Turns character references (`&amp;`, `&lt;`, `&#39;`) back into characters, as Markdown renderers do. The editor writes `&`, `<` and `>` this way. */
+export function decodeEntities(text: string): string {
+  return text.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (whole, name: string) => {
+    if (name[0] !== '#') return ENTITIES[name.toLowerCase()] ?? whole;
+    const code = name[1].toLowerCase() === 'x' ? parseInt(name.slice(2), 16) : Number(name.slice(1));
+    return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : whole;
+  });
+}
+
 function safeHref(value: string) {
   try {
     const url = new URL(value);
@@ -34,7 +45,7 @@ function inline(tokens: Token[] = [], prefix = 'i'): ReactNode[] {
       case 'escape': return <span key={key}>{(token as Tokens.Escape).text}</span>;
       case 'text': {
         const text = token as Tokens.Text;
-        return <span key={key}>{text.tokens?.length ? nested(text.tokens) : text.text}</span>;
+        return <span key={key}>{text.tokens?.length ? nested(text.tokens) : decodeEntities(text.text)}</span>;
       }
       case 'html': return <span key={key}>{(token as Tokens.HTML).text}</span>;
       default: return <span key={key}>{'text' in token ? String(token.text) : ''}</span>;
@@ -60,7 +71,7 @@ function blocks(tokens: Token[], prefix = 'b', context: MarkdownContext = { task
       // Items of a tight list hold their words in a block-level `text` token: render it inline, not as a paragraph.
       case 'text': {
         const text = token as Tokens.Text;
-        return <Fragment key={key}>{text.tokens?.length ? inline(text.tokens, key) : text.text}</Fragment>;
+        return <Fragment key={key}>{text.tokens?.length ? inline(text.tokens, key) : decodeEntities(text.text)}</Fragment>;
       }
       // Task items carry a `checkbox` token; the list item below renders the (clickable) box itself.
       case 'checkbox': return null;
@@ -68,12 +79,26 @@ function blocks(tokens: Token[], prefix = 'b', context: MarkdownContext = { task
       case 'blockquote': return <blockquote key={key}>{blocks((token as Tokens.Blockquote).tokens, key, context)}</blockquote>;
       case 'list': {
         const list = token as Tokens.List;
-        const items = list.items.map((item, itemIndex) => {
+        const renderItem = (item: Tokens.ListItem, itemIndex: number) => {
           const taskIndex = item.task ? context.taskIndex++ : undefined;
           return <li key={`${key}-${itemIndex}`} className={item.task ? `task-list-item ${item.checked ? 'is-done' : ''}` : undefined}>{item.task && <input type="checkbox" checked={Boolean(item.checked)} readOnly={!context.onToggleTask} disabled={!context.onToggleTask} aria-label={item.checked ? 'Completed task' : 'Incomplete task'} onPointerDown={event => event.stopPropagation()} onClick={event => event.stopPropagation()} onChange={() => taskIndex !== undefined && context.onToggleTask?.(taskIndex)} />}{blocks(item.tokens, `${key}-${itemIndex}`, context)}</li>;
+        };
+        // Markdown reads a bulleted list and a checklist separated by a blank line as one list (both start with `-`).
+        // Draw each run of checklist or plain items as its own list, as the editor does.
+        const runs: Array<{ task: boolean; first: number; items: Tokens.ListItem[] }> = [];
+        list.items.forEach((item, itemIndex) => {
+          const last = runs[runs.length - 1];
+          if (last && last.task === item.task) last.items.push(item);
+          else runs.push({ task: item.task, first: itemIndex, items: [item] });
         });
-        const taskList = list.items.some(item => item.task) ? 'contains-task-list' : undefined;
-        return list.ordered ? <ol key={key} className={taskList} start={typeof list.start === 'number' && list.start !== 1 ? list.start : undefined}>{items}</ol> : <ul key={key} className={taskList}>{items}</ul>;
+        return <Fragment key={key}>{runs.map(run => {
+          const items = run.items.map((item, offset) => renderItem(item, run.first + offset));
+          const className = run.task ? 'contains-task-list' : undefined;
+          const start = (typeof list.start === 'number' ? list.start : 1) + run.first;
+          return list.ordered
+            ? <ol key={`${key}-run${run.first}`} className={className} start={start !== 1 ? start : undefined}>{items}</ol>
+            : <ul key={`${key}-run${run.first}`} className={className}>{items}</ul>;
+        })}</Fragment>;
       }
       case 'table': {
         const table = token as Tokens.Table;

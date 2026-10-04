@@ -2047,9 +2047,6 @@ kbd {
 .markdown-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 1px; min-height: 29px; padding: 2px 4px; border-bottom: 1px solid #D9D9D4; background: #D9D9D4; }
 .markdown-toolbar button { display: grid; place-items: center; width: 23px; height: 22px; padding: 0; border: 0; border-radius: 4px; color: #1F3DFF; background: transparent; cursor: pointer; }
 .markdown-toolbar button:hover { color: #111214; background: #ffffff; }
-.markdown-editor textarea { display: block; width: 100%; min-height: 88px; padding: 8px; resize: vertical; border: 0; outline: 0; color: #111214; background: #fff; font: 10px/1.5 var(--font-code); }
-.card-markdown-editor textarea { min-height: 96px; max-height: 230px; font-size: 9px; }
-.inspector-markdown-editor textarea { min-height: 142px; }
 .markdown-view > :first-child { margin-top: 0; }
 .markdown-view > :last-child { margin-bottom: 0; }
 .markdown-view h1, .markdown-view h2, .markdown-view h3 { margin: 6px 0 4px; color: #111214; font-family: var(--font-ui); line-height: 1.35; }

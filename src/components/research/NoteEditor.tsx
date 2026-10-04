@@ -5,6 +5,7 @@ import { X } from 'lucide-react';
 import type { CanvasNode } from '@/types/canvas';
 import { NodeInspector } from './NodeInspector';
 import { nodeLabel } from './nodes/BaseKnowledgeCard';
+import { MarkdownView } from './MarkdownView';
 
 /**
  * Full-screen editor for one note or cluster. The board stays visible behind a blur; on the left the note
@@ -22,7 +23,7 @@ export function NoteEditor({ node, relationshipCount, projectId, allNodes, onUpd
   const dialog = useRef<HTMLElement>(null);
   const isCluster = node.type === 'group' || node.type === 'section';
   const color = node.color?.startsWith('#') ? node.color : undefined;
-  const summary = (node.content || node.description || '').replace(/[#*_`>[\]]/g, '').trim();
+  const body = node.content || node.description || '';
   const isImage = node.type === 'image';
   const imageSrc = isImage ? node.fileData || node.imageUrl : undefined;
 
@@ -81,7 +82,8 @@ export function NoteEditor({ node, relationshipCount, projectId, allNodes, onUpd
                   </figure>
                 ) : (
                   <>
-                    {summary && <p className="node-summary">{summary.length > 220 ? `${summary.slice(0, 220)}…` : summary}</p>}
+                    {/* The same rendering as the card on the board: headings, lists and checklists included. */}
+                    {body.trim() && <MarkdownView content={body} className="node-summary note-markdown-preview" />}
                     <p className="note-meta">{nodeLabel[node.type] || 'Idea'}{node.metadata?.origin === 'ai' ? ' · From research' : ''}</p>
                   </>
                 )}
