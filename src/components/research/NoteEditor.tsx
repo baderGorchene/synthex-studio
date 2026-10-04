@@ -23,6 +23,8 @@ export function NoteEditor({ node, relationshipCount, projectId, allNodes, onUpd
   const isCluster = node.type === 'group' || node.type === 'section';
   const color = node.color?.startsWith('#') ? node.color : undefined;
   const summary = (node.content || node.description || '').replace(/[#*_`>[\]]/g, '').trim();
+  const isImage = node.type === 'image';
+  const imageSrc = isImage ? node.fileData || node.imageUrl : undefined;
 
   // Focus the title on open and give focus back to whatever opened the editor on close.
   useEffect(() => {
@@ -64,8 +66,25 @@ export function NoteEditor({ node, relationshipCount, projectId, allNodes, onUpd
               >
                 <span className="note-pin" />
                 <h2>{node.title || 'Untitled idea'}</h2>
-                {summary && <p className="node-summary">{summary.length > 220 ? `${summary.slice(0, 220)}…` : summary}</p>}
-                <p className="note-meta">{nodeLabel[node.type] || 'Idea'}{node.metadata?.origin === 'ai' ? ' · From research' : ''}</p>
+                {/* A photo previews as it sits on the board: the picture, its caption, no text or type label. */}
+                {isImage ? (
+                  <figure className="photo-print">
+                    {imageSrc ? (
+                      <div className="photo-frame">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={imageSrc} alt="" className="photo-image" draggable={false} />
+                      </div>
+                    ) : (
+                      <div className="photo-frame is-empty"><span>No picture yet</span></div>
+                    )}
+                    {node.caption && <figcaption className="photo-caption">{node.caption}</figcaption>}
+                  </figure>
+                ) : (
+                  <>
+                    {summary && <p className="node-summary">{summary.length > 220 ? `${summary.slice(0, 220)}…` : summary}</p>}
+                    <p className="note-meta">{nodeLabel[node.type] || 'Idea'}{node.metadata?.origin === 'ai' ? ' · From research' : ''}</p>
+                  </>
+                )}
               </article>
             )}
             <p className="note-editor-hint">Changes save as you type.</p>
