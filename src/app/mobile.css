@@ -225,3 +225,11 @@
   .composer-attachments { padding-left: 48px; }
   .tool-composer .attachment-chip { max-width: 70%; }
 }
+
+/* All maps: a full-screen page on phones; its list stays in the page, not a sheet under the top bar */
+@media (max-width: 760px) {
+  .note-editor-scrim:has(.maps-manager) { padding: 0; }
+  .maps-manager { width: 100%; height: 100%; border: 0; }
+  .maps-manager .map-menu.is-page { position: static !important; inset: auto !important; max-height: none !important; padding: 10px 12px; overflow: hidden; z-index: auto; }
+  .map-menu.is-page .map-menu-date { display: none; }
+}

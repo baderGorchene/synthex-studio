@@ -100,6 +100,13 @@ export function CanvasToolDock({
   const addMenuRef = useRef<HTMLDivElement>(null);
   const organizeMenuRef = useRef<HTMLDivElement>(null);
   const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
+  // The pen/marker size and colour panel opens whenever a drawing tool is picked and closes on a click elsewhere;
+  // the tool stays on, so drawing carries on with the panel out of the way.
+  const drawToolsRef = useRef<HTMLDivElement>(null);
+  const [optionsTool, setOptionsTool] = useState(activeTool);
+  const [sketchOptionsOpen, setSketchOptionsOpen] = useState(true);
+  if (optionsTool !== activeTool) { setOptionsTool(activeTool); setSketchOptionsOpen(true); }
+  const isDrawing = activeTool === 'pen' || activeTool === 'marker';
   const dragOrigin = useRef<{ x: number; y: number; left: number; top: number } | null>(null);
 
   useEffect(() => {
@@ -123,6 +130,15 @@ export function CanvasToolDock({
     window.addEventListener('pointerdown', closeOutside, true);
     return () => window.removeEventListener('pointerdown', closeOutside, true);
   }, [organizeMenuOpen]);
+
+  useEffect(() => {
+    if (!isDrawing || !sketchOptionsOpen) return;
+    const closeOutside = (event: PointerEvent) => {
+      if (drawToolsRef.current && !drawToolsRef.current.contains(event.target as Node)) setSketchOptionsOpen(false);
+    };
+    window.addEventListener('pointerdown', closeOutside, true);
+    return () => window.removeEventListener('pointerdown', closeOutside, true);
+  }, [isDrawing, sketchOptionsOpen]);
 
   useEffect(() => {
     const move = (event: PointerEvent) => {
@@ -185,21 +201,26 @@ export function CanvasToolDock({
 
         <span className="sidebar-tool-divider" aria-hidden="true" />
 
-        <div className="dock-draw-tools">
+        <div className="dock-draw-tools" ref={drawToolsRef}>
         {drawTools.map(({ id, label, description, Icon, keys }) => (
           <button
             key={id}
             className={`sidebar-tool-button ${activeTool === id ? 'active' : ''}`}
             aria-label={`${label}: draw on the board, not part of the map`}
             aria-pressed={activeTool === id}
+            aria-expanded={activeTool === id ? sketchOptionsOpen : undefined}
             aria-keyshortcuts={keys}
-            onClick={() => onSelectTool?.(activeTool === id ? 'select' : id)}
+            // On the active tool: a closed panel opens again, an open one means "done drawing".
+            onClick={() => {
+              if (activeTool === id && id !== 'eraser' && !sketchOptionsOpen) setSketchOptionsOpen(true);
+              else onSelectTool?.(activeTool === id ? 'select' : id);
+            }}
           >
             <span className="tool-icon"><Icon {...icon} /></span>
             <ToolInfo label={label} description={description} keys={keys} />
           </button>
         ))}
-        {(activeTool === 'pen' || activeTool === 'marker') && sketchStyle && onSketchStyleChange && (() => {
+        {(activeTool === 'pen' || activeTool === 'marker') && sketchOptionsOpen && sketchStyle && onSketchStyleChange && (() => {
           const drawTool = activeTool;
           const current = sketchStyle[drawTool];
           const colors = drawTool === 'pen' ? PEN_COLORS : MARKER_COLORS;
