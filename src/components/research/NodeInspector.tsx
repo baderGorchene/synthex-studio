@@ -76,8 +76,9 @@ export function NodeInspector({
         />
       </>}
 
-      <label className="field-label" htmlFor="node-content">Text</label>
-      {node.type === 'note' || node.type === 'task' ? <MarkdownEditor className="inspector-markdown-editor" ariaLabel={node.type === 'task' ? 'To-do list in Markdown (- [ ] item)' : 'Note content in Markdown'} value={node.content || ''} onChange={content => onUpdate({ content })} /> : <textarea id="node-content" className="field-input field-textarea" maxLength={50000} placeholder="Add a description, evidence, or a working thought…" value={node.content || ''} onChange={event => onUpdate({ content: event.target.value })} />}
+      <p className="field-label">Text</p>
+      {/* Every kind of card gets the same editor: its text renders as Markdown on the board. The title field keeps the focus on open. */}
+      <MarkdownEditor key={node.id} className="inspector-markdown-editor" autoFocus={false} ariaLabel={node.type === 'task' ? 'To-do list' : 'Text'} value={node.content || ''} onChange={content => onUpdate({ content })} />
 
       {node.type === 'image' && (
         <ImageInspectorSection node={node} onUpdate={onUpdate} projectId={projectId} />

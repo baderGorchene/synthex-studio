@@ -23,7 +23,7 @@ import { RESEARCH_INPUT_LIMITS, RESEARCH_MODE_LABELS, type CanvasNode, type Canv
 import type { AIStatus } from '@/lib/ai-service';
 import { ChatToolCard } from '@/components/research/ChatToolCard';
 import { ToolComposer, type ComposerTool } from '@/components/research/ToolComposer';
-import { MarkdownView } from '@/components/research/MarkdownView';
+import { MarkdownView, decodeEntities } from '@/components/research/MarkdownView';
 import { DocumentPane } from '@/components/research/DocumentPane';
 import { LiveResearchCard, type ResearchLiveProgress } from '@/components/research/LiveResearchCard';
 import type { ChatToolCall } from '@/types/chat-tools';
@@ -115,8 +115,10 @@ const plural = (count: number, singular: string, many = `${singular}s`) => `${co
 function withAutoTitle(node: CanvasNode | undefined, fields: Partial<CanvasNode>): Partial<CanvasNode> {
   if (!node || node.metadata?.autoTitle !== true) return fields;
   if (fields.title !== undefined) return { ...fields, metadata: { ...node.metadata, ...fields.metadata, autoTitle: false } };
-  const firstLine = fields.content?.split(/\r?\n/).find(line => line.trim())?.replace(/^[#>*\-\s]+/, '').trim().slice(0, 80);
-  return firstLine ? { ...fields, title: firstLine } : fields;
+  // The editor writes `&` as `&amp;` and escapes `*`, `_` and the like with `\`; a title shows the plain characters.
+  const firstLine = fields.content?.split(/\r?\n/).find(line => line.trim())?.replace(/^[#>*\-\s]+/, '').replace(/\\([\\`*_[\]~])/g, '$1').trim();
+  const title = firstLine ? decodeEntities(firstLine).slice(0, 80) : undefined;
+  return title ? { ...fields, title } : fields;
 }
 
 type Layout = 'map' | 'split' | 'doc';

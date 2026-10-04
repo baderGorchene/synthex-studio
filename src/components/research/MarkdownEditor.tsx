@@ -1,94 +1,111 @@
 'use client';
 
-import { useRef } from 'react';
-import { Bold, Code2, Heading1, Heading2, Italic, List, ListChecks, ListOrdered, Quote } from 'lucide-react';
+import { useEffect, useLayoutEffect, useRef } from 'react';
+import { EditorContent, useEditor, useEditorState, type Editor } from '@tiptap/react';
+import StarterKit from '@tiptap/starter-kit';
+import { Markdown } from '@tiptap/markdown';
+import { TaskItem, TaskList } from '@tiptap/extension-list';
+import { TableKit } from '@tiptap/extension-table';
+import Image from '@tiptap/extension-image';
+import { Placeholder } from '@tiptap/extensions';
+import { Bold, Code2, Heading1, Heading2, Italic, List, ListChecks, ListOrdered, Quote, Strikethrough } from 'lucide-react';
 
-type Format = 'bold' | 'italic' | 'h1' | 'h2' | 'list' | 'ordered' | 'task' | 'quote' | 'code';
-const formats: Array<{ id: Format; label: string; icon: typeof Bold }> = [
-  { id: 'bold', label: 'Bold', icon: Bold }, { id: 'italic', label: 'Italic', icon: Italic },
-  { id: 'h1', label: 'Heading 1', icon: Heading1 }, { id: 'h2', label: 'Heading 2', icon: Heading2 },
-  { id: 'list', label: 'Bulleted list', icon: List }, { id: 'ordered', label: 'Numbered list', icon: ListOrdered },
-  { id: 'task', label: 'Checklist', icon: ListChecks },
-  { id: 'quote', label: 'Block quote', icon: Quote }, { id: 'code', label: 'Code block', icon: Code2 }
+/**
+ * Notes are edited as formatted text (bold shows bold, a list shows bullets) and stored as Markdown, so exports,
+ * search, AI context and MarkdownView keep reading the same string. Typing Markdown still works: `- `, `1. `,
+ * `[ ] `, `# ` and `**bold**` turn into formatting as you type.
+ */
+const extensions = [
+  StarterKit.configure({
+    // Underline has no Markdown form that the rest of the app reads, so it stays off.
+    underline: false,
+    link: { openOnClick: false, autolink: true, defaultProtocol: 'https' }
+  }),
+  TaskList,
+  TaskItem.configure({ nested: true }),
+  TableKit.configure({ table: { resizable: false } }),
+  // Keep every picture a note already holds, data URIs included, so editing never drops one.
+  Image.configure({ allowBase64: true }),
+  Placeholder.configure({ placeholder: 'Write here. Type - for a list, 1. for numbers, [ ] for a checklist, # for a heading.' }),
+  Markdown
 ];
 
-const LIST_MARKER = /^\s*(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?/;
-const LIST_ITEM = /^(\s*)([-*+]|\d+[.)])(\s+)(\[[ xX]\]\s+)?/;
+type Tool = { label: string; icon: typeof Bold; isActive: (editor: Editor) => boolean; run: (editor: Editor) => void };
+const tools: Tool[] = [
+  { label: 'Bold', icon: Bold, isActive: e => e.isActive('bold'), run: e => e.chain().focus().toggleBold().run() },
+  { label: 'Italic', icon: Italic, isActive: e => e.isActive('italic'), run: e => e.chain().focus().toggleItalic().run() },
+  { label: 'Strikethrough', icon: Strikethrough, isActive: e => e.isActive('strike'), run: e => e.chain().focus().toggleStrike().run() },
+  { label: 'Heading 1', icon: Heading1, isActive: e => e.isActive('heading', { level: 1 }), run: e => e.chain().focus().toggleHeading({ level: 1 }).run() },
+  { label: 'Heading 2', icon: Heading2, isActive: e => e.isActive('heading', { level: 2 }), run: e => e.chain().focus().toggleHeading({ level: 2 }).run() },
+  { label: 'Bulleted list', icon: List, isActive: e => e.isActive('bulletList'), run: e => e.chain().focus().toggleBulletList().run() },
+  { label: 'Numbered list', icon: ListOrdered, isActive: e => e.isActive('orderedList'), run: e => e.chain().focus().toggleOrderedList().run() },
+  { label: 'Checklist', icon: ListChecks, isActive: e => e.isActive('taskList'), run: e => e.chain().focus().toggleTaskList().run() },
+  { label: 'Block quote', icon: Quote, isActive: e => e.isActive('blockquote'), run: e => e.chain().focus().toggleBlockquote().run() },
+  { label: 'Code block', icon: Code2, isActive: e => e.isActive('codeBlock'), run: e => e.chain().focus().toggleCodeBlock().run() }
+];
 
-export function MarkdownEditor({ value, onChange, className = '', ariaLabel = 'Note in Markdown' }: { value: string; onChange: (value: string) => void; className?: string; ariaLabel?: string }) {
-  const textarea = useRef<HTMLTextAreaElement>(null);
+export function MarkdownEditor({ value, onChange, className = '', ariaLabel = 'Note in Markdown', autoFocus = true }: {
+  value: string;
+  onChange: (value: string) => void;
+  className?: string;
+  ariaLabel?: string;
+  autoFocus?: boolean;
+}) {
+  // The Markdown this editor last sent up. A `value` that differs came from elsewhere (undo, a teammate).
+  const lastSent = useRef(value);
+  // The editor is created once; its update handler reads the latest onChange through this ref.
+  const onChangeRef = useRef(onChange);
+  useLayoutEffect(() => { onChangeRef.current = onChange; }, [onChange]);
 
-  const format = (kind: Format) => {
-    const input = textarea.current;
-    if (!input) return;
-    const text = value;
-    const start = input.selectionStart;
-    const end = input.selectionEnd;
-    let from = start;
-    let to = end;
-    let before = '';
-    let after = '';
-    let selected = text.slice(start, end);
-
-    if (kind === 'bold' || kind === 'italic') {
-      before = kind === 'bold' ? '**' : '*';
-      after = before;
-      selected ||= 'text';
-    } else if (kind === 'code') {
-      before = '```\n'; after = '\n```'; selected ||= 'code';
-    } else {
-      from = text.lastIndexOf('\n', Math.max(0, start - 1)) + 1;
-      const lineEnd = text.indexOf('\n', end);
-      to = lineEnd === -1 ? text.length : lineEnd;
-      selected = text.slice(from, to) || 'text';
-      const prefix = kind === 'h1' ? '# ' : kind === 'h2' ? '## ' : kind === 'list' ? '- ' : kind === 'task' ? '- [ ] ' : '> ';
-      // Any existing list marker is replaced, so switching a bulleted list to numbers (or a checklist) doesn't stack markers.
-      selected = selected.split('\n').map((line, index) => {
-        const bare = kind === 'list' || kind === 'ordered' || kind === 'task' ? line.replace(LIST_MARKER, '') : line;
-        return `${kind === 'ordered' ? `${index + 1}. ` : prefix}${bare}`;
-      }).join('\n');
+  const editor = useEditor({
+    extensions,
+    content: value,
+    contentType: 'markdown',
+    autofocus: autoFocus ? 'end' : false,
+    // Rendered on the client only; skipping the server pass avoids a hydration mismatch.
+    immediatelyRender: false,
+    editorProps: {
+      attributes: { class: 'markdown-view markdown-editor-content', 'aria-label': ariaLabel, 'aria-multiline': 'true', role: 'textbox' }
+    },
+    onUpdate: ({ editor: current, transaction }) => {
+      // Only edits count. Opening a note can tidy it (a table gets its header row); that alone must not rewrite it.
+      if (!transaction.docChanged) return;
+      const markdown = current.getMarkdown();
+      lastSent.current = markdown;
+      onChangeRef.current(markdown);
     }
+  });
 
-    const updated = text.slice(0, from) + before + selected + after + text.slice(to);
-    onChange(updated);
-    requestAnimationFrame(() => {
-      input.focus();
-      const selectionStart = from + before.length;
-      input.setSelectionRange(selectionStart, selectionStart + selected.length);
-    });
-  };
+  // Follow changes made outside the editor without echoing them back as an edit.
+  useEffect(() => {
+    if (!editor || value === lastSent.current) return;
+    lastSent.current = value;
+    if (value !== editor.getMarkdown()) editor.commands.setContent(value, { contentType: 'markdown', emitUpdate: false });
+  }, [editor, value]);
 
-  // Enter inside a list continues it (next number, a fresh checkbox); Enter on an empty item ends the list.
-  const continueList = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.key !== 'Enter' || event.shiftKey || event.metaKey || event.ctrlKey || event.altKey || event.nativeEvent.isComposing) return;
-    const input = event.currentTarget;
-    if (input.selectionStart !== input.selectionEnd) return;
-    const caret = input.selectionStart;
-    const lineStart = value.lastIndexOf('\n', caret - 1) + 1;
-    const match = LIST_ITEM.exec(value.slice(lineStart, caret));
-    if (!match) return;
-    event.preventDefault();
-    const [whole, indent, marker, , task] = match;
-    let updated: string;
-    let nextCaret: number;
-    if (whole.length === caret - lineStart && value.slice(caret, value.indexOf('\n', caret) === -1 ? undefined : value.indexOf('\n', caret)).trim() === '') {
-      updated = value.slice(0, lineStart) + value.slice(caret);
-      nextCaret = lineStart;
-    } else {
-      const ordered = /^(\d+)([.)])$/.exec(marker);
-      const nextMarker = ordered ? `${Number(ordered[1]) + 1}${ordered[2]}` : marker;
-      const insert = `\n${indent}${nextMarker} ${task ? '[ ] ' : ''}`;
-      updated = value.slice(0, caret) + insert + value.slice(caret);
-      nextCaret = caret + insert.length;
-    }
-    onChange(updated);
-    requestAnimationFrame(() => input.setSelectionRange(nextCaret, nextCaret));
-  };
+  const active = useEditorState({
+    editor,
+    selector: ({ editor: current }) => (current ? tools.map(tool => tool.isActive(current)) : tools.map(() => false))
+  });
 
   return <div className={`markdown-editor ${className}`}>
-    <div className="markdown-toolbar" role="toolbar" aria-label="Markdown formatting">
-      {formats.map(({ id, label, icon: Icon }) => <button key={id} type="button" title={label} aria-label={label} onPointerDown={event => event.preventDefault()} onClick={() => format(id)}><Icon size={16} strokeWidth={1.75} /></button>)}
+    <div className="markdown-toolbar" role="toolbar" aria-label="Formatting">
+      {tools.map(({ label, icon: Icon, run }, index) => (
+        <button
+          key={label}
+          type="button"
+          title={label}
+          aria-label={label}
+          aria-pressed={Boolean(active?.[index])}
+          className={active?.[index] ? 'is-active' : undefined}
+          disabled={!editor}
+          onPointerDown={event => event.preventDefault()}
+          onClick={() => editor && run(editor)}
+        >
+          <Icon size={16} strokeWidth={1.75} />
+        </button>
+      ))}
     </div>
-    <textarea ref={textarea} autoFocus aria-label={ariaLabel} maxLength={50000} value={value} onChange={event => onChange(event.target.value)} onKeyDown={continueList} />
+    <EditorContent editor={editor} />
   </div>;
 }
