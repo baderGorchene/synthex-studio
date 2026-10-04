@@ -16,6 +16,8 @@ import { EmptyMapGuide } from '@/components/research/EmptyMapGuide';
 import { CanvasToolDock, type ResearchProject, type WorkspaceSection } from '@/components/research/WorkspaceSidebar';
 import { MapMenu } from '@/components/research/MapMenu';
 import { MapsManager } from '@/components/research/MapsManager';
+import { MapBriefDialog } from '@/components/research/MapBriefDialog';
+import { removeMapBrief, saveMapBrief, type MapBrief } from '@/lib/map-brief';
 import { extractYouTubeVideoId } from '@/components/research/SourceMetadata';
 import { addNode, addRelationship, exportContextMarkdown, exportGraphJson, exportMermaid, normalizeGraph, removeNode, strokeForLabel, CHAT_CONTEXT_LIMIT, updateNode, updateRelationship, type KnowledgeGraph } from '@/lib/graph';
 import { parseBibTeX, bibEntriesToCanvasNodes } from '@/lib/bibtex';
@@ -182,6 +184,8 @@ export default function SynthexWorkspace() {
   const overflowMenuRef = useRef<HTMLDivElement>(null);
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const [mapsManagerOpen, setMapsManagerOpen] = useState(false);
+  // A map just created: ask what it's for (MapBriefDialog) before the person starts on it.
+  const [briefFor, setBriefFor] = useState<{ id: string; title: string } | null>(null);
   const [addRecordMenuOpen, setAddRecordMenuOpen] = useState(false);
   const navMenuRef = useRef<HTMLDivElement>(null);
   const projectMenuRef = useRef<HTMLDivElement>(null);
@@ -463,6 +467,12 @@ export default function SynthexWorkspace() {
     setMapsManagerOpen(false);
   }, []);
   const closeMapsManager = useCallback(() => setMapsManagerOpen(false), []);
+  const skipBrief = useCallback(() => setBriefFor(null), []);
+  const saveBrief = useCallback((brief: MapBrief) => {
+    if (!briefFor) return;
+    announce(saveMapBrief(briefFor.id, brief) ? 'Saved. Your map is ready.' : 'This browser would not keep your answers, but your map is ready.');
+    setBriefFor(null);
+  }, [briefFor, announce]);
 
   const renameProject = useCallback(async (id: string, title: string) => {
     try {
@@ -484,6 +494,7 @@ export default function SynthexWorkspace() {
   const deleteProject = useCallback(async (id: string) => {
     try {
       await readJson(await fetch(`/api/projects?projectId=${encodeURIComponent(id)}`, { method: 'DELETE' }));
+      removeMapBrief(id);
       // Deleting the open map opens the workspace's first remaining map (or a fresh starter map).
       if (typeof window !== 'undefined' && localStorage.getItem('synthex_active_project_id') === id) {
         localStorage.removeItem('synthex_active_project_id');
@@ -1004,6 +1015,7 @@ export default function SynthexWorkspace() {
       }));
       setProjects(current => [...current, data.project]);
       setProjectTitleDraft(''); setProjectMenuOpen(false); setMapsManagerOpen(false); setProjectId(data.project.id);
+      setBriefFor({ id: data.project.id, title: data.project.title });
       if (typeof window !== 'undefined') {
         localStorage.setItem('synthex_active_project_id', data.project.id);
       }
@@ -2382,6 +2394,8 @@ export default function SynthexWorkspace() {
           <div className="review-footer"><span className="note-meta">{plural(activeSession.changes.filter(change => change.status === 'pending').length, 'draft')} left to decide</span><div><button className="line-button" disabled={!activeSession.changes.some(change => change.status === 'pending')} onClick={() => setReviewDecisions(Object.fromEntries(activeSession.changes.filter(change => change.status === 'pending').map(change => [change.id, 'accepted'] as const)))}>Keep all</button><button className="ink-button" disabled={!Object.keys(reviewDecisions).length} onClick={() => saveReview(activeSession, Object.entries(reviewDecisions).map(([changeId, status]) => ({ changeId, status })))}>Save decisions</button></div></div>
         </section>
       </div>}
+
+      {briefFor && <MapBriefDialog mapTitle={briefFor.title} onSave={saveBrief} onSkip={skipBrief} />}
 
       {mapsManagerOpen && (
         <MapsManager
